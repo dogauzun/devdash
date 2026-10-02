@@ -1,0 +1,24 @@
+[1mmbp[m · 2 s ago · 2 projects · 6 listeners · 2 containers                         
+[1mkill node (pid 101): tree mode, SIGTERM to 2 processes[m                          
+                                                                                
+  101  node     shop  5173                                                      
+  102  esbuild  shop  -                                                         
+                                                                                
+  p process  t tree  f force  enter confirm  esc cancel                         
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+[mrun with sudo to see owners[m                                                     
+[2m↑↓ move  ←→ fold  enter detail  / filter  x kill  o open  a all  ? help  q quit[m 
