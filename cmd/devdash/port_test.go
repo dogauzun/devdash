@@ -89,3 +89,60 @@ func TestPortLive(t *testing.T) {
 		t.Errorf("released port %d: exit %d, stdout %q, stderr %q", port, code, stdout.String(), stderr.String())
 	}
 }
+
+// TestWritePortContainers: a listener reconciled to a container names the container, its
+// image and compose project instead of the proxy or the unknown owner; a published port with
+// no listener behind it (iptables only) is reported too (DEV-52).
+func TestWritePortContainers(t *testing.T) {
+	any4, any6, lo4 := netip.IPv4Unspecified(), netip.IPv6Unspecified(), netip.MustParseAddr("127.0.0.1")
+	pm := func(ip netip.Addr, port uint16) model.PortMapping {
+		return model.PortMapping{HostIP: ip, HostPort: port, ContainerPort: port, Proto: "tcp"}
+	}
+	db := model.Container{ID: "db0123456789", Name: "shop-db-1", Image: "postgres:16", State: "running", ComposeProject: "shop", ComposeService: "db",
+		Ports: []model.PortMapping{pm(any4, 5432), pm(any6, 5432)}}
+	cache := model.Container{ID: "cache0123456", Name: "cache", Image: "redis:7", State: "running", Ports: []model.PortMapping{pm(any4, 6379)}}
+	unnamed := model.Container{ID: "77aa", State: "running", Ports: []model.PortMapping{{HostPort: 8000, ContainerPort: 80, Proto: "tcp"}}}
+	proc := func(pid int, name string) model.Process {
+		return model.Process{PID: pid, PPID: 1, Name: name, Argv: []string{"/usr/bin/" + name}, StartTime: time.Unix(1, 0)}
+	}
+	l := func(proto string, a netip.Addr, port uint16, pid int) model.RawListener {
+		return model.RawListener{Proto: proto, Addr: a, Port: port, PID: pid}
+	}
+	tests := []struct {
+		name       string
+		listeners  []model.RawListener
+		containers []model.Container
+		port       uint16
+		want       string
+	}{
+		{"docker-proxy", []model.RawListener{l("tcp4", any4, 5432, 20), l("tcp6", any6, 5432, 21)}, []model.Container{db}, 5432,
+			"20  shop-db-1  shop  0.0.0.0:5432  container (postgres:16) via docker-proxy\n" +
+				"21  shop-db-1  shop  [::]:5432     container (postgres:16) via docker-proxy\n"},
+		{"unknown owner (root's docker-proxy, seen as a user)", []model.RawListener{l("tcp4", any4, 5432, 0)}, []model.Container{db}, 5432,
+			"-  shop-db-1  shop  0.0.0.0:5432  container (postgres:16)\n"},
+		{"shared com.docker.backend", []model.RawListener{l("tcp6", any6, 5432, 30), l("tcp6", any6, 6379, 30)}, []model.Container{db, cache}, 6379,
+			"30  cache  -  [::]:6379  container (redis:7) via com.docker.backend\n"},
+		{"iptables only", nil, []model.Container{db}, 5432,
+			"-  shop-db-1  shop  0.0.0.0:5432  container (postgres:16), no listening socket\n" +
+				"-  shop-db-1  shop  [::]:5432     container (postgres:16), no listening socket\n"},
+		{"iptables only, no host IP and no name", nil, []model.Container{unnamed}, 8000,
+			"-  77aa  -  0.0.0.0:8000  container, no listening socket\n"},
+		{"a process of the user next to an iptables-only container", []model.RawListener{l("tcp4", lo4, 5432, 10)}, []model.Container{db}, 5432,
+			"10  node       -     127.0.0.1:5432\n" +
+				"-   shop-db-1  shop  0.0.0.0:5432  container (postgres:16), no listening socket\n" +
+				"-   shop-db-1  shop  [::]:5432     container (postgres:16), no listening socket\n"},
+		{"another port of the container is not reported", nil, []model.Container{db}, 5433, "free\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(20, "docker-proxy"), proc(21, "docker-proxy"), proc(30, "com.docker.backend")},
+				Listeners: tt.listeners}
+			s := model.Build(raw, model.Snapshot{}, tt.containers, model.NewResolver("", nil))
+			var b bytes.Buffer
+			found, err := writePort(&b, s, tt.port)
+			if err != nil || found != (tt.want != "free\n") || b.String() != tt.want {
+				t.Errorf("found %v, err %v, output\n%s\nwant\n%s", found, err, b.String(), tt.want)
+			}
+		})
+	}
+}

@@ -314,7 +314,8 @@ func wantProcs(procs []fixProc, denied bool) []Process {
 // TestCollectFixture runs the collector over testdata/proc-500, as a user and as root with
 // and without CAP_SYS_PTRACE. When the tests run as a user, fixDenied's fd/ and cmdline give
 // EACCES, so the root cases are a root that the kernel still denies, as in a Docker container
-// with default capabilities (DEV-49).
+// with default capabilities (DEV-49). When they run as root nothing is denied, and the root
+// owner hint names the pid namespace instead (DEV-66).
 func TestCollectFixture(t *testing.T) {
 	if *update {
 		if err := os.RemoveAll(fixtureDir); err != nil {
@@ -331,7 +332,8 @@ func TestCollectFixture(t *testing.T) {
 		owner   func(fixListen) int
 		hidepid string
 		// Substrings of the process_fields_unreadable hint (checked when fixDenied is denied)
-		// and of Result.OwnerHint ("" when Build's default applies).
+		// and of Result.OwnerHint ("" when Build's default applies; as root, checked when
+		// fixDenied is denied).
 		fieldsHint, ownerHint string
 	}{
 		{name: "user", euid: fixUser, owner: func(l fixListen) int { return l.userOwner },
@@ -404,8 +406,14 @@ func TestCollectFixture(t *testing.T) {
 					t.Errorf("process_fields_unreadable hint %q does not contain %q", w.Hint, tt.fieldsHint)
 				}
 			}
-			if (tt.ownerHint == "") != (res.OwnerHint == "") || !strings.Contains(res.OwnerHint, tt.ownerHint) {
-				t.Errorf("owner hint %q, want one containing %q", res.OwnerHint, tt.ownerHint)
+			wantOwner := tt.ownerHint
+			// As root a permission hint needs a denied read, or hidepid hiding other users' pids
+			// from root without CAP_SYS_PTRACE.
+			if tt.euid == 0 && !denied && (tt.hidepid == "" || tt.ptrace) {
+				wantOwner = "pid namespace"
+			}
+			if (wantOwner == "") != (res.OwnerHint == "") || !strings.Contains(res.OwnerHint, wantOwner) {
+				t.Errorf("owner hint %q, want one containing %q", res.OwnerHint, wantOwner)
 			}
 			if tt.euid == 0 && strings.Contains(fmt.Sprint(res.OwnerHint, res.Warnings), "sudo") {
 				t.Errorf("as root a hint says sudo: %q %+v", res.OwnerHint, res.Warnings)
@@ -423,16 +431,6 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 	}
 	c := newLinux(dir)
 	c.euid = fixUser
-	addListen := func(port uint16, inode uint64) {
-		f, err := os.OpenFile(filepath.Join(dir, "net/tcp"), os.O_APPEND|os.O_WRONLY, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = fmt.Fprintf(f, "  99: 0100007F:%04X 00000000:0000 0A 00000000:00000000 00:00000000 00000000  %d        0 %d 1 0 100 0 0 10 0\n", port, fixUser, inode)
-		if err := errors.Join(err, f.Close()); err != nil {
-			t.Fatal(err)
-		}
-	}
 	ownerOf := func(port uint16) int {
 		res, err := c.Collect(context.Background())
 		if err != nil {
@@ -448,7 +446,7 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 	}
 	fdDir := filepath.Join(dir, strconv.Itoa(fixDenied), "fd")
 
-	addListen(8090, 2010) // the socket fixDenied holds
+	addListen(t, dir, 8090, fixUser, 2010) // the socket fixDenied holds
 	if got := ownerOf(8090); got != 0 {
 		t.Fatalf("tick 1: owner %d, want 0 (fd/ denied)", got)
 	}
@@ -458,9 +456,81 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 	if got := ownerOf(8090); got != 0 {
 		t.Fatalf("tick 2: owner %d, want 0 (same unmatched set, denied pid skipped)", got)
 	}
-	addListen(8091, 2999) // a new unmatched inode, owned by nobody
+	addListen(t, dir, 8091, fixUser, 2999) // a new unmatched inode, owned by nobody
 	if got := ownerOf(8090); got != fixDenied {
 		t.Fatalf("tick 3: owner %d, want %d (unmatched set changed, pid retried)", got, fixDenied)
+	}
+}
+
+// TestCollectOwnerHint: as root, the owner hint blames permissions only when the fd walk was
+// denied a read, of fd/ or of an fd link. Otherwise an unowned listener belongs to a process
+// outside devdash's pid namespace or to the kernel, and the hint says so (DEV-66).
+func TestCollectOwnerHint(t *testing.T) {
+	const (
+		capability = "root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE"
+		module     = "denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"
+		namespace  = "not visible from this pid namespace, or the socket is held by the kernel"
+	)
+	tests := []struct {
+		name   string
+		fdMode os.FileMode // of fixDenied's fd/: 0 denies fd/, 0o444 its links, 0o755 nothing
+		ptrace bool
+		want   string
+	}{
+		{"nothing denied", 0o755, false, namespace},
+		{"nothing denied, CAP_SYS_PTRACE", 0o755, true, namespace},
+		{"fd/ denied", 0, false, capability},
+		{"fd/ denied, CAP_SYS_PTRACE", 0, true, module},
+		{"fd link denied", 0o444, false, capability},
+		{"fd link denied, CAP_SYS_PTRACE", 0o444, true, module},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, denied := copyProc500(t)
+			if tt.fdMode != 0o755 && !denied {
+				t.Skip("running as root: chmod does not deny")
+			}
+			if err := os.Chmod(filepath.Join(dir, strconv.Itoa(fixDenied), "fd"), tt.fdMode); err != nil {
+				t.Fatal(err)
+			}
+			addListen(t, dir, 8091, 0, 2999) // no process holds inode 2999: the kernel, or another pid namespace
+			c := newLinux(dir)
+			c.euid, c.ptrace = 0, tt.ptrace
+			// Tick 2 skips a pid whose fd/ was denied on tick 1; that still counts as denied.
+			for tick := 1; tick <= 2; tick++ {
+				res, err := c.Collect(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, l := range res.Listeners {
+					if l.Port == 8091 && l.PID != 0 {
+						t.Fatalf("tick %d: :8091 owned by %d", tick, l.PID)
+					}
+				}
+				if !strings.Contains(res.OwnerHint, tt.want) || strings.Contains(res.OwnerHint, "sudo") {
+					t.Errorf("tick %d: owner hint %q, want one containing %q", tick, res.OwnerHint, tt.want)
+				}
+			}
+			c = newLinux(dir)
+			c.euid, c.ptrace = fixUser, tt.ptrace
+			if res, err := c.Collect(context.Background()); err != nil || res.OwnerHint != "" {
+				t.Errorf("as a user: owner hint %q, err %v; want \"\" (Build's sudo hint)", res.OwnerHint, err)
+			}
+		})
+	}
+}
+
+// addListen appends a 127.0.0.1:port listener with the given socket uid and inode to the
+// net/tcp of the proc root dir.
+func addListen(t *testing.T, dir string, port uint16, uid int, inode uint64) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(dir, "net/tcp"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fmt.Fprintf(f, "  99: 0100007F:%04X 00000000:0000 0A 00000000:00000000 00:00000000 00000000  %d        0 %d 1 0 100 0 0 10 0\n", port, uid, inode)
+	if err := errors.Join(err, f.Close()); err != nil {
+		t.Fatal(err)
 	}
 }
 

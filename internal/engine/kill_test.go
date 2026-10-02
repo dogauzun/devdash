@@ -119,6 +119,11 @@ func TestNewPlan(t *testing.T) {
 	proxy.ContainerID = "c0ffee"
 	unknownCtr := unknown
 	unknownCtr.ContainerID = "c0ffee"
+	unknownCtr.Listeners = []model.Listener{{Proto: "tcp4", Port: 631, ContainerID: "c0ffee"}}
+	// A holder Reconcile would not mark (neither a runtime process nor PID 0) stays refused
+	// as the container's even with a port no container published.
+	proxyMixed := proxy
+	proxyMixed.Listeners = []model.Listener{{Proto: "tcp4", Port: 5432, ContainerID: "c0ffee"}, {Proto: "tcp4", Port: 6443}}
 	outside := proc(T, 7)
 	outside.ProjectID = ""
 	backend := proc(C2, T)
@@ -126,6 +131,11 @@ func TestNewPlan(t *testing.T) {
 	backend.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432}, {Proto: "tcp4", Port: 5432}}
 	backendMany := backend
 	backendMany.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432}, {Proto: "tcp6", Port: 6443}}
+	// Docker Desktop with Kubernetes on: the backend holds shop-db-1's 5432 and its own 6443,
+	// so Reconcile gives it shop-db-1's ContainerID, but docker stop would not free 6443.
+	backendK8s := backend
+	backendK8s.ContainerID = "c0ffee"
+	backendK8s.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432, ContainerID: "c0ffee"}, {Proto: "tcp6", Port: 6443}}
 	dproxy := proc(C1, T)
 	dproxy.Name, dproxy.Argv = "docker-proxy", []string{"/usr/bin/docker-proxy", "-proto", "tcp"}
 	cli := proc(C1, T)
@@ -179,6 +189,13 @@ func TestNewPlan(t *testing.T) {
 		{name: "container port", procs: []model.Process{proxy}, key: proxy.Key(), refusedAs: "docker stop shop-db-1"},
 		{name: "unknown owner of a container port", procs: []model.Process{unknownCtr}, key: unknownCtr.Key(), refusedAs: "docker stop shop-db-1"},
 		{name: "tree containing a container port", procs: []model.Process{proc(T, 7), proxy}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true}, refusedAs: "docker stop shop-db-1"},
+		{name: "container holder with an unpublished port", procs: []model.Process{proxyMixed}, key: proxyMixed.Key(), refusedAs: "docker stop shop-db-1"},
+		{name: "runtime holding a container port and its own", procs: []model.Process{backendK8s}, key: backendK8s.Key(),
+			refusedAs: "pid 5000012 (com.docker.backend) is part of the container runtime, not your service: find the container with docker ps"},
+		{name: "tree containing a runtime holding a container port and its own", procs: []model.Process{proc(T, 7), backendK8s}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true},
+			refusedAs: "pid 5000012 (com.docker.backend) is part of the container runtime"},
+		{name: "group containing a runtime holding a container port and its own", procs: []model.Process{proc(T, 7), func() model.Process { p := backendK8s; p.PPID = 7; return p }()},
+			key: proc(T, 7).Key(), opt: KillOptions{Tree: true}, pgids: map[int]int{T: T, C2: T}, refusedAs: "pid 5000012 (com.docker.backend) is part of the container runtime"},
 		{name: "runtime holding one port", procs: []model.Process{backend}, key: backend.Key(), refusedAs: "pid 5000012 (com.docker.backend) is part of the container runtime, not your service: find its container with docker ps --filter publish=5432"},
 		{name: "runtime holding one port, force", procs: []model.Process{backend}, key: backend.Key(), opt: KillOptions{Force: true}, refusedAs: "container runtime"},
 		{name: "runtime holding one port, tree force", procs: []model.Process{backend}, key: backend.Key(), opt: KillOptions{Tree: true, Force: true}, refusedAs: "container runtime"},
@@ -432,6 +449,52 @@ func TestKillRejectsBadPlans(t *testing.T) {
 			f.ppids = map[int]int{DDPP: GP, GP: 1} // the OS's view; the plan was never checked against a snapshot
 			if _, err := kill(tt.plan, time.Millisecond, f.sys()); err == nil || len(f.sent) != 0 {
 				t.Errorf("err %v, sent %v", err, f.sent)
+			}
+		})
+	}
+}
+
+// TestNewPlanTreeOfUnknownOwner: --tree on the unknown owner of a port (PID 0) or on init
+// collects nothing. Every process whose ppid is 0 or 1 would otherwise join the plan, which
+// only the refusal loop and check stood between and the signal (DEV-67).
+func TestNewPlanTreeOfUnknownOwner(t *testing.T) {
+	unknown := model.Process{Name: "unknown", Listeners: []model.Listener{{Proto: "tcp4", Port: 18080}}}
+	unknownCtr := unknown
+	unknownCtr.ContainerID = "c0ffee"
+	unknownCtr.Listeners = []model.Listener{{Proto: "tcp4", Port: 18080, ContainerID: "c0ffee"}}
+	initp := proc(1, 0)
+	initp.Name = "systemd"
+	kthreadd := proc(2, 0)
+	tests := []struct {
+		name   string
+		target model.Process
+		want   string
+	}{
+		{"unknown owner", unknown, "pid 0 is not a process"},
+		{"unknown owner of a container port", unknownCtr, "use docker stop c0ffee"},
+		{"init", initp, "pid 1 (systemd) is init"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := []model.Process{tt.target, kthreadd, proc(T, 1), proc(C1, T)}
+			if tt.target.PID != 1 {
+				ps = append(ps, initp)
+			}
+			f := newFake(ps...)
+			sy := f.sys()
+			var asked []int
+			getpgid := sy.getpgid
+			sy.getpgid = func(pid int) (int, error) { asked = append(asked, pid); return getpgid(pid) }
+			_, err := newPlan(snap(ps...), tt.target.Key(), KillOptions{Tree: true, Force: true}, sy)
+			var r *Refusal
+			if !errors.As(err, &r) || !strings.Contains(r.Reason, tt.want) {
+				t.Fatalf("err = %v, want a refusal containing %q", err, tt.want)
+			}
+			if slices.Contains(asked, tt.target.PID) {
+				t.Errorf("asked the process group of pid %d; a tree of it must not be built", tt.target.PID)
+			}
+			if len(f.sent) != 0 {
+				t.Errorf("planning sent %v", f.sent)
 			}
 		})
 	}

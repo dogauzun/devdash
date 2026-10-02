@@ -64,6 +64,7 @@ type Model struct {
 	sel    model.RowKey // selected row; never an index (rows.go)
 	selIdx int          // index of sel in rows, -1 when rows is empty
 	top    int          // first table row on screen (table.go)
+	tcache tableCache   // derived from all rows, per rebuild (table.go)
 
 	filter    string // active filter query (rows.go)
 	filtering bool   // the filter prompt has the keyboard

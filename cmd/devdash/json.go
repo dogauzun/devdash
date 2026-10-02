@@ -84,9 +84,10 @@ type (
 		Unknown    []string       `json:"unknown"`
 	}
 	jsonListener struct {
-		Proto string `json:"proto"`
-		Addr  string `json:"addr"`
-		Port  uint16 `json:"port"`
+		Proto     string  `json:"proto"`
+		Addr      string  `json:"addr"`
+		Port      uint16  `json:"port"`
+		Container *string `json:"container"`
 	}
 	jsonContainer struct {
 		ID             string     `json:"id"`
@@ -185,7 +186,7 @@ func process(p model.Process) jsonProcess {
 		j.RSSBytes = &p.RSSBytes
 	}
 	for _, l := range p.Listeners {
-		j.Listeners = append(j.Listeners, jsonListener{l.Proto, l.Addr.String(), l.Port})
+		j.Listeners = append(j.Listeners, jsonListener{l.Proto, l.Addr.String(), l.Port, str(l.ContainerID)})
 	}
 	j.Unknown = unknown.Names()
 	return j

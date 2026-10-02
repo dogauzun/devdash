@@ -1,0 +1,55 @@
+name: Record macOS blobs
+
+# Records the darwin decoder blobs (internal/collector/testdata/*.macos-<version>.<arch>.bin) on
+# GitHub's macOS runners, for the per-version fixtures the spec's Testing strategy asks for
+# (DEV-50). Run by hand from the Actions tab, or by a pull request that edits this file; check
+# the uploaded files in.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: [.github/workflows/record-blobs.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The test binary is started from the runner's shell rather than under `go test`, so no
+      # ad-hoc-signed ancestor can make the kernel withhold the PCB list (DEV-10).
+      - name: Record
+        working-directory: internal/collector
+        run: |
+          set -eu
+          go test -c -o "$RUNNER_TEMP/collector.test" .
+          rm -f testdata/*.macos-*.bin
+          DEVDASH_RECORD=1 "$RUNNER_TEMP/collector.test" -test.run '^TestRecordBlobs$' -test.v
+          ls -l testdata/*.bin
+
+      - name: Decode what was recorded
+        working-directory: internal/collector
+        run: go test -run '^TestDecodeRecordedBlobs$' -v .
+
+      # Also in the log, so the files can be recovered without downloading the artifact.
+      - name: Print blobs
+        working-directory: internal/collector/testdata
+        run: |
+          echo "BEGIN BLOBS ${{ matrix.os }}"
+          tar -czf - *.macos-*.bin | base64
+          echo "END BLOBS ${{ matrix.os }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: blobs-${{ matrix.os }}
+          path: internal/collector/testdata/*.macos-*.bin
