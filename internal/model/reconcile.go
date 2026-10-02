@@ -12,9 +12,10 @@ import "net/netip"
 // container's. A specific listener never takes an every-interface mapping.
 //
 // A matched listener gets ContainerID, and its process kind container. The process itself gets
-// ContainerID only when all its matched listeners are one container's: Docker Desktop's
-// com.docker.backend holds every container's ports, so it stays one row and each container
-// becomes its own row through Flatten. Containers with no matching listener stay only in
+// ContainerID only when every one of its listeners is the same container's: Docker Desktop's
+// com.docker.backend and OrbStack Helper hold every container's ports next to ports of their
+// own, so such a process stays its own row and each container becomes its own row through
+// Flatten. Containers with no matching listener stay only in
 // Snapshot.Containers; Flatten turns them into rows. Reconcile modifies procs and their
 // Listeners in place (Build passes fresh slices) and returns procs.
 func Reconcile(procs []Process, containers []Container) []Process {
@@ -63,23 +64,25 @@ func Reconcile(procs []Process, containers []Container) []Process {
 		if p.PID != 0 && !isProxy(*p) {
 			continue
 		}
-		owner, shared := "", false
+		// whole: every socket p holds is owner's. A second container's socket, or one of its
+		// own (OrbStack Helper's 32222, Docker Desktop's Kubernetes on 6443), keeps p its own row.
+		owner, whole := "", true
 		for j := range p.Listeners {
 			id := match(p.Listeners[j])
+			if id == "" || owner != "" && owner != id {
+				whole = false
+			}
 			if id == "" {
 				continue
 			}
 			p.Listeners[j].ContainerID = id
-			if owner != "" && owner != id {
-				shared = true
-			}
 			owner = id
 		}
 		if owner == "" {
 			continue
 		}
 		p.Kind = KindContainer
-		if !shared {
+		if whole {
 			p.ContainerID = owner
 		}
 	}

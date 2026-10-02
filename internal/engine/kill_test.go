@@ -132,7 +132,8 @@ func TestNewPlan(t *testing.T) {
 	backendMany := backend
 	backendMany.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432}, {Proto: "tcp6", Port: 6443}}
 	// Docker Desktop with Kubernetes on: the backend holds shop-db-1's 5432 and its own 6443,
-	// so Reconcile gives it shop-db-1's ContainerID, but docker stop would not free 6443.
+	// and a snapshot that gives it shop-db-1's ContainerID anyway (Reconcile did before PR #52)
+	// is still refused as the runtime's: docker stop would not free 6443.
 	backendK8s := backend
 	backendK8s.ContainerID = "c0ffee"
 	backendK8s.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432, ContainerID: "c0ffee"}, {Proto: "tcp6", Port: 6443}}
@@ -492,6 +493,73 @@ func TestNewPlanTreeOfUnknownOwner(t *testing.T) {
 			}
 			if slices.Contains(asked, tt.target.PID) {
 				t.Errorf("asked the process group of pid %d; a tree of it must not be built", tt.target.PID)
+			}
+			if len(f.sent) != 0 {
+				t.Errorf("planning sent %v", f.sent)
+			}
+		})
+	}
+}
+
+// TestNewPlanOrbStack: OrbStack's port forwarder (recorded argv, OrbStack 2.2.3) and its app
+// are refused by name as runtime processes in every mode, with Docker's container list or
+// without it (--no-docker); only a port that is wholly one container's names docker stop
+// (DEV-73).
+func TestNewPlanOrbStack(t *testing.T) {
+	helper := proc(C2, 1)
+	helper.Name, helper.UID, helper.User, helper.ProjectID = "OrbStack Helper", 501, "dogauzun", ""
+	helper.Argv = []string{"/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app/Contents/MacOS/OrbStack Helper",
+		"vmgr", "-build-id", "macho:05775f98b4bb3d75b88520220872c248", "-handoff"}
+	published := []model.Listener{{Proto: "tcp4", Port: 18090}, {Proto: "tcp6", Port: 18090}}
+	own := []model.Listener{{Proto: "tcp4", Port: 32222}, {Proto: "tcp6", Port: 32222}, {Proto: "tcp4", Port: 59838}}
+	with := func(p model.Process, ctr string, ls ...model.Listener) model.Process {
+		p.ContainerID, p.Listeners = ctr, ls
+		if ctr != "" {
+			p.Kind = model.KindContainer
+		}
+		return p
+	}
+	reconciled := slices.Clone(published)
+	for i := range reconciled {
+		reconciled[i].ContainerID = "probe"
+	}
+	app := proc(C1, 1)
+	app.Name, app.Argv, app.ProjectID = "OrbStack", []string{"/Applications/OrbStack.app/Contents/MacOS/OrbStack"}, ""
+
+	const runtime = "pid 5000012 (OrbStack Helper) is part of the container runtime, not your service: "
+	tests := []struct {
+		name      string
+		procs     []model.Process
+		key       model.RowKey
+		opt       KillOptions
+		refusedAs string
+	}{
+		{"no docker: helper holding one published port", []model.Process{with(helper, "", published...)}, helper.Key(), KillOptions{},
+			runtime + "find its container with docker ps --filter publish=18090"},
+		{"no docker: helper holding one published port, tree force", []model.Process{with(helper, "", published...)}, helper.Key(), KillOptions{Tree: true, Force: true},
+			runtime + "find its container with docker ps --filter publish=18090"},
+		{"no docker: helper holding its own ports too", []model.Process{with(helper, "", append(slices.Clone(published), own...)...)}, helper.Key(), KillOptions{},
+			runtime + "find the container with docker ps"},
+		{"helper's own port next to a container's", []model.Process{with(helper, "probe", append(slices.Clone(reconciled), own...)...)}, helper.Key(), KillOptions{Force: true},
+			runtime + "find the container with docker ps"},
+		{"helper holding only the container's port", []model.Process{with(helper, "probe", reconciled...)}, helper.Key(), KillOptions{},
+			"holds a port of container devdash-orb-probe: use docker stop devdash-orb-probe"},
+		{"tree containing the helper", []model.Process{proc(T, 1), with(func() model.Process { p := helper; p.PPID = T; return p }(), "", own...)}, proc(T, 1).Key(), KillOptions{Tree: true},
+			"pid 5000012 (OrbStack Helper) is part of the container runtime"},
+		{"orbstack's app", []model.Process{app}, app.Key(), KillOptions{},
+			"pid 5000011 (OrbStack) is part of the container runtime, not your service: find the container with docker ps"},
+		{"orbstack's app, tree force", []model.Process{app, with(func() model.Process { p := helper; p.PPID = C1; return p }(), "", own...)}, app.Key(), KillOptions{Tree: true, Force: true},
+			"pid 5000011 (OrbStack) is part of the container runtime"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(tt.procs...)
+			s := snap(tt.procs...)
+			s.Containers = []model.Container{{ID: "probe", Name: "devdash-orb-probe", Image: "nginx:alpine"}}
+			_, err := newPlan(s, tt.key, tt.opt, f.sys())
+			var r *Refusal
+			if !errors.As(err, &r) || !strings.Contains(r.Reason, tt.refusedAs) {
+				t.Fatalf("err = %v, want refusal containing %q", err, tt.refusedAs)
 			}
 			if len(f.sent) != 0 {
 				t.Errorf("planning sent %v", f.sent)

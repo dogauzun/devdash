@@ -31,7 +31,9 @@ dd=$tmp/devdash
 # Container-runtime process names devdash refuses to kill by name (docs/SPEC.md, "Refused
 # targets"; model.IsContainerRuntime). Used only as a guard: the script never runs a kill
 # whose target is a named process outside this list, since devdash would really signal it.
-runtime_names='dockerd containerd docker-proxy com.docker.backend com.docker.vpnkit vpnkit gvproxy rootlesskit rootlessport slirp4netns limactl pasta conmon'
+# Lower-case and comma-separated, as in internal/model/kinds_list.go: OrbStack's forwarder is
+# "OrbStack Helper", with a space.
+runtime_names='dockerd,containerd,docker-proxy,com.docker.backend,com.docker.vpnkit,vpnkit,gvproxy,rootlesskit,rootlessport,slirp4netns,limactl,pasta,conmon,orbstack helper,orbstack'
 
 compose() {
 	DEVDASH_GATE_PORT=$port docker compose -p "$project" -f "$compose_file" "$@"
@@ -115,10 +117,11 @@ guard() {
 		| select(.pid != 0 and any(.listeners[]; .port == $port and .container == null))
 		| "\(.pid):\(.name)"' "$1" >"$tmp/guard"
 	while IFS= read -r owner; do
-		case " $runtime_names " in
-		*" ${owner#*:} "*) continue ;;
+		lower=$(printf '%s\n' "${owner#*:}" | tr '[:upper:]' '[:lower:]')
+		case ",$runtime_names," in
+		*",$lower,"*) continue ;;
 		esac
-		case ${owner#*:} in
+		case $lower in
 		containerd-shim*) continue ;;
 		esac
 		fail "port $port is held by pid ${owner%%:*} (${owner#*:}), which is neither the container's nor a known runtime process: devdash kill would signal it, so the gate stops here"
