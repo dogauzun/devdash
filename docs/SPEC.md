@@ -120,13 +120,13 @@ Everything is read from kernel interfaces directly; lsof, ss, netstat and ps nev
 | Facet | Linux, own uid | Linux, other uid | macOS, own uid | macOS, other uid |
 | --- | --- | --- | --- | --- |
 | pid, ppid, uid, name, start time | yes | yes | yes | yes |
-| argv | yes | yes (world-readable unless `hidepid`) | yes | no (root only), verify |
+| argv | yes | yes (world-readable unless `hidepid`; verified 2026-10-02) | yes | no (root only), verify |
 | cwd | yes | no | yes | no |
-| which TCP ports are listening | yes (world-readable) | yes | yes | from the PCB list when it is served, verify on macOS 27 |
+| which TCP ports are listening | yes (world-readable) | yes, with the socket's uid, also under `hidepid` | yes | from the PCB list when it is served, verify on macOS 27 |
 | owning pid of a listener | yes | no | yes | `so_last_pid` from the PCB list when served |
 | CPU time, RSS | yes | yes | yes | no, verify |
 
-**Linux.** The process list is the numeric entries of `/proc`. Per process: `/proc/[pid]/stat` gives ppid, state, utime, stime and starttime (clock ticks since boot at USER_HZ = 100, added to `btime` from `/proc/stat`); `/proc/[pid]/status` gives the real uid; `/proc/[pid]/cmdline` is NUL-separated argv (empty for kernel threads, which are skipped); `/proc/[pid]/statm` gives resident pages; `readlink /proc/[pid]/cwd` fails with EACCES for other users' processes. Listeners come from `/proc/net/tcp` and `/proc/net/tcp6`: rows with state `0A`, local address and port in hex, the socket inode in the last numeric column. Ownership is the inode: `readlink /proc/[pid]/fd/*` yields `socket:[inode]`, which is scanned only for pids of our own uid (others fail anyway) and only while unmatched listener inodes remain. `/proc/net/*` is per network namespace, so sockets inside containers are not visible; their published ports appear as docker-proxy and are reconciled through the Docker API instead.
+**Linux.** The process list is the numeric entries of `/proc`. Per process: `/proc/[pid]/stat` gives ppid, state, utime, stime and starttime (clock ticks since boot at USER_HZ = 100, added to `btime` from `/proc/stat`); `/proc/[pid]/status` gives the real uid; `/proc/[pid]/cmdline` is NUL-separated argv (empty for kernel threads, zombies and processes that blanked their argv; kernel threads, recognised by `PF_KTHREAD` in the stat flags, and zombies, state `Z` or `X`, are skipped, while a user process with an empty argv is kept); `/proc/[pid]/statm` gives resident pages; `readlink /proc/[pid]/cwd` fails with EACCES for other users' processes. Listeners come from `/proc/net/tcp` and `/proc/net/tcp6`: rows with state `0A`, local address and port in hex (the address is printed as 32-bit words in host byte order), the socket's uid in the 8th column and its inode in the 10th (not the last: refcount, pointer and timer columns follow). Ownership is the inode: `readlink /proc/[pid]/fd/*` yields `socket:[inode]`, which is scanned only for pids of our own uid (others fail anyway; all pids when running as root) and only while unmatched listener inodes remain. `/proc/net/*` is per network namespace, so sockets inside containers are not visible; their published ports appear as docker-proxy and are reconciled through the Docker API instead.
 
 **macOS.** The process list and its basic facets come from one `sysctl kern.proc.all` call (`unix.SysctlKinfoProcSlice` in `golang.org/x/sys/unix`): pid, ppid, uid, start time and the 16-character `p_comm`. Everything else comes from libproc, loaded with purego so the build stays `CGO_ENABLED=0`, which is how [gopsutil v4](https://github.com/shirou/gopsutil/blob/master/process/process_darwin.go) does it and where the struct layouts can be checked: `proc_pidinfo(PROC_PIDVNODEPATHINFO)` for cwd, `proc_pidinfo(PROC_PIDTASKINFO)` for CPU time and resident size, `proc_pidinfo(PROC_PIDLISTFDS)` then `proc_pidfdinfo(PROC_PIDFDSOCKETINFO)` per socket fd for listeners (kind `SOCKINFO_TCP`, state `TSI_S_LISTEN`, local port and family). argv comes from `sysctl kern.procargs2`. All of these work for our own uid without root.
 
@@ -298,7 +298,7 @@ Rules for the loop: collection runs with a context timeout of 1.5 s; a timed-out
 | process exits during collection | skipped silently; a partially read process is dropped rather than shown half-filled |
 | more than 5000 processes | interval starts at 5 s, argv is read only for processes in a project or with a listener |
 | terminal narrower than 80 columns | table keeps name, ports and pid only; detail pane becomes an overlay |
-| Linux `/proc` mounted with `hidepid=2` | other users' processes invisible; one warning naming the mount option |
+| Linux `/proc` mounted with `hidepid=1` or `2` (shown as `noaccess` / `invisible` since kernel 5.8) | other users' processes invisible, their listeners stay without an owner; one warning naming the mount option |
 
 ## Testing strategy
 
