@@ -346,6 +346,23 @@ func TestSnapshot(t *testing.T) {
 	})
 }
 
+func TestSnapshotAfter(t *testing.T) {
+	t0 := time.Now()
+	step := func(at, cpu time.Duration) collector.Step {
+		return collector.Step{Result: collector.Result{TakenAt: t0.Add(at),
+			Processes: []collector.Process{{PID: 7, StartTime: t0, CPUTime: cpu}}}}
+	}
+	o := Options{Collector: &collector.Fake{Steps: []collector.Step{step(0, 0), step(200*time.Millisecond, 50*time.Millisecond)}}, Resolver: model.NewResolver("", nil)}
+	first, err := Snapshot(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := SnapshotAfter(context.Background(), o, first)
+	if err != nil || s.Processes[0].CPUPercent != 25 {
+		t.Errorf("cpu %v, err %v; want 25", s.Processes[0].CPUPercent, err)
+	}
+}
+
 func TestUserCache(t *testing.T) {
 	calls := map[int]int{}
 	c := userCache{names: map[int]string{}, lookup: func(uid int) string { calls[uid]++; return "u" + strconv.Itoa(uid) }}
