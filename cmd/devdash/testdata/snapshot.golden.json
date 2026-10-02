@@ -71,7 +71,13 @@
       "cwd": "/TMP/shop-cart",
       "cpu_percent": 150,
       "rss_bytes": 4096,
-      "listeners": [],
+      "listeners": [
+        {
+          "proto": "tcp6",
+          "addr": "fe80::1%lo0",
+          "port": 8081
+        }
+      ],
       "kind": "test",
       "project": "/TMP/shop-cart",
       "container": null,

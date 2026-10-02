@@ -332,3 +332,47 @@ func TestDecodePCBList(t *testing.T) {
 		t.Errorf("header-only list: %d %v", pcbs, ls)
 	}
 }
+
+// TestDecodeScopedAddr checks that both listener decoders, the fd walk's socket_fdinfo and the
+// PCB list's xinpcb_n, read a link-local address with the kernel's embedded scope (fe80:N::1,
+// N being lo0's index) as fe80::1%lo0, and leave an unscoped or a global address alone.
+func TestDecodeScopedAddr(t *testing.T) {
+	lo, err := net.InterfaceByName("lo0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := netip.MustParseAddr("fe80::1").As16()
+	scoped[2], scoped[3] = byte(lo.Index>>8), byte(lo.Index)
+	tests := []struct {
+		name string
+		in   [16]byte
+		want string
+	}{
+		{"embedded-scope", scoped, "fe80::1%lo0"},
+		{"link-local-unscoped", netip.MustParseAddr("fe80::1").As16(), "fe80::1"},
+		{"global", netip.MustParseAddr("2001:db8:1::1").As16(), "2001:db8:1::1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := Listener{Proto: "tcp6", Addr: netip.MustParseAddr(tt.want), Port: 8080}
+
+			fdi := make([]byte, sizeofSocketFDInfo)
+			le.PutUint32(fdi[256:], 2) // SOCKINFO_TCP
+			le.PutUint32(fdi[344:], 1) // TSI_S_LISTEN
+			fdi[268], fdi[269] = 0x1f, 0x90
+			fdi[288] = 0x2 // INP_IPV6
+			copy(fdi[312:], tt.in[:])
+			if s, ok := decodeSocketFDInfo(fdi); !ok || s.Listener != want {
+				t.Errorf("socket_fdinfo: %+v %v, want %+v", s.Listener, ok, want)
+			}
+
+			inp := make([]byte, 80)
+			inp[18], inp[19] = 0x1f, 0x90
+			inp[44] = 0x2 // INP_IPV6
+			copy(inp[64:], tt.in[:])
+			if proto, addr, port := decodeXinpcbN(inp); (Listener{Proto: proto, Addr: addr, Port: port}) != want {
+				t.Errorf("xinpcb_n: %s %s %d, want %+v", proto, addr, port, want)
+			}
+		})
+	}
+}
