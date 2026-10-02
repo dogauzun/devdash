@@ -119,7 +119,12 @@ func TestUsageErrorMessages(t *testing.T) {
 		{[]string{"--all=false", "--no-docker=x"}, "--no-docker=x: not true or false"},
 		{[]string{"--bogus"}, "unknown flag --bogus"},
 		{[]string{"-bogus=1", "--json"}, "unknown flag --bogus"},
-		{[]string{"port", "-1"}, "unknown flag --1"},
+		{[]string{"port", "-1"}, "unknown flag -1"},
+		{[]string{"port", "3000", "--9"}, "unknown flag -9"},
+		{[]string{"kill", "-9", "3000"}, "unknown flag -9 (use --force to send SIGKILL)"},
+		{[]string{"-9", "kill", "3000"}, "unknown flag -9 (use --force to send SIGKILL)"},
+		{[]string{"kill", "-15", "3000"}, "unknown flag -15"},
+		{[]string{"kill", "3000", "-9x"}, "unknown flag --9x"},
 		{[]string{"---x"}, "bad flag syntax: ---x"},
 		{[]string{"port", "abc"}, `"abc" is not a port number (1-65535)`},
 	}

@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -234,15 +235,15 @@ func parse(args []string) (options, error) {
 	// The flag package stops at the first non-flag argument; resume after each one so flags
 	// may follow the subcommand. No subcommand takes an argument starting with "-".
 	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return o, flagError(err, bad)
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			return o, flagError(err, bad, slices.Contains(args, "kill"))
 		}
 		if fs.NArg() == 0 {
 			break
 		}
 		pos = append(pos, fs.Arg(0))
-		args = fs.Args()[1:]
+		rest = fs.Args()[1:]
 	}
 	o.NoColor = o.NoColor || os.Getenv("NO_COLOR") != ""
 	if o.Tick < engine.MinTick {
@@ -369,14 +370,22 @@ func (v checkedValue) Set(s string) error {
 
 // flagError is the usage error for err from FlagSet.Parse: bad, the value a flag refused, when
 // set; an unknown flag or one missing its value, named with two dashes as the usage names
-// them; flag.ErrHelp and anything else ("bad flag syntax: ---x") as it is.
-func flagError(err, bad error) error {
+// them; flag.ErrHelp and anything else ("bad flag syntax: ---x") as it is. An unknown flag
+// that is all digits keeps one dash, as typed (`port -1`, `kill -9`), and with kill on the
+// command line, -9 adds a hint at --force.
+func flagError(err, bad error, kill bool) error {
 	if bad != nil {
 		return bad
 	}
 	msg := err.Error()
 	if name, ok := strings.CutPrefix(msg, "flag provided but not defined: -"); ok {
-		return fmt.Errorf("unknown flag --%s", name)
+		if strings.Trim(name, "0123456789") != "" {
+			return fmt.Errorf("unknown flag --%s", name)
+		}
+		if kill && name == "9" {
+			return errors.New("unknown flag -9 (use --force to send SIGKILL)")
+		}
+		return fmt.Errorf("unknown flag -%s", name)
 	}
 	if name, ok := strings.CutPrefix(msg, "flag needs an argument: -"); ok {
 		return fmt.Errorf("--%s needs a value", name)
