@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev-19-ci]  # TEMP: remove dev-19-ci
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Lint and the four cross-builds run here only: macOS minutes cost 10x.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Later checks run even if an earlier one fails, so a PR sees every failure at once.
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint (linux)
+        if: ${{ !cancelled() }}
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+
+      # The darwin files are build-tagged; lint them here too.
+      - name: golangci-lint (darwin)
+        if: ${{ !cancelled() }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOOS: darwin
+        with:
+          version: v2.13.2
+
+      - name: go test -race
+        if: ${{ !cancelled() }}
+        run: go test -race ./...
+
+      - name: go build (4 targets)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            echo "== $target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath ./...
+          done
+
+      - name: Benchmarks
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: &bench |
+          status=0
+          go test -run '^$' -bench . -benchtime 20x ./... > bench.txt 2>&1 || status=$?
+          cat bench.txt
+          printf '### Benchmarks (%s)\n\n```\n%s\n```\n' "$RUNNER_OS" "$(cat bench.txt)" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        if: ${{ !cancelled() }}
+        run: go test -race ./...
+
+      - name: Benchmarks
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: *bench
