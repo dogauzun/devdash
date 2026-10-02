@@ -174,6 +174,7 @@ func fixture() model.Snapshot {
 		"/usr/bin/docker-proxy", "-proto", "tcp", "-host-ip", "0.0.0.0", "-host-port", "5432")
 	proxy.UID, proxy.Unknown = 0, model.FieldCwd|model.FieldCPU|model.FieldMem
 	proxy.Listeners = []model.Listener{lis("tcp4", "0.0.0.0", 5432)}
+	proxy.Listeners[0].ContainerID = "9f1c2a7b0d3e" // Reconcile marks the socket as the container's
 	proxy.ContainerID = "9f1c2a7b0d3e"
 
 	sshd := proc(1, 0, at(72*time.Hour), "root", "sshd", "", "", model.KindServer, "/usr/sbin/sshd", "-D")
