@@ -10,6 +10,7 @@
 | Keys | Every key in the tables is always present, except `timing_ms` keys marked otherwise. Key order is stable but not part of the contract. |
 | Absent values | `null`, never `""`, `0` or `[]` as a stand-in. A list that is known and empty is `[]`; a list that could not be read is `null`. |
 | Unreadable fields | Named in the process's `unknown` list, and their value is `null`. |
+| Strings | UTF-8. A byte that is not valid UTF-8 (in `argv`, `cwd`, `name`, a project path) is written as U+FFFD, so such a value cannot be turned back into the original bytes. |
 | Times | RFC 3339 in UTC, `Z` suffix, with the fraction the OS gives (Linux: 10 ms; macOS: 1 µs), trailing zeros dropped. |
 | Sizes | Bytes. |
 | Durations | Milliseconds, a number with up to 3 decimals (1 µs). |
