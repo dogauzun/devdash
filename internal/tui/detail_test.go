@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -390,5 +392,187 @@ func TestDetailNothingSelected(t *testing.T) {
 		if line(m, "nothing selected") == "" {
 			t.Errorf("width %d: empty table, open pane:\n%s", w, screen(m))
 		}
+	}
+}
+
+// longArgv is a Java command line of over 3,000 characters: one classpath word of 60 jars
+// between a few flags, the shape that used to fill the pane (DEV-86).
+func longArgv() []string {
+	jars := make([]string, 60)
+	for i := range jars {
+		jars[i] = fmt.Sprintf("/home/me/.gradle/caches/modules-2/jars/lib-%02d-1.0.jar", i)
+	}
+	argv := []string{"java", "-Xmx2g", "-cp", strings.Join(jars, ":"), "com.example.Main", "--port", "5173"}
+	if n := len(strings.Join(argv, " ")); n < 3000 {
+		panic(fmt.Sprintf("longArgv is %d characters, want at least 3000", n))
+	}
+	return argv
+}
+
+// paneLines returns the detail pane's lines without the split's separator: the right
+// columns of the body at 120 columns or more, the whole body below.
+func paneLines(m *Model) []string {
+	body := bodyLines(m)
+	if m.width < splitWidth {
+		return body
+	}
+	dw := detailWidth(m.width)
+	out := make([]string, len(body))
+	for i, l := range body {
+		p := ansi.Cut(l, m.width-dw, m.width)
+		out[i] = strings.TrimRight(strings.TrimPrefix(strings.TrimPrefix(p, "|"), " "), " ")
+	}
+	return out
+}
+
+// panePosition parses the pane's position line (its last line) as the 1-based first and last
+// document lines shown and the document's length; ok is false when there is none.
+func panePosition(m *Model) (first, last, n int, ok bool) {
+	pl := paneLines(m)
+	_, err := fmt.Sscanf(pl[len(pl)-1], "lines %d-%d of %d", &first, &last, &n)
+	return first, last, n, err == nil
+}
+
+// paneDocument pages through the pane with pgdown from where it is to its end and returns
+// the document lines seen, by index (lines above the starting point stay empty).
+func paneDocument(t *testing.T, m *Model) []string {
+	t.Helper()
+	var doc []string
+	for range 200 {
+		first, last, n, ok := panePosition(m)
+		if !ok {
+			t.Fatalf("no position line on an overflowing pane:\n%s", screen(m))
+		}
+		if doc == nil {
+			doc = make([]string, n)
+		}
+		for i, l := range paneLines(m)[:last-first+1] {
+			doc[first-1+i] = l
+		}
+		if last == n {
+			return doc
+		}
+		scroll(m, "pgdown")
+	}
+	t.Fatal("pgdown never reaches the end of the pane")
+	return nil
+}
+
+func TestDetailLongArgv(t *testing.T) {
+	argv := longArgv()
+	for _, tc := range []struct{ w, h int }{{120, 40}, {80, 24}} {
+		t.Run(fmt.Sprintf("%dx%d", tc.w, tc.h), func(t *testing.T) {
+			m, _ := newTest(t, tc.w, tc.h)
+			s := fixture()
+			s.Processes[1].Argv = argv
+			feed(m, s)
+			k := keyOf(s, 101)
+			detailSelect(t, m, k)
+			press(m, "enter")
+
+			// At the top: the command is capped at a third of the pane and ends with the count
+			// of lines it hides; every field after it is on screen.
+			pl := paneLines(m)
+			if !strings.HasPrefix(pl[0], "node 101 · server") {
+				t.Fatalf("pane starts with %q, want the title:\n%s", pl[0], screen(m))
+			}
+			cmd := 0
+			for _, l := range pl[1:] {
+				if !strings.HasPrefix(l, "command ") && (cmd == 0 || !strings.HasPrefix(l, "          ")) {
+					break
+				}
+				cmd++
+			}
+			if limit := len(pl) / 3; cmd > limit || cmd < 2 {
+				t.Errorf("command takes %d lines, want 2 to %d (a third of the %d-line pane)", cmd, limit, len(pl))
+			}
+			if l := strings.TrimSpace(pl[cmd]); !strings.HasPrefix(l, "… +") || !strings.HasSuffix(l, " lines") {
+				t.Errorf("capped command ends with %q, want \"… +N lines\"", l)
+			}
+			for _, label := range []string{"cwd", "project", "listeners", "parents", "started", "user"} {
+				if !slices.ContainsFunc(pl, func(l string) bool { return strings.HasPrefix(l, label+" ") }) {
+					t.Errorf("%s is not on screen under the long argv:\n%s", label, screen(m))
+				}
+			}
+
+			// The pane scrolls; pgdown leaves the selection alone, and the full argv is at the end.
+			doc := paneDocument(t, m)
+			if m.sel != k {
+				t.Errorf("pgdown moved the selection to %+v while the pane was open", m.sel)
+			}
+			full := slices.IndexFunc(doc, func(l string) bool { return strings.HasPrefix(l, "full argv ") })
+			if full < 0 {
+				t.Fatalf("no full argv in the pane document:\n%s", strings.Join(doc, "\n"))
+			}
+			var got strings.Builder
+			for i, l := range doc[full:] {
+				if i == 0 {
+					l = strings.TrimPrefix(l, "full argv")
+				}
+				got.WriteString(strings.ReplaceAll(l, " ", ""))
+			}
+			if want := strings.Join(argv, ""); got.String() != want {
+				t.Errorf("full argv in the pane:\n%s\nwant\n%s", got.String(), want)
+			}
+
+			// pgup goes back to the top.
+			for range 50 {
+				scroll(m, "pgup")
+			}
+			if first, _, _, _ := panePosition(m); first != 1 || !strings.HasPrefix(paneLines(m)[0], "node 101") {
+				t.Errorf("pgup does not return to the top:\n%s", screen(m))
+			}
+		})
+	}
+}
+
+func TestDetailScrollResets(t *testing.T) {
+	for _, w := range []int{80, 120} {
+		m, _ := newTest(t, w, 24)
+		s := fixture()
+		s.Processes[1].Argv = longArgv()
+		s.Processes[2].Argv = longArgv()
+		feed(m, s)
+		detailSelect(t, m, keyOf(s, 101))
+		press(m, "enter")
+		scroll(m, "pgdown")
+		if first, _, _, ok := panePosition(m); !ok || first == 1 {
+			t.Fatalf("width %d: pgdown does not scroll the pane:\n%s", w, screen(m))
+		}
+		// Another row starts at the top.
+		press(m, "down")
+		if first, _, _, _ := panePosition(m); first != 1 || !strings.HasPrefix(paneLines(m)[0], "esbuild 102") {
+			t.Errorf("width %d: a new selection does not start at the top:\n%s", w, screen(m))
+		}
+		// So does the pane after closing and opening it again.
+		scroll(m, "pgdown", "enter", "enter")
+		if first, _, _, _ := panePosition(m); first != 1 {
+			t.Errorf("width %d: enter, enter does not start the pane at the top:\n%s", w, screen(m))
+		}
+		scroll(m, "pgdown", "esc", "enter")
+		if first, _, _, _ := panePosition(m); first != 1 {
+			t.Errorf("width %d: esc, enter does not start the pane at the top:\n%s", w, screen(m))
+		}
+		// A pane that fits has no position line, and pgdown does not move it.
+		detailSelect(t, m, keyOf(s, 200))
+		scroll(m, "pgdown")
+		if _, _, _, ok := panePosition(m); ok || !strings.HasPrefix(paneLines(m)[0], "api 200") {
+			t.Errorf("width %d: a short pane scrolls or shows a position line:\n%s", w, screen(m))
+		}
+		if strings.Contains(screen(m), "full argv") || strings.Contains(screen(m), "… +") {
+			t.Errorf("width %d: a short command is capped:\n%s", w, screen(m))
+		}
+	}
+}
+
+func TestDetailClosedPageKeysMoveTable(t *testing.T) {
+	m, _ := newTest(t, 120, 24)
+	s := fixture()
+	feed(m, s)
+	detailSelect(t, m, keyOf(s, 101))
+	before := m.selIdx
+	scroll(m, "pgdown")
+	if m.selIdx == before {
+		t.Error("with the pane closed, pgdown no longer moves the table")
 	}
 }
