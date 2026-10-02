@@ -216,7 +216,9 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   devdash directly from a shell, or use sudo. Your own listeners are always found. See the
   Signing notes in [docs/SPEC.md](docs/SPEC.md#build-release-and-distribution) and [DECISIONS.md](DECISIONS.md) (DEV-10).
 - **Docker** support is being built. Until it lands, a published container port shows as
-  `docker-proxy`, or with an unknown owner when root holds it. Once it lands: Docker is
+  the process that forwards it (`docker-proxy` on Linux, `com.docker.backend` on Docker
+  Desktop for Mac, another forwarder on OrbStack, Colima or Podman), or with an unknown owner
+  when root holds it. Once it lands: Docker is
   optional; with no socket there are no container rows and no warning.
   A published port with no userland proxy behind it (iptables only) shows as a container row
   with no process. OrbStack, Colima and Podman may hold ports in processes devdash does not
