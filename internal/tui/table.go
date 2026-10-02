@@ -198,7 +198,8 @@ const (
 	markNone   = "  "
 )
 
-// nameCell is row i's name: indented by depth, a marker when it has children, and its label.
+// nameCell is row i's name: indented by depth, a marker when it has children, and its label,
+// cleaned (so the cached widest cell measures what is drawn).
 // A row has children when the next row is deeper, or when it is collapsed and had children
 // in the expanded rows (its children may have exited since it was collapsed).
 func (m *Model) nameCell(i int) string {
@@ -215,11 +216,12 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool) string {
 	case i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth:
 		mark = markOpen
 	}
-	return strings.Repeat("  ", r.Depth) + mark + rowLabel(r)
+	return strings.Repeat("  ", r.Depth) + mark + clean(rowLabel(r))
 }
 
 // rowLabel is what the name column says about r: the group for a header, the container name
 // and image for a container row or a process holding a container's port, else the process name.
+// It is snapshot text, not yet cleaned.
 func rowLabel(r model.Row) string {
 	switch r.Key.Header {
 	case model.GroupProject:
@@ -253,7 +255,7 @@ func rowLabel(r model.Row) string {
 	return ""
 }
 
-// cell is the text of column c for the process or container row i, unpadded.
+// cell is the text of column c for the process or container row i, unpadded and cleaned.
 func (m *Model) cell(i int, c col) string {
 	r := m.rows[i]
 	p := r.Process
@@ -291,15 +293,15 @@ func (m *Model) cell(i int, c col) string {
 		}
 		return mem(p.RSSBytes)
 	case colUser:
-		return cmp.Or(p.User, "-")
+		return cmp.Or(clean(p.User), "-")
 	case colCommand:
 		switch {
 		case unknown:
 			return ""
 		case len(p.Argv) == 0:
-			return p.Name
+			return clean(p.Name)
 		}
-		return strings.Join(p.Argv, " ")
+		return clean(strings.Join(p.Argv, " "))
 	}
 	return ""
 }
