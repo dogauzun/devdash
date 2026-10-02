@@ -1,5 +1,6 @@
 /devdash
 *.test
 *.out
-.claude/
+.claude/*
+!.claude/agents/
 /dist/

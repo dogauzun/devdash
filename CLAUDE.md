@@ -41,3 +41,5 @@ Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linu
 - No cgo; no shelling out to lsof/ss/netstat/ps on the refresh path.
 - Dependencies kept short: `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin), Bubble Tea/Lip Gloss/Bubbles later.
   No gopsutil, no Docker SDK.
+- Every PR is reviewed by the `pr-reviewer` agent (`.claude/agents/pr-reviewer.md`); merge only on its
+  `Verdict: APPROVE` / `Open findings: none.` with CI green.
