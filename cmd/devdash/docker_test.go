@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dogauzun/devdash/internal/docker"
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 // Every test of this package sees no Docker unless it replaces discover itself, so no test
@@ -83,8 +85,11 @@ func TestDockerEndpointInvalid(t *testing.T) {
 		w.Hint != `docker: DOCKER_HOST "ssh://box": scheme ssh is not supported` {
 		t.Errorf("Fetch = %v, %+v", cs, w)
 	}
+	c := fake() // with the timings every collector reports, so the output can be validated
+	c.Steps[0].Result.Timings = model.Timing{"proctable": time.Millisecond, "argv_cwd": time.Millisecond, "listeners": time.Millisecond}
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"--json"}, &stdout, &stderr, fake()); got != 0 || !strings.Contains(stdout.String(), `"code": "docker_endpoint_invalid"`) {
+	if got := run([]string{"--json"}, &stdout, &stderr, c); got != 0 || !strings.Contains(stdout.String(), `"code": "docker_endpoint_invalid"`) {
 		t.Errorf("--json: exit %d, stdout %s, stderr %q", got, stdout.String(), stderr.String())
 	}
+	validate(t, stdout.Bytes())
 }

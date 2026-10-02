@@ -120,7 +120,8 @@ The top-level object.
 | `listeners` | number | always | Listening sockets and their owners. |
 | `pcblist` | number | on macOS | Part of `listeners`: the `net.inet.tcp.pcblist_n` read. |
 | `projects` | number | always | Project resolution. |
-| `total` | number | always | Wall time of the second sample: collection, building the snapshot and naming users. |
+| `docker` | number | when Docker is configured | The Docker fetch the snapshot used, run alongside collection. Absent with `--no-docker` or when no endpoint was found. |
+| `total` | number | always | Wall time of the second sample: collection, waiting for the Docker fetch, building the snapshot and naming users. |
 
 ## Warning codes
 
@@ -130,3 +131,5 @@ The top-level object.
 | `process_fields_unreadable` | both | Processes of other users with fields in `unknown`; `count` is the number of processes. |
 | `pcblist_unavailable` | macOS | The kernel withheld other processes' sockets from the PCB list; other users' listeners may be missing. |
 | `proc_hidepid` | Linux | `/proc` is mounted with `hidepid`; other users' processes are invisible. |
+| `docker_endpoint_invalid` | both | `DOCKER_HOST` or the docker context names an endpoint devdash cannot use. |
+| `docker_unreachable` | both | A Docker socket exists but does not answer. |
