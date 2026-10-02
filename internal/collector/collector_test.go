@@ -13,17 +13,23 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// TestArgvWanted: with InProject, argv is read for a listener's owner and for the processes
-// InProject marks, and for nobody else; a short answer marks the rest false (DEV-92).
+// TestArgvWanted: with InProject, argv is read for a listener's owner, for the processes
+// InProject marks and for those whose kernel name may have been cut, and for nobody else; a
+// short answer marks the rest false (DEV-92).
 func TestArgvWanted(t *testing.T) {
-	procs := []Process{{PID: 10}, {PID: 11}, {PID: 12}, {PID: 13}}
+	procs := []Process{{PID: 10}, {PID: 11}, {PID: 12}, {PID: 13},
+		// Docker Desktop's backend as Linux comm and macOS p_comm cut it: argv[0] is what tells
+		// model.IsContainerRuntime, so kill refuses it by name (PR #64 review).
+		{PID: 14, Name: "com.docker.back"}, {PID: 15, Name: "com.docker.backe"},
+		{PID: 16, Name: "fourteen-chars"}, // shorter than any cut: the whole name
+	}
 	ls := []Listener{{Port: 22}, {Port: 3000, PID: 11}} // PID 0: owner unknown
 	var got []Process
 	o := Options{InProject: func(ps []Process) []bool {
 		got = ps
-		return []bool{false, false, true} // 13 not answered
+		return []bool{false, false, true} // 13 and on not answered
 	}}
-	want := []bool{false, true, true, false}
+	want := []bool{false, true, true, false, true, true, false}
 	if w := argvWanted(o, procs, ls); !slices.Equal(w, want) {
 		t.Errorf("argvWanted = %v, want %v", w, want)
 	}
