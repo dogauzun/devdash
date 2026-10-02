@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,7 +131,8 @@ func TestDockerEndpointInvalid(t *testing.T) {
 }
 
 // TestTUIDockerSocket: the dashboard's detail pane names the endpoint the engine's source
-// asks, from the same single discovery; nothing when there is no usable endpoint.
+// asks, from the same discovery; nothing when there is no usable endpoint (nil with
+// --no-docker or an invalid endpoint, "" while nothing is found).
 func TestTUIDockerSocket(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -137,7 +140,7 @@ func TestTUIDockerSocket(t *testing.T) {
 		ep       docker.Endpoint
 		ok       bool
 		err      error
-		want     string // "" means DockerSocket is nil
+		want     string // "" means DockerSocket is nil or returns ""
 		discover int    // discover calls expected
 	}{
 		{"default socket", options{}, docker.Endpoint{Network: "unix", Address: "/home/u/.docker/run/docker.sock", Source: "default"}, true, nil,
@@ -154,7 +157,7 @@ func TestTUIDockerSocket(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			calls, _ := stubDiscover(t, tt.ep, tt.ok, tt.err)
 			tt.o.All = true
-			eo := tt.o.engine(fake())
+			eo := tt.o.dashboard(fake())
 			e := engine.New(eo)
 			to := tuiOptions(tt.o, e, eo.Docker)
 			if *calls != tt.discover {
@@ -164,13 +167,116 @@ func TestTUIDockerSocket(t *testing.T) {
 				t.Errorf("Source %v (want the engine), Kill set %v, ShowAll %v", to.Source, to.Kill != nil, to.ShowAll)
 			}
 			switch {
-			case tt.want == "" && to.DockerSocket != nil:
-				t.Errorf("DockerSocket() = %q, want nil", to.DockerSocket())
+			case tt.want == "" && to.DockerSocket != nil && to.DockerSocket() != "":
+				t.Errorf("DockerSocket() = %q, want nil or \"\"", to.DockerSocket())
 			case tt.want != "" && to.DockerSocket == nil:
 				t.Errorf("DockerSocket is nil, want %q", tt.want)
 			case tt.want != "" && to.DockerSocket() != tt.want:
 				t.Errorf("DockerSocket() = %q, want %q", to.DockerSocket(), tt.want)
 			}
 		})
+	}
+}
+
+// discovered is one result of a stubbed discover.
+type discovered struct {
+	ep  docker.Endpoint
+	ok  bool
+	err error
+}
+
+// stubDiscoverSeq replaces discover for one test with one that returns results[i] on call
+// i+1 and the last result after that; the func it returns counts the calls so far.
+func stubDiscoverSeq(t *testing.T, results ...discovered) func() int {
+	t.Helper()
+	saved := discover
+	t.Cleanup(func() { discover = saved })
+	var mu sync.Mutex
+	n := 0
+	discover = func(docker.Env) (docker.Endpoint, bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		r := results[min(n, len(results)-1)]
+		n++
+		return r.ep, r.ok, r.err
+	}
+	return func() int { mu.Lock(); defer mu.Unlock(); return n }
+}
+
+// TestDashboardRediscovers (DEV-75): when nothing is found at start, the dashboard's engine
+// gets a Source that looks again (at its first Fetch, then on the retry cadence), so Docker
+// started after devdash shows up, and the detail pane's label follows it. The label is read
+// on the TUI's goroutine while the engine's Fetch sets it (run with -race). The one-shot
+// commands still get no source.
+func TestDashboardRediscovers(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "docker.sock") // gone again by the ping: no containers, no warning
+	ep := docker.Endpoint{Network: "unix", Address: sock, Source: "default"}
+	calls := stubDiscoverSeq(t, discovered{}, discovered{}, discovered{ep: ep, ok: true})
+
+	o := options{}
+	if eo := o.engine(fake()); eo.Docker != nil {
+		t.Errorf("one-shot: Docker = %#v, want nil", eo.Docker)
+	}
+	eo := o.dashboard(fake())
+	src, ok := eo.Docker.(*docker.Source)
+	if !ok {
+		t.Fatalf("nothing found: dashboard Docker = %#v, want a rediscovering Source", eo.Docker)
+	}
+	if src.RetryAfter() != 20*time.Second {
+		t.Errorf("RetryAfter = %v, want 20s (10 default ticks)", src.RetryAfter())
+	}
+	to := tuiOptions(o, engine.New(eo), eo.Docker)
+	if to.DockerSocket == nil || to.DockerSocket() != "" {
+		t.Fatalf("before discovery: DockerSocket is nil (%v) or not \"\"", to.DockerSocket == nil)
+	}
+	if n := calls(); n != 2 {
+		t.Fatalf("discover called %d times at start, want 2 (one-shot, dashboard)", n)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if cs, w := src.Fetch(context.Background()); cs != nil || w != nil {
+			t.Errorf("Fetch = %v, %+v; want nothing for a socket that is gone", cs, w)
+		}
+	}()
+	for fetching := true; fetching; {
+		select {
+		case <-done:
+			fetching = false
+		default:
+			if got := to.DockerSocket(); got != "" && got != sock {
+				t.Errorf("DockerSocket() = %q during Fetch", got)
+			}
+		}
+	}
+	if got := to.DockerSocket(); got != sock {
+		t.Errorf("after discovery: DockerSocket() = %q, want %q", got, sock)
+	}
+	if n := calls(); n != 3 {
+		t.Errorf("discover called %d times, want 3", n)
+	}
+}
+
+// TestDashboardNoDocker: --no-docker gives the dashboard no source and no discovery.
+func TestDashboardNoDocker(t *testing.T) {
+	calls := stubDiscoverSeq(t, discovered{})
+	if eo := (options{NoDocker: true}).dashboard(fake()); eo.Docker != nil {
+		t.Errorf("--no-docker: Docker = %#v, want nil", eo.Docker)
+	}
+	if n := calls(); n != 0 {
+		t.Errorf("--no-docker: discover called %d times", n)
+	}
+}
+
+// TestDashboardRediscoveryError: an endpoint that rediscovery finds but devdash cannot use
+// warns as one found at start does.
+func TestDashboardRediscoveryError(t *testing.T) {
+	bad := errors.New("docker context remote (tcp://box:2376): TLS is not supported; use a unix socket or plain tcp")
+	stubDiscoverSeq(t, discovered{}, discovered{err: bad})
+	cs, w := (options{}).dashboard(fake()).Docker.Fetch(context.Background())
+	_, want := endpointError{bad}.Fetch(context.Background())
+	if cs != nil || w == nil || *w != *want {
+		t.Errorf("Fetch = %v, %+v; want no containers, %+v", cs, w, want)
 	}
 }
