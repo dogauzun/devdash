@@ -22,6 +22,10 @@ func TestArgvWanted(t *testing.T) {
 		// model.IsContainerRuntime, so kill refuses it by name (PR #64 review).
 		{PID: 14, Name: "com.docker.back"}, {PID: 15, Name: "com.docker.backe"},
 		{PID: 16, Name: "fourteen-chars"}, // shorter than any cut: the whole name
+		// passt's pasta re-execs as pasta.avx2 and keeps argv[0] pasta, the name that makes it a
+		// runtime process (PR #64 re-review); a short cut prefix of a runtime name; a short
+		// name that is neither.
+		{PID: 17, Name: "pasta.avx2"}, {PID: 18, Name: "com.docker.vpn"}, {PID: 19, Name: "sleep"},
 	}
 	ls := []Listener{{Port: 22}, {Port: 3000, PID: 11}} // PID 0: owner unknown
 	var got []Process
@@ -29,7 +33,7 @@ func TestArgvWanted(t *testing.T) {
 		got = ps
 		return []bool{false, false, true} // 13 and on not answered
 	}}
-	want := []bool{false, true, true, false, true, true, false}
+	want := []bool{false, true, true, false, true, true, false, true, true, false}
 	if w := argvWanted(o, procs, ls); !slices.Equal(w, want) {
 		t.Errorf("argvWanted = %v, want %v", w, want)
 	}

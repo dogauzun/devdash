@@ -33,10 +33,10 @@ type Options struct {
 	// 5000 processes, argv only for processes in a project or with a listener). Collect then
 	// reads every other field and the listeners first, calls InProject once with the processes
 	// it kept (cwd read, Argv still nil) and reads argv only for those InProject marks, those
-	// holding a listener and those whose name the kernel may have cut (see argvWanted). Every
-	// other process has a nil Argv and FieldArgv in Unknown,
-	// and does not count toward process_fields_unreadable. InProject returns one bool per
-	// process, in the order given (a missing one means false), and runs on Collect's goroutine.
+	// holding a listener and those whose name may be a runtime's (see argvWanted). Every other
+	// process has a nil Argv and FieldArgv in Unknown, and does not count toward
+	// process_fields_unreadable. InProject returns one bool per process, in the order given
+	// (a missing one means false), and runs on Collect's goroutine.
 	InProject func(procs []Process) []bool
 }
 
@@ -45,9 +45,10 @@ type Options struct {
 const commCut = 15
 
 // argvWanted reports, for each of procs, whether Collect reads its argv when o.InProject is
-// set: the process holds one of ls, InProject marks it, or its Name may have been cut by the
-// kernel. Such a name is completed from argv[0], and a runtime process is known by it
-// (com.docker.backend's comm is com.docker.back): without argv, kill would not refuse it.
+// set: the process holds one of ls, InProject marks it, its Name may have been cut by the
+// kernel, or model.MayBeRuntime(Name). A runtime process is known by argv[0] when its name is
+// cut (com.docker.backend's comm is com.docker.back) or it re-execs under another name
+// (pasta as pasta.avx2): without argv, kill would not refuse it.
 func argvWanted(o Options, procs []Process, ls []Listener) []bool {
 	marked := o.InProject(procs)
 	holds := make(map[int]bool, len(ls))
@@ -58,7 +59,7 @@ func argvWanted(o Options, procs []Process, ls []Listener) []bool {
 	}
 	want := make([]bool, len(procs))
 	for i, p := range procs {
-		want[i] = holds[p.PID] || (i < len(marked) && marked[i]) || len(p.Name) >= commCut
+		want[i] = holds[p.PID] || (i < len(marked) && marked[i]) || len(p.Name) >= commCut || model.MayBeRuntime(p.Name)
 	}
 	return want
 }
