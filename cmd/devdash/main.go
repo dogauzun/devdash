@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/dogauzun/devdash/internal/collector"
+	"github.com/dogauzun/devdash/internal/docker"
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 	"github.com/dogauzun/devdash/internal/tui"
@@ -281,9 +282,38 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
-// engine returns the engine options for these flags. The Docker and colour settings are not
-// engine options; their readers take them from o.
+// engine returns the engine options for these flags. Unless --no-docker, it looks for a
+// Docker endpoint; the colour setting is not an engine option, its readers take it from o.
 func (o options) engine(c collector.Collector) engine.Options {
 	home, _ := os.UserHomeDir()
-	return engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
+	eo := engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
+	if !o.NoDocker {
+		eo.Docker = dockerSource(home)
+	}
+	return eo
+}
+
+// discover finds the Docker endpoint; tests replace it.
+var discover = docker.Discover
+
+// dockerSource is the container source for this machine: nil when no endpoint is found (no
+// containers, no warning), a docker.Source when one is, and endpointError when DOCKER_HOST or
+// the docker context names an endpoint devdash cannot use.
+func dockerSource(home string) engine.ContainerSource {
+	ep, ok, err := discover(docker.Env{Getenv: os.Getenv, Home: home})
+	switch {
+	case err != nil:
+		return endpointError{err}
+	case !ok:
+		return nil // not a typed nil: Options.Docker must compare equal to nil
+	}
+	return docker.NewSource(ep)
+}
+
+// endpointError is the source for an endpoint devdash cannot use: no containers, and one
+// docker_endpoint_invalid warning in every snapshot, so the footer and --json say why.
+type endpointError struct{ err error }
+
+func (e endpointError) Fetch(context.Context) ([]model.Container, *model.Warning) {
+	return nil, &model.Warning{Code: "docker_endpoint_invalid", Count: 1, Hint: "docker: " + e.err.Error()}
 }
