@@ -29,7 +29,7 @@ The top-level object.
 | `host` | host | always | The machine and the user devdash ran as. |
 | `projects` | project array | always | Git repositories with at least one process. |
 | `processes` | process array | always | Every process, then the unknown-owner entries. |
-| `containers` | container array | always | Docker containers; `[]` until Docker support lands, or with `--no-docker`. |
+| `containers` | container array | always | Running Docker or Podman containers; `[]` with `--no-docker`, when no engine is found or while it does not answer. |
 | `warnings` | warning array | always | Degraded-mode conditions, one per code. |
 | `timing_ms` | timing_ms | always | Per-source durations of the second sample. |
 
