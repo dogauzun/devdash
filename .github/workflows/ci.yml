@@ -24,8 +24,9 @@ jobs:
           go-version-file: go.mod
 
       # Later checks run even if an earlier one fails, so a PR sees every failure at once.
-      - name: go vet
-        run: go vet ./...
+      # The make targets are the ones contributors run (Makefile).
+      - name: go vet (darwin, linux)
+        run: make vet
 
       - name: golangci-lint (linux)
         if: ${{ !cancelled() }}
@@ -44,7 +45,7 @@ jobs:
 
       - name: go test -race
         if: ${{ !cancelled() }}
-        run: go test -race ./...
+        run: make test
 
       # kill(2)'s EPERM path needs root to start a target and a helper as two other uids; the
       # test skips without it. The binary is built as the runner, so root never writes to the
@@ -59,13 +60,7 @@ jobs:
 
       - name: go build (4 targets)
         if: ${{ !cancelled() }}
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
-            echo "== $target"
-            GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath ./...
-          done
+        run: make cross
 
       - name: Benchmarks
         if: ${{ !cancelled() }}
@@ -145,7 +140,7 @@ jobs:
           go-version-file: go.mod
 
       - name: scripts/docker-gate.sh
-        run: sh scripts/docker-gate.sh
+        run: make docker-gate
 
   macos:
     runs-on: macos-latest
@@ -156,12 +151,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: go vet
-        run: go vet ./...
+      - name: go vet (darwin, linux)
+        run: make vet
 
       - name: go test -race
         if: ${{ !cancelled() }}
-        run: go test -race ./...
+        run: make test
 
       - name: Benchmarks
         if: ${{ !cancelled() }}

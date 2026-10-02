@@ -26,10 +26,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: go vet
-        run: go vet ./...
+      - name: go vet (darwin, linux)
+        run: make vet
       - name: go test -race
-        run: go test -race ./...
+        run: make test
 
   release:
     needs: test
