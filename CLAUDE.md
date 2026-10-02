@@ -32,12 +32,17 @@ Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linu
 - Everything lives under `internal/`; no public Go API is promised.
 - `internal/engine` — the refresh loop (`Run`, `Updates`, `Refresh`), the one-shot `Snapshot` for the CLI, and
   uid-to-user naming; tested with `testing/synctest` against `collector.Fake`.
-- Later packages per the spec (`docker`, `tui`) are added when their phase starts, not before.
+- `internal/tui` — the dashboard (Bubble Tea v2, Lip Gloss v2): `tui.go` (`Options`, `Model`, key routing, layout),
+  `header.go` (header, footer), and one file per feature with its own state type and `action` messages: `table.go`,
+  `rows.go` (selection by row key, filter), `detail.go`, `help.go`, `open.go`, `kill.go`. Tested by sending `tea.Msg`s
+  to the model and asserting on `View()`; shared fixture in `helpers_test.go`.
 
 ## Conventions
 
 - Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
 - Tests first. Every bug fix adds a test that reproduces it.
 - No cgo; no shelling out to lsof/ss/netstat/ps on the refresh path.
-- Dependencies kept short: `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin), Bubble Tea/Lip Gloss/Bubbles later.
+- Dependencies kept short: `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2` (no Bubbles).
   No gopsutil, no Docker SDK.
+- Every PR is reviewed by the `pr-reviewer` agent (`.claude/agents/pr-reviewer.md`); merge only on its
+  `Verdict: APPROVE` / `Open findings: none.` with CI green.

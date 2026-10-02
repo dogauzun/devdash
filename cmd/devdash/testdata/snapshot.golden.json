@@ -48,7 +48,8 @@
         {
           "proto": "tcp6",
           "addr": "::",
-          "port": 5173
+          "port": 5173,
+          "container": null
         }
       ],
       "kind": "server",
@@ -75,7 +76,8 @@
         {
           "proto": "tcp6",
           "addr": "fe80::1%lo0",
-          "port": 8081
+          "port": 8081,
+          "container": null
         }
       ],
       "kind": "test",
@@ -139,12 +141,43 @@
         {
           "proto": "tcp4",
           "addr": "0.0.0.0",
-          "port": 631
+          "port": 631,
+          "container": null
         }
       ],
       "kind": "other",
       "project": null,
       "container": null,
+      "unknown": [
+        "owner",
+        "argv",
+        "cwd",
+        "cpu",
+        "mem"
+      ]
+    },
+    {
+      "pid": 0,
+      "ppid": null,
+      "start_time": null,
+      "uid": null,
+      "user": null,
+      "name": "unknown",
+      "argv": null,
+      "cwd": null,
+      "cpu_percent": null,
+      "rss_bytes": null,
+      "listeners": [
+        {
+          "proto": "tcp4",
+          "addr": "0.0.0.0",
+          "port": 5432,
+          "container": "9f1c2a7b0d3e"
+        }
+      ],
+      "kind": "container",
+      "project": null,
+      "container": "9f1c2a7b0d3e",
       "unknown": [
         "owner",
         "argv",
@@ -196,7 +229,7 @@
     },
     {
       "code": "listener_owner_unreadable",
-      "count": 1,
+      "count": 2,
       "hint": "run with sudo to see owners"
     }
   ],
