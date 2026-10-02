@@ -453,3 +453,49 @@ func TestKillRejectsBadPlans(t *testing.T) {
 		})
 	}
 }
+
+// TestNewPlanTreeOfUnknownOwner: --tree on the unknown owner of a port (PID 0) or on init
+// collects nothing. Every process whose ppid is 0 or 1 would otherwise join the plan, which
+// only the refusal loop and check stood between and the signal (DEV-67).
+func TestNewPlanTreeOfUnknownOwner(t *testing.T) {
+	unknown := model.Process{Name: "unknown", Listeners: []model.Listener{{Proto: "tcp4", Port: 18080}}}
+	unknownCtr := unknown
+	unknownCtr.ContainerID = "c0ffee"
+	unknownCtr.Listeners = []model.Listener{{Proto: "tcp4", Port: 18080, ContainerID: "c0ffee"}}
+	initp := proc(1, 0)
+	initp.Name = "systemd"
+	kthreadd := proc(2, 0)
+	tests := []struct {
+		name   string
+		target model.Process
+		want   string
+	}{
+		{"unknown owner", unknown, "pid 0 is not a process"},
+		{"unknown owner of a container port", unknownCtr, "use docker stop c0ffee"},
+		{"init", initp, "pid 1 (systemd) is init"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := []model.Process{tt.target, kthreadd, proc(T, 1), proc(C1, T)}
+			if tt.target.PID != 1 {
+				ps = append(ps, initp)
+			}
+			f := newFake(ps...)
+			sy := f.sys()
+			var asked []int
+			getpgid := sy.getpgid
+			sy.getpgid = func(pid int) (int, error) { asked = append(asked, pid); return getpgid(pid) }
+			_, err := newPlan(snap(ps...), tt.target.Key(), KillOptions{Tree: true, Force: true}, sy)
+			var r *Refusal
+			if !errors.As(err, &r) || !strings.Contains(r.Reason, tt.want) {
+				t.Fatalf("err = %v, want a refusal containing %q", err, tt.want)
+			}
+			if slices.Contains(asked, tt.target.PID) {
+				t.Errorf("asked the process group of pid %d; a tree of it must not be built", tt.target.PID)
+			}
+			if len(f.sent) != 0 {
+				t.Errorf("planning sent %v", f.sent)
+			}
+		})
+	}
+}

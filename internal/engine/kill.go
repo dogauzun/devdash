@@ -189,7 +189,9 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 	if o.Force {
 		plan.Signal = syscall.SIGKILL
 	}
-	if o.Tree {
+	// No tree for the unknown owner (PID 0) or init: every process whose ppid is 0 or 1 would
+	// join the plan, kept from the signal only by the refusals below (DEV-67). Both are refused.
+	if o.Tree && target.PID > 1 {
 		in := map[int]bool{target.PID: true}
 		for i := 0; i < len(plan.Procs); i++ { // breadth first: parents before children
 			for _, c := range children[plan.Procs[i].PID] {
