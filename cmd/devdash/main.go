@@ -55,8 +55,8 @@ Exit codes: 0 ok (port: found; kill: every signalled process exited, or nothing
 listens on N), 1 port free, 2 usage error (kill: also no terminal to confirm on),
 3 kill: permission denied (also an owner devdash cannot see; try sudo),
 4 kill: survivors remain, 5 devdash failed (no snapshot could be taken, or output
-could not be written), 6 kill: nothing signalled (devdash refuses the target, or
-the confirmation was declined).
+could not be written; kill: only before anything was signalled), 6 kill: nothing
+signalled (devdash refuses the target, or the confirmation was declined).
 `
 
 // exitFailed is the exit code of every command when devdash itself fails: the snapshot could

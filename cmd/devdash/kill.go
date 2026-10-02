@@ -24,12 +24,13 @@ import (
 // target (pid 1, devdash or an ancestor, a container port) or the confirmation was declined.
 const exitRefused = 6
 
-// Seams for tests: kill(2) and the terminal the confirmation is read from. Unit tests replace
-// killFn with a recorder, so they never signal.
+// Seams for tests: kill(2), the terminal the confirmation is read from, and whether stdout is
+// a terminal. Unit tests replace killFn with a recorder, so they never signal.
 var (
-	killFn                  = engine.Kill
-	stdin         io.Reader = os.Stdin
-	stdinTerminal           = func() bool { return isTerminal(os.Stdin) }
+	killFn                   = engine.Kill
+	stdin          io.Reader = os.Stdin
+	stdinTerminal            = func() bool { return isTerminal(os.Stdin) }
+	stdoutTerminal           = func(w io.Writer) bool { f, ok := w.(*os.File); return ok && isTerminal(f) }
 )
 
 func isTerminal(f *os.File) bool {
@@ -84,13 +85,17 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	for _, p := range plans {
 		n += len(p.Procs)
 	}
-	if code := write(stdout, stderr, planText(s, plans, ko, port, n), 0); code != 0 {
+	plan := planText(s, plans, ko, port, n)
+	if code := write(stdout, stderr, plan, 0); code != 0 {
 		return code
 	}
 	if !o.Yes {
 		if !stdinTerminal() {
 			fmt.Fprintln(stderr, "devdash: confirmation needs a terminal; pass --yes to kill without asking")
 			return 2
+		}
+		if !stdoutTerminal(stdout) { // redirected: the user must still see what they confirm
+			fmt.Fprint(stderr, plan)
 		}
 		in := bufio.NewReader(stdin)
 		ok := confirm(in, stderr, fmt.Sprintf("Send %s to %s?", sigName(plans[0].Signal), count(n, "process")))
@@ -108,13 +113,14 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	var survivors []string
 	var groups []int
 	signalled := map[int]bool{}
+	ran := false // some plan reached kill(2): the code is then its result, not "nothing signalled"
 	for _, p := range plans {
 		r, err := killFn(p, o.Timeout)
-		if err != nil { // a plan NewPlan could not have made, or devdash's ancestry changed since
-			fmt.Fprintln(stderr, "devdash:", err)
-			code = rank(code, exitRefused)
+		if err != nil { // a plan NewPlan could not have made, or devdash's ancestry changed since; nothing in it was signalled
+			fmt.Fprintln(stderr, "devdash: not signalled:", err)
 			continue
 		}
+		ran = true
 		code = rank(code, r.ExitCode())
 		if r.Group != 0 {
 			groups = append(groups, r.Group)
@@ -128,6 +134,10 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 		}
 	}
 	_ = tw.Flush()
+	if !ran {
+		fmt.Fprintln(stderr, "devdash: nothing was signalled")
+		return exitRefused
+	}
 	for _, g := range groups {
 		fmt.Fprintf(&b, "process group %d signalled\n", g)
 	}
@@ -160,7 +170,11 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	} else {
 		fmt.Fprintf(&b, "port %d is free\n", port)
 	}
-	return write(stdout, stderr, b.String(), code)
+	// Signals were sent, so the code is their result even when the report cannot be written.
+	if _, err := io.WriteString(stdout, b.String()); err != nil {
+		fmt.Fprintln(stderr, "devdash:", err)
+	}
+	return code
 }
 
 // targets are the rows holding TCP port N: every process with a listener on it, and every
@@ -306,10 +320,9 @@ func confirm(in *bufio.Reader, w io.Writer, q string) bool {
 	return a == "y" || a == "yes"
 }
 
-// rank merges two kill exit codes: permission denied (3) wins, then survivors (4), then a
-// plan Kill would not run (6), then 0.
+// rank merges two kill exit codes: permission denied (3) wins, then survivors (4), then 0.
 func rank(a, b int) int {
-	for _, c := range []int{3, 4, exitRefused} {
+	for _, c := range []int{3, 4} {
 		if a == c || b == c {
 			return c
 		}

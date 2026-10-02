@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -53,12 +54,14 @@ func fstep(ps []collector.Process, ls ...collector.Listener) collector.Step {
 }
 
 // stubKill replaces killFn with a recorder that gives each planned process the outcome res
-// returns, and stdin with a terminal (or not) holding input.
+// returns, and stdin with a terminal (or not) holding input. stdout is not a terminal; tests
+// replace stdoutTerminal after this call to change that.
 func stubKill(t *testing.T, tty bool, input string, res func(model.Process) engine.Outcome) *[]engine.Plan {
 	t.Helper()
 	var plans []engine.Plan
-	oldKill, oldIn, oldTTY := killFn, stdin, stdinTerminal
-	t.Cleanup(func() { killFn, stdin, stdinTerminal = oldKill, oldIn, oldTTY })
+	oldKill, oldIn, oldTTY, oldOut := killFn, stdin, stdinTerminal, stdoutTerminal
+	t.Cleanup(func() { killFn, stdin, stdinTerminal, stdoutTerminal = oldKill, oldIn, oldTTY, oldOut })
+	stdoutTerminal = func(io.Writer) bool { return false }
 	killFn = func(p engine.Plan, _ time.Duration) (engine.Result, error) {
 		plans = append(plans, p)
 		var r engine.Result
@@ -98,7 +101,8 @@ func TestKill(t *testing.T) {
 		name      string
 		args      []string
 		steps     []collector.Step // before the kill, and the re-check after it
-		tty       bool
+		tty       bool             // stdin is a terminal
+		stdoutTTY bool
 		input     string
 		res       func(model.Process) engine.Outcome
 		want      int
@@ -134,6 +138,7 @@ func TestKill(t *testing.T) {
 		{name: "no terminal", args: nil, steps: []collector.Step{held}, res: exited, want: 2,
 			stdout: []string{"5000001  node1"}, stderr: []string{"confirmation needs a terminal; pass --yes"}},
 		{name: "confirmed", tty: true, input: "YES\n", steps: []collector.Step{held, free}, res: exited, want: 0, wantPlans: [][]int{{a}}},
+		{name: "confirmed, stdout a terminal", tty: true, stdoutTTY: true, input: "y\n", steps: []collector.Step{held, free}, res: exited, want: 0, wantPlans: [][]int{{a}}},
 		{name: "declined", tty: true, input: "n\n", steps: []collector.Step{held}, res: exited, want: 6, stderr: []string{"nothing was signalled"}},
 		{name: "eof declines", tty: true, input: "", steps: []collector.Step{held}, res: exited, want: 6},
 		{name: "outside asks twice", tty: true, input: "y\ny\n", steps: []collector.Step{fstep(outside, flisten(a, 3000)), fstep(outside)}, res: exited, want: 0, wantPlans: [][]int{{a}},
@@ -147,6 +152,7 @@ func TestKill(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			plans := stubKill(t, tt.tty, tt.input, tt.res)
+			stdoutTerminal = func(io.Writer) bool { return tt.stdoutTTY }
 			var stdout, stderr bytes.Buffer
 			code := run(append([]string{"kill", "3000"}, tt.args...), &stdout, &stderr, &collector.Fake{Steps: tt.steps})
 			if code != tt.want {
@@ -173,8 +179,83 @@ func TestKill(t *testing.T) {
 					t.Errorf("stderr lacks %q:\n%s", s, stderr.String())
 				}
 			}
-			if code == 0 && strings.Contains(stderr.String(), "[y/N]") && !tt.tty {
+			if strings.Contains(stderr.String(), "[y/N]") && !tt.tty {
 				t.Error("asked without a terminal")
+			}
+			// The plan is on stdout once; when the user is asked and stdout is redirected, it
+			// is also on stderr, before the question.
+			const header = "kill port 3000:"
+			if n := strings.Count(stdout.String(), header); tt.wantPlans != nil && n != 1 {
+				t.Errorf("plan on stdout %d times", n)
+			}
+			if tt.tty {
+				onStderr, ask := strings.Index(stderr.String(), header), strings.Index(stderr.String(), "[y/N]")
+				if tt.stdoutTTY && onStderr >= 0 || !tt.stdoutTTY && (onStderr < 0 || onStderr > ask) {
+					t.Errorf("stdout terminal %v: plan at %d of stderr, question at %d:\n%s", tt.stdoutTTY, onStderr, ask, stderr.String())
+				}
+			}
+		})
+	}
+}
+
+// writeOnce accepts its first Write and fails every later one.
+type writeOnce struct{ n int }
+
+func (w *writeOnce) Write(b []byte) (int, error) {
+	if w.n++; w.n > 1 {
+		return 0, errors.New("disk full")
+	}
+	return len(b), nil
+}
+
+// TestKillReportFails: once signals were sent, the exit code is their result even when the
+// report cannot be written; the write error goes to stderr.
+func TestKillReportFails(t *testing.T) {
+	for _, tt := range []struct {
+		res  func(model.Process) engine.Outcome
+		want int
+	}{{exited, 0}, {denied, 3}, {survives, 4}} {
+		plans := stubKill(t, false, "", tt.res)
+		var stdout writeOnce
+		var stderr bytes.Buffer
+		f := &collector.Fake{Steps: []collector.Step{fstep([]collector.Process{fproc(fakePID+1, 1, "/")}, flisten(fakePID+1, 3000))}}
+		if code := run([]string{"kill", "3000", "--yes"}, &stdout, &stderr, f); code != tt.want || len(*plans) != 1 || !strings.Contains(stderr.String(), "disk full") {
+			t.Errorf("exit %d, %d plans, stderr %q; want %d, 1 plan and the error", code, len(*plans), stderr.String(), tt.want)
+		}
+	}
+}
+
+// TestKillPlanErrors: engine.Kill refusing one plan (with nothing in it signalled) is reported
+// on stderr; the code is the result of the plans that ran, and 6 only when none ran.
+func TestKillPlanErrors(t *testing.T) {
+	a, b := fakePID+1, fakePID+2
+	for _, tt := range []struct {
+		name string
+		fail []int // 1-based killFn calls that return an error
+		res  func(model.Process) engine.Outcome
+		want int
+	}{
+		{"second plan refused after the first exited", []int{2}, exited, 0},
+		{"second plan refused after the first was denied", []int{2}, denied, 3},
+		{"first plan refused, second survives", []int{1}, survives, 4},
+		{"every plan refused", []int{1, 2}, exited, 6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stubKill(t, false, "", tt.res)
+			rec, calls := killFn, 0
+			killFn = func(p engine.Plan, d time.Duration) (engine.Result, error) {
+				calls++
+				if slices.Contains(tt.fail, calls) {
+					return engine.Result{}, fmt.Errorf("kill: pid %d not allowed", p.Procs[0].PID)
+				}
+				return rec(p, d)
+			}
+			procs := []collector.Process{fproc(a, 1, "/"), fproc(b, 1, "/")}
+			f := &collector.Fake{Steps: []collector.Step{fstep(procs, flisten(a, 3000), flisten(b, 3000))}}
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"kill", "3000", "--yes"}, &stdout, &stderr, f)
+			if code != tt.want || calls != 2 || !strings.Contains(stderr.String(), "not signalled: kill: pid") {
+				t.Errorf("exit %d after %d calls, stderr %q; want %d after 2 and the refusal", code, calls, stderr.String(), tt.want)
 			}
 		})
 	}
@@ -341,12 +422,16 @@ func TestKillLive(t *testing.T) {
 	t.Run("forked child keeps the port", func(t *testing.T) {
 		leader, child, port := spawnHelper(t, "fork")
 		guardKill(t, leader)
-		want := fmt.Sprintf("port %s is still held by %d ", port, child)
-		if code, out := killLive(t, port, "--yes"); code != 0 || !strings.Contains(out, want) || !strings.Contains(out, "try --tree") {
-			t.Errorf("exit %d, want 0 and %q with the --tree hint", code, want)
+		// The shared socket is credited to the lower pid (DEV-45): usually the leader, the
+		// child when pids wrapped between them. Process mode kills that one only.
+		first, second := min(leader, child), max(leader, child)
+		want := fmt.Sprintf("port %s is still held by %d ", port, second)
+		if code, out := killLive(t, port, "--yes"); code != 0 || !strings.Contains(out, fmt.Sprintf("\n%d ", first)) ||
+			!strings.Contains(out, want) || !strings.Contains(out, "try --tree") {
+			t.Errorf("exit %d, want 0, pid %d signalled and %q with the --tree hint", code, first, want)
 		}
-		if code, out := killLive(t, port, "--yes"); code != 0 || !strings.Contains(out, "port "+port+" is free") || running(t, child) {
-			t.Errorf("child: exit %d, want 0, a free port and the child gone", code)
+		if code, out := killLive(t, port, "--yes"); code != 0 || !strings.Contains(out, "port "+port+" is free") || running(t, first) || running(t, second) {
+			t.Errorf("second kill: exit %d, want 0, a free port and both gone", code)
 		}
 	})
 }
