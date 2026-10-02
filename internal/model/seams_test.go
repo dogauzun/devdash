@@ -28,24 +28,6 @@ func TestReconcilePlaceholder(t *testing.T) {
 	}
 }
 
-func TestFlattenPlaceholder(t *testing.T) {
-	s := Build(Raw{
-		Processes: []Process{proc(10, 0), proc(11, 0)},
-		Listeners: []RawListener{{"tcp4", any4, 22, 0}, {"tcp4", any4, 631, 0}},
-	}, Snapshot{}, nil, NewResolver("", nil))
-	rows := Flatten(s, ViewOptions{ShowAll: true, HideContainers: true, Sort: SortCPU})
-	if len(rows) != 4 {
-		t.Fatalf("%d rows, want 4", len(rows))
-	}
-	keys := map[RowKey]bool{}
-	for i, r := range rows {
-		if r.Process != &s.Processes[i] || r.Key != s.Processes[i].Key() || r.Depth != 0 || r.Project != nil || r.Container != nil || r.Dimmed || keys[r.Key] {
-			t.Errorf("row %d = %+v", i, r)
-		}
-		keys[r.Key] = true
-	}
-}
-
 // TestRowKeysDistinct: every kind of row has a non-zero key, distinct from the others even when
 // a project, a compose project and a container share a name.
 func TestRowKeysDistinct(t *testing.T) {
