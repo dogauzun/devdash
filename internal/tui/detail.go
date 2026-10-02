@@ -130,7 +130,8 @@ func (m *Model) closeDetail() {
 	m.dscroll.top = 0
 }
 
-// detailRow writes the details of r: a header, the PID 0 owner, a process, or a container.
+// detailRow writes the details of r: a header, the PID 0 owner (a container's when Reconcile
+// matched its port), a process, or a container.
 func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	s := m.upd.Snapshot
 	p := r.Process
@@ -138,6 +139,16 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	case r.Key.Header != model.GroupNone:
 		detailHeader(d, s, r)
 		return
+	case p != nil && p.PID == 0 && p.ContainerID != "":
+		// A container's published port whose proxy devdash cannot read (docker-proxy is root's):
+		// the port is explained, so no sudo hint, and the container's fields follow.
+		title := "unknown owner"
+		if r.Container != nil {
+			title = quote(r.Container.Name) + " · container"
+		}
+		d.title(title)
+		d.wrap("published by Docker; the process holding this port could not be read")
+		detailListeners(d, p.Listeners)
 	case p != nil && p.PID == 0:
 		d.title("unknown owner")
 		d.wrap("the process holding this port could not be read")
