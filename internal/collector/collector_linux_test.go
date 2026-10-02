@@ -20,6 +20,12 @@ func TestCollectFindsSelf(t *testing.T) {
 	}
 	defer func() { _ = ln.Close() }()
 	port := uint16(ln.Addr().(*net.TCPAddr).Port)
+	ln6, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln6.Close() }()
+	port6 := uint16(ln6.Addr().(*net.TCPAddr).Port)
 
 	child := exec.Command("sleep", "30")
 	if err := child.Start(); err != nil {
@@ -60,9 +66,13 @@ func TestCollectFindsSelf(t *testing.T) {
 		t.Errorf("child %d not found under pid %d", child.Process.Pid, pid)
 	}
 
-	want := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: port, PID: pid}
-	if !slices.Contains(res.Listeners, want) {
-		t.Errorf("listener %+v not in %+v", want, res.Listeners)
+	for _, want := range []Listener{
+		{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: port, PID: pid},
+		{Proto: "tcp6", Addr: netip.IPv6Loopback(), Port: port6, PID: pid},
+	} {
+		if !slices.Contains(res.Listeners, want) {
+			t.Errorf("listener %+v not in %+v", want, res.Listeners)
+		}
 	}
 }
 
