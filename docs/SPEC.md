@@ -367,7 +367,7 @@ The two risks that could change the design are both about macOS, and both are se
 
 Open questions, to decide before Phase 2 (decisions recorded 2026-10-02, DEV-20):
 
-- The name. `devdash` is generic; check GitHub, Homebrew, pkg.go.dev and crates.io before the first tag. **Still open:** `devdash` collides with `Phantas0s/devdash` (a Go terminal dashboard, ~1,600 stars) and is taken on npm and PyPI; it is free on Homebrew core and crates.io. The owner decides before the first tag; work continues under `github.com/dogauzun/devdash`.
+- The name. `devdash` is generic; check GitHub, Homebrew, pkg.go.dev and crates.io before the first tag. **Decided (2026-10-02): keep `devdash`.** It collides with `Phantas0s/devdash` (a Go terminal dashboard, ~1,600 stars) and is taken on npm and PyPI, and is free on Homebrew core and crates.io; installs are namespaced (`dogauzun/tap/devdash`, `github.com/dogauzun/devdash`), so the collision only affects search.
 - Should root-owned listeners on ports below 1024 (sshd, cups, mDNS) be hidden by default behind a `--system` flag, to keep the default view about development? **Decided: no `--system` flag.** Goal 1 shows every listening TCP socket; root-owned listeners below 1024 stay visible in the `other` group.
 - Default interval: 2 s, or 1 s with the adaptive backoff carrying the load? **Decided: 2 s**, with the adaptive backoff.
 - Is UDP worth including in v1 after all, given the fd walk already sees UDP sockets on both OSes? **Decided: no**, UDP stays a v1 non-goal; planned for v1.1.
