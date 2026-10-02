@@ -467,3 +467,94 @@ func TestKillLive(t *testing.T) {
 		}
 	})
 }
+
+// withContainers makes runKill's snapshots carry cs, reconciled as model.Build does, since
+// the engine's one-shot snapshot has no Docker input yet.
+func withContainers(t *testing.T, cs ...model.Container) {
+	t.Helper()
+	old := snapshotFn
+	t.Cleanup(func() { snapshotFn = old })
+	snapshotFn = func(ctx context.Context, o engine.Options) (model.Snapshot, error) {
+		s, err := engine.Snapshot(ctx, o)
+		if err == nil {
+			s.Containers = cs
+			s.Processes = model.Reconcile(s.Processes, cs)
+		}
+		return s, err
+	}
+}
+
+// TestKillContainers: a port that belongs to a container is refused with docker stop and
+// exit 6, never signalled and never answered with the sudo hint, whoever holds the socket:
+// an unknown owner (root's docker-proxy seen by a user), docker-proxy itself (under sudo),
+// Docker Desktop's backend shared by two containers, or nobody (iptables only) (DEV-52).
+func TestKillContainers(t *testing.T) {
+	lo4 := netip.MustParseAddr("127.0.0.1")
+	pm := func(port uint16) model.PortMapping {
+		return model.PortMapping{HostIP: lo4, HostPort: port, ContainerPort: port, Proto: "tcp"}
+	}
+	db := model.Container{ID: "db0123456789", Name: "shop-db-1", Image: "postgres:16", ComposeProject: "shop", Ports: []model.PortMapping{pm(5432)}}
+	cache := model.Container{ID: "cache0123456", Name: "cache", Image: "redis:7", Ports: []model.PortMapping{pm(6379)}}
+	named := func(pid int, name string) collector.Process {
+		p := fproc(pid, 1, "/")
+		p.Name, p.Argv = name, []string{"/usr/bin/" + name}
+		return p
+	}
+	user, proxy, backend := fproc(fakePID+1, 1, "/"), named(fakePID+2, "docker-proxy"), named(fakePID+3, "com.docker.backend")
+	all := []collector.Process{user, proxy, backend}
+
+	tests := []struct {
+		name       string
+		args       []string
+		step       collector.Step
+		containers []model.Container
+	}{
+		{"unknown owner", nil, fstep(all, flisten(0, 5432)), []model.Container{db}},
+		{"unknown owner, tree force", []string{"--tree", "--force"}, fstep(all, flisten(0, 5432)), []model.Container{db}},
+		{"unknown owner next to a process of the user", nil, fstep(all, flisten(user.PID, 5432), flisten(0, 5432)), []model.Container{db}},
+		{"docker-proxy", nil, fstep(all, flisten(proxy.PID, 5432)), []model.Container{db}},
+		{"shared com.docker.backend", nil, fstep(all, flisten(backend.PID, 5432), flisten(backend.PID, 6379)), []model.Container{db, cache}},
+		{"shared com.docker.backend, tree", []string{"--tree"}, fstep(all, flisten(backend.PID, 6379), flisten(backend.PID, 5432)), []model.Container{cache, db}},
+		{"iptables only", nil, fstep(all), []model.Container{db}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plans := stubKill(t, true, "y\ny\n", exited)
+			withContainers(t, tt.containers...)
+			var stdout, stderr bytes.Buffer
+			code := run(append([]string{"kill", "5432", "--yes"}, tt.args...), &stdout, &stderr, &collector.Fake{Steps: []collector.Step{tt.step}})
+			if code != exitRefused || len(*plans) != 0 {
+				t.Errorf("exit %d, %d plans; want 6 and none\nstdout:\n%s\nstderr:\n%s", code, len(*plans), stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "use docker stop shop-db-1") || strings.Contains(stderr.String(), "cache") ||
+				strings.Contains(stderr.String(), "sudo") || strings.Count(stderr.String(), "refused:") != 1 ||
+				!strings.Contains(stderr.String(), "nothing was signalled") {
+				t.Errorf("stderr %q, want the docker stop shop-db-1 refusal only", stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout %q, want no plan", stdout.String())
+			}
+		})
+	}
+}
+
+// TestTargetsSharedBackend: each container whose port a shared proxy holds on N is one
+// target, the proxy itself none; a socket on N that matched no container keeps its holder.
+func TestTargetsSharedBackend(t *testing.T) {
+	any6 := netip.IPv6Unspecified()
+	backend := model.Process{PID: 30, Name: "com.docker.backend", StartTime: t0, Listeners: []model.Listener{
+		{Proto: "tcp6", Addr: any6, Port: 5432, ContainerID: "db"}, {Proto: "tcp6", Addr: any6, Port: 6379, ContainerID: "cache"},
+		{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: 5432},
+	}}
+	s := model.Snapshot{Processes: []model.Process{backend}, Containers: []model.Container{
+		{ID: "db", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
+		{ID: "cache", Ports: []model.PortMapping{{HostPort: 6379, ContainerPort: 6379, Proto: "tcp"}}},
+	}}
+	want := []target{{key: model.RowKey{ContainerID: "db"}}, {key: backend.Key()}}
+	if got := targets(s, 5432); !slices.Equal(got, want) {
+		t.Errorf("targets %+v, want %+v", got, want)
+	}
+	if got := targets(s, 6379); !slices.Equal(got, []target{{key: model.RowKey{ContainerID: "cache"}}}) {
+		t.Errorf("targets %+v, want cache only", got)
+	}
+}

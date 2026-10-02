@@ -24,10 +24,11 @@ import (
 // target (pid 1, devdash or an ancestor, a container port) or the confirmation was declined.
 const exitRefused = 6
 
-// Seams for tests: kill(2), the terminal the confirmation is read from, and whether stdout is
-// a terminal. Unit tests replace killFn with a recorder, so they never signal.
+// Seams for tests: kill(2), the snapshot, the terminal the confirmation is read from, and
+// whether stdout is a terminal. Unit tests replace killFn with a recorder, so they never signal.
 var (
 	killFn                   = engine.Kill
+	snapshotFn               = engine.Snapshot
 	stdin          io.Reader = os.Stdin
 	stdinTerminal            = func() bool { return isTerminal(os.Stdin) }
 	stdoutTerminal           = func(w io.Writer) bool { f, ok := w.(*os.File); return ok && isTerminal(f) }
@@ -48,7 +49,7 @@ type target struct {
 // runKill stops whatever listens on TCP port N, from one snapshot: one plan per owner, shown
 // together and confirmed once; if any owner is refused, nothing is signalled.
 func runKill(ctx context.Context, o options, eo engine.Options, port uint16, stdout, stderr io.Writer) int {
-	s, err := engine.Snapshot(ctx, eo)
+	s, err := snapshotFn(ctx, eo)
 	if err != nil {
 		fmt.Fprintln(stderr, "devdash:", err)
 		return exitFailed
@@ -155,14 +156,14 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	// A socket shared after fork is credited to the lowest pid only (DEV-45), so a forked
 	// child can still hold the port. It is reported but does not change the exit code, which
 	// is about the processes that were signalled.
-	if after, err := engine.Snapshot(ctx, eo); err != nil {
+	if after, err := snapshotFn(ctx, eo); err != nil {
 		fmt.Fprintln(stderr, "devdash: cannot check the port again:", err)
 	} else if held := targets(after, port); len(held) > 0 {
 		var who []string
 		other := false // a holder that was not signalled
 		for _, t := range held {
 			who = append(who, describe(after, t))
-			other = other || !signalled[t.key]
+			other = other || t.key.ContainerID == "" && !signalled[t.key]
 		}
 		fmt.Fprintf(&b, "port %d is still held by %s", port, strings.Join(who, ", "))
 		if other && !o.Tree {
@@ -180,19 +181,36 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 }
 
 // targets are the rows holding TCP port N: every process with a listener on it, and every
-// container that publishes it with no process holding it.
+// container that publishes it. A listener reconciled to a container (Listener.ContainerID) is
+// that container's target, not its holder's: the holder is a port proxy or an unknown owner,
+// and Docker Desktop's com.docker.backend holds several containers' ports in one process, so
+// only the container row says which container to stop. The holder is a target too only when
+// it also holds a socket on N that matched no container.
 func targets(s model.Snapshot, port uint16) []target {
 	var ts []target
 	held := map[string]bool{}
+	container := func(id string) {
+		if !held[id] {
+			held[id] = true
+			ts = append(ts, target{key: model.RowKey{ContainerID: id}})
+		}
+	}
 	for _, p := range s.Processes {
-		if slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.Port == port }) {
-			ts = append(ts, target{key: p.Key(), sudo: p.PID == 0 && p.ContainerID == ""})
-			held[p.ContainerID] = true
+		own := false
+		for _, l := range p.Listeners {
+			switch {
+			case l.Port != port:
+			case l.ContainerID != "":
+				container(l.ContainerID)
+			case !own:
+				own = true
+				ts = append(ts, target{key: p.Key(), sudo: p.PID == 0 && p.ContainerID == ""})
+			}
 		}
 	}
 	for _, c := range s.Containers {
-		if !held[c.ID] && slices.ContainsFunc(c.Ports, func(m model.PortMapping) bool { return m.HostPort == port && m.Proto == "tcp" }) {
-			ts = append(ts, target{key: model.RowKey{ContainerID: c.ID}})
+		if slices.ContainsFunc(c.Ports, func(m model.PortMapping) bool { return m.HostPort == port && m.Proto == "tcp" }) {
+			container(c.ID)
 		}
 	}
 	return ts
@@ -286,8 +304,13 @@ func outcome(o engine.Outcome) string {
 
 // describe names the holder of a port for the after-kill check.
 func describe(s model.Snapshot, t target) string {
-	if t.key.ContainerID != "" {
-		return "container " + t.key.ContainerID
+	if id := t.key.ContainerID; id != "" {
+		for _, c := range s.Containers {
+			if c.ID == id && c.Name != "" {
+				return "container " + c.Name
+			}
+		}
+		return "container " + id
 	}
 	for _, p := range s.Processes {
 		if p.Key() == t.key {
