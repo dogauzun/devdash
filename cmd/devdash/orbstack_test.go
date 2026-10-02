@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,25 @@ func orbListeners(pid int) []model.RawListener {
 		{Proto: "tcp4", Addr: lo4, Port: 32222, PID: pid},
 		{Proto: "tcp6", Addr: lo6, Port: 32222, PID: pid},
 		{Proto: "tcp4", Addr: lo4, Port: 59838, PID: pid},
+	}
+}
+
+// TestJSONOrbStack: the Helper's forwarded listeners carry the container's id, its own do not,
+// and the process carries none, since it is more than the container (PR #52 review, DEV-73).
+func TestJSONOrbStack(t *testing.T) {
+	helper := model.Process{PID: 14887, PPID: 1, UID: 501, Name: "OrbStack Helper", Argv: orbArgv, StartTime: time.Unix(1, 0)}
+	s := model.Build(model.Raw{Processes: []model.Process{helper}, Listeners: orbListeners(helper.PID)}, model.Snapshot{}, []model.Container{orbProbe}, model.NewResolver("", nil))
+	j := process(s.Processes[0])
+	var ids []string
+	for _, l := range j.Listeners {
+		id := "null"
+		if l.Container != nil {
+			id = *l.Container
+		}
+		ids = append(ids, id)
+	}
+	if j.Container != nil || j.Kind != "container" || !slices.Equal(ids, []string{orbProbe.ID, orbProbe.ID, "null", "null", "null"}) {
+		t.Errorf("container %v, kind %s, listener containers %q; want null, container, the probe's on 18090 only", j.Container, j.Kind, ids)
 	}
 }
 

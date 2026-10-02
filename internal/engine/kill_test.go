@@ -132,7 +132,8 @@ func TestNewPlan(t *testing.T) {
 	backendMany := backend
 	backendMany.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432}, {Proto: "tcp6", Port: 6443}}
 	// Docker Desktop with Kubernetes on: the backend holds shop-db-1's 5432 and its own 6443,
-	// so Reconcile gives it shop-db-1's ContainerID, but docker stop would not free 6443.
+	// and a snapshot that gives it shop-db-1's ContainerID anyway (Reconcile did before PR #52)
+	// is still refused as the runtime's: docker stop would not free 6443.
 	backendK8s := backend
 	backendK8s.ContainerID = "c0ffee"
 	backendK8s.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432, ContainerID: "c0ffee"}, {Proto: "tcp6", Port: 6443}}

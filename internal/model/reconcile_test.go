@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"slices"
 	"testing"
+	"time"
 )
 
 var (
@@ -75,12 +76,22 @@ func TestReconcile(t *testing.T) {
 			[]Container{db},
 			[]want{{"db", KindContainer, []string{"db"}}}},
 		// Recorded with OrbStack 2.2.3 (DEV-73): `docker run -p 18090:80` is held by OrbStack
-		// Helper on *:18090 for each family, next to its own 32222 and 59838.
+		// Helper on *:18090 for each family, next to its own 32222 and 59838. The forwarded
+		// listeners link to the container; the process does not, since its own ports are not
+		// the container's (PR #52 review).
 		{"orbstack: the helper holds a container's port and its own",
 			[]Process{orbHelper(14887, lst("tcp4", any4, 18090), lst("tcp6", any6, 18090),
 				lst("tcp4", lo, 32222), lst("tcp6", netip.IPv6Loopback(), 32222), lst("tcp4", lo, 59838))},
 			[]Container{orbProbe},
-			[]want{{"probe", KindContainer, []string{"probe", "probe", "", "", ""}}}},
+			[]want{{"", KindContainer, []string{"probe", "probe", "", "", ""}}}},
+		{"docker desktop: one container's port next to the backend's own",
+			[]Process{rp(20, "com.docker.backend", KindServer, lst("tcp6", any6, 5432), lst("tcp4", lo, 6443))},
+			[]Container{db},
+			[]want{{"", KindContainer, []string{"db", ""}}}},
+		{"unknown owner with a container's port and an unpublished one",
+			[]Process{rp(0, "unknown", KindOther, lst("tcp4", any4, 5432), lst("tcp4", any4, 9999))},
+			[]Container{db},
+			[]want{{"", KindContainer, []string{"db", ""}}}},
 		{"orbstack: the helper's own ports alone are not a container's",
 			[]Process{orbHelper(14887, lst("tcp4", lo, 32222), lst("tcp4", lo, 59838))},
 			[]Container{orbProbe},
@@ -216,5 +227,31 @@ func TestReconcileKeepsRowKey(t *testing.T) {
 	}
 	if with.Key() != without.Key() {
 		t.Errorf("key %+v with Docker, %+v without", with.Key(), without.Key())
+	}
+}
+
+// TestOrbStackRows: OrbStack Helper forwarding one container's port next to its own ports
+// keeps its own row, kind container, with no container name, and the container gets a row of
+// its own; hiding containers (`d`) drops only the container row, so the Helper's own ports
+// stay visible (PR #52 review, DEV-73).
+func TestOrbStackRows(t *testing.T) {
+	helper := orbHelper(14887)
+	helper.Kind, helper.StartTime = KindOther, time.Unix(1, 0)
+	raw := Raw{Processes: []Process{helper}, Listeners: []RawListener{
+		{Proto: "tcp4", Addr: any4, Port: 18090, PID: 14887}, {Proto: "tcp6", Addr: any6, Port: 18090, PID: 14887},
+		{Proto: "tcp4", Addr: lo, Port: 32222, PID: 14887}, {Proto: "tcp4", Addr: lo, Port: 59838, PID: 14887},
+	}}
+	probe := Container{ID: "probe", Name: "devdash-orb-probe", Image: "nginx:alpine",
+		Ports: []PortMapping{pm("0.0.0.0", 18090, 80, "tcp"), pm("::", 18090, 80, "tcp")}}
+	s := Build(raw, Snapshot{}, []Container{probe}, NewResolver("", nil))
+	p := s.Processes[0]
+	if p.ContainerID != "" || p.Kind != KindContainer {
+		t.Errorf("helper: container %q, kind %v; want none, container", p.ContainerID, p.Kind)
+	}
+	if got := render(Flatten(s, ViewOptions{})); !slices.Equal(got, []string{"[containers]", "  ctr:devdash-orb-probe", "[other]", "  OrbStack Helper"}) {
+		t.Errorf("rows %q", got)
+	}
+	if got := render(Flatten(s, ViewOptions{HideContainers: true})); !slices.Equal(got, []string{"[other]", "  OrbStack Helper"}) {
+		t.Errorf("HideContainers: rows %q", got)
 	}
 }
