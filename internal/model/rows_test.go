@@ -16,7 +16,7 @@ func fp(pid, ppid, startSec int, name, project string, kind Kind, ports ...uint1
 	p := Process{PID: pid, PPID: ppid, StartTime: start.Add(time.Duration(startSec) * time.Second),
 		Name: name, Argv: []string{name}, ProjectID: project, Kind: kind, CPUPercent: math.NaN()}
 	for _, port := range ports {
-		p.Listeners = append(p.Listeners, Listener{"tcp4", lo, port})
+		p.Listeners = append(p.Listeners, Listener{Proto: "tcp4", Addr: lo, Port: port})
 	}
 	return p
 }
@@ -130,10 +130,10 @@ func TestFlattenTree(t *testing.T) {
 			name: "empty argv: omitted without a listener, kept with one; unknown owner kept",
 			procs: []Process{
 				{PID: 20, PPID: 1, StartTime: start, Name: "blank"},
-				{PID: 21, PPID: 1, StartTime: start, Name: "blanklisten", Listeners: []Listener{{"tcp4", lo, 9000}}},
+				{PID: 21, PPID: 1, StartTime: start, Name: "blanklisten", Listeners: []Listener{{Proto: "tcp4", Addr: lo, Port: 9000}}},
 				fp(22, 20, 1, "child", "", KindOther), // parent omitted: a root
-				{Name: "unknown", Listeners: []Listener{{"tcp4", any4, 22}}, Unknown: unknownOwner, CPUPercent: math.NaN()},
-				{Name: "unknown", Listeners: []Listener{{"tcp6", any4, 631}}, Unknown: unknownOwner, CPUPercent: math.NaN()},
+				{Name: "unknown", Listeners: []Listener{{Proto: "tcp4", Addr: any4, Port: 22}}, Unknown: unknownOwner, CPUPercent: math.NaN()},
+				{Name: "unknown", Listeners: []Listener{{Proto: "tcp6", Addr: any4, Port: 631}}, Unknown: unknownOwner, CPUPercent: math.NaN()},
 			},
 			want: []string{"[other]", "  unknown", "  unknown", "  blanklisten", "  child"},
 		},
@@ -179,7 +179,7 @@ func TestListeningEditorShown(t *testing.T) {
 		{"gopls serve -listen=:37374", 37374},
 		{"/usr/share/code/code --type=utility --utility-sub-type=node.mojom.NodeService", 5500},
 	} {
-		p := Process{PID: 10 + i, PPID: 1, StartTime: start, Argv: strings.Fields(c.argv), Listeners: []Listener{{"tcp4", lo, c.port}}}
+		p := Process{PID: 10 + i, PPID: 1, StartTime: start, Argv: strings.Fields(c.argv), Listeners: []Listener{{Proto: "tcp4", Addr: lo, Port: c.port}}}
 		if p.Kind = Classify(p); p.Kind != KindEditor {
 			t.Fatalf("%q classified %v, want editor", c.argv, p.Kind)
 		}
@@ -276,7 +276,7 @@ func TestFlattenGroupOrder(t *testing.T) {
 func TestFlattenContainers(t *testing.T) {
 	proxy := fp(30, 1, 0, "docker-proxy", "", KindContainer, 5432)
 	proxy.ContainerID = "c1"
-	unknown := Process{Name: "unknown", Listeners: []Listener{{"tcp4", any4, 8081}}, Unknown: unknownOwner, ContainerID: "c5", Kind: KindContainer, CPUPercent: math.NaN()}
+	unknown := Process{Name: "unknown", Listeners: []Listener{{Proto: "tcp4", Addr: any4, Port: 8081}}, Unknown: unknownOwner, ContainerID: "c5", Kind: KindContainer, CPUPercent: math.NaN()}
 	snap := Snapshot{
 		Projects: shop(),
 		Processes: []Process{
@@ -360,7 +360,7 @@ func bigSnapshot(n int) Snapshot {
 		p := fp(pid, ppid, i%500, fmt.Sprintf("proc%d", i), project, kinds[i%len(kinds)])
 		p.CPUPercent = float64(i % 13)
 		if i%5 == 1 {
-			p.Listeners = []Listener{{"tcp4", lo, uint16(1000 + i)}}
+			p.Listeners = []Listener{{Proto: "tcp4", Addr: lo, Port: uint16(1000 + i)}}
 		}
 		s.Processes = append(s.Processes, p)
 	}

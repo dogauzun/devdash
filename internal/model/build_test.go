@@ -97,6 +97,17 @@ func TestBuildListeners(t *testing.T) {
 	}
 }
 
+// TestBuildOwnerHint: a collector that knows why owners are unreadable (root without
+// CAP_SYS_PTRACE, DEV-49) replaces the "run with sudo" hint; the code and count stay.
+func TestBuildOwnerHint(t *testing.T) {
+	raw := Raw{TakenAt: t0, Listeners: []RawListener{{"tcp4", lo, 22, 0}}, OwnerHint: "add a capability"}
+	s := Build(raw, Snapshot{}, nil, NewResolver("", nil))
+	want := []Warning{{"listener_owner_unreadable", 1, "add a capability"}}
+	if !reflect.DeepEqual(s.Warnings, want) {
+		t.Errorf("warnings %+v, want %+v", s.Warnings, want)
+	}
+}
+
 func TestBuildCPUPercent(t *testing.T) {
 	reused := proc(10, 0)
 	reused.StartTime = start.Add(time.Minute)
@@ -136,7 +147,7 @@ func TestBuildCPUPercent(t *testing.T) {
 func TestBuildCopiesAndFills(t *testing.T) {
 	stale := proc(10, 0)
 	stale.Unknown = FieldCwd | FieldMem
-	stale.Listeners, stale.Kind, stale.ProjectID, stale.ContainerID = []Listener{{"tcp4", lo, 1}}, KindShell, "/x", "c" // derived fields are recomputed
+	stale.Listeners, stale.Kind, stale.ProjectID, stale.ContainerID = []Listener{{Proto: "tcp4", Addr: lo, Port: 1}}, KindShell, "/x", "c" // derived fields are recomputed
 	raw := Raw{
 		TakenAt:   t0,
 		Host:      Host{OS: "linux", Arch: "arm64", Hostname: "h", UID: 1000},
@@ -161,7 +172,7 @@ func TestBuildCopiesAndFills(t *testing.T) {
 	}
 	wantProc := proc(10, 0)
 	wantProc.Unknown = FieldCwd | FieldMem // collector bits pass through, no owner bit for a real process
-	wantProc.Listeners = []Listener{{"tcp6", netip.IPv6Unspecified(), 3000}}
+	wantProc.Listeners = []Listener{{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: 3000}}
 	wantProc.Kind = KindServer
 	if len(s.Processes) != 1 || len(s.Timing) != 2 || s.Timing["proctable"] != time.Millisecond {
 		t.Fatalf("processes %+v timing %v", s.Processes, s.Timing)

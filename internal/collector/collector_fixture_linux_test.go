@@ -311,7 +311,10 @@ func wantProcs(procs []fixProc, denied bool) []Process {
 	return want
 }
 
-// TestCollectFixture runs the collector over testdata/proc-500, as a user and as root.
+// TestCollectFixture runs the collector over testdata/proc-500, as a user and as root with
+// and without CAP_SYS_PTRACE. When the tests run as a user, fixDenied's fd/ and cmdline give
+// EACCES, so the root cases are a root that the kernel still denies, as in a Docker container
+// with default capabilities (DEV-49).
 func TestCollectFixture(t *testing.T) {
 	if *update {
 		if err := os.RemoveAll(fixtureDir); err != nil {
@@ -323,13 +326,22 @@ func TestCollectFixture(t *testing.T) {
 	tests := []struct {
 		name    string
 		euid    int
+		ptrace  bool   // CAP_SYS_PTRACE is effective
 		mounts  string // written to <root>/mounts; %s is the proc root
 		owner   func(fixListen) int
 		hidepid string
+		// Substrings of the process_fields_unreadable hint (checked when fixDenied is denied)
+		// and of Result.OwnerHint ("" when Build's default applies).
+		fieldsHint, ownerHint string
 	}{
-		{name: "user", euid: fixUser, owner: func(l fixListen) int { return l.userOwner }},
+		{name: "user", euid: fixUser, owner: func(l fixListen) int { return l.userOwner },
+			fieldsHint: "run with sudo"},
 		{name: "root", euid: 0, owner: func(l fixListen) int { return l.rootOwner },
-			mounts: "sysfs /sys sysfs rw 0 0\nproc %s proc rw,nosuid,relatime,hidepid=invisible 0 0\n", hidepid: "hidepid=invisible"},
+			mounts: "sysfs /sys sysfs rw 0 0\nproc %s proc rw,nosuid,relatime,hidepid=invisible 0 0\n", hidepid: "hidepid=invisible",
+			fieldsHint: "root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE",
+			ownerHint:  "root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE"},
+		{name: "root with CAP_SYS_PTRACE", euid: 0, ptrace: true, owner: func(l fixListen) int { return l.rootOwner },
+			fieldsHint: "even to root", ownerHint: "even to root"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -340,7 +352,7 @@ func TestCollectFixture(t *testing.T) {
 				}
 			}
 			c := newLinux(dir)
-			c.euid = tt.euid
+			c.euid, c.ptrace = tt.euid, tt.ptrace
 			res, err := c.Collect(context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -386,6 +398,17 @@ func TestCollectFixture(t *testing.T) {
 			}
 			if !slices.Equal(codes, wantCodes) {
 				t.Errorf("warnings %q, want %q", codes, wantCodes)
+			}
+			for _, w := range res.Warnings {
+				if w.Code == "process_fields_unreadable" && !strings.Contains(w.Hint, tt.fieldsHint) {
+					t.Errorf("process_fields_unreadable hint %q does not contain %q", w.Hint, tt.fieldsHint)
+				}
+			}
+			if (tt.ownerHint == "") != (res.OwnerHint == "") || !strings.Contains(res.OwnerHint, tt.ownerHint) {
+				t.Errorf("owner hint %q, want one containing %q", res.OwnerHint, tt.ownerHint)
+			}
+			if tt.euid == 0 && strings.Contains(fmt.Sprint(res.OwnerHint, res.Warnings), "sudo") {
+				t.Errorf("as root a hint says sudo: %q %+v", res.OwnerHint, res.Warnings)
 			}
 		})
 	}

@@ -42,6 +42,7 @@ func (p Process) Key() RowKey {
 	k := RowKey{PID: p.PID, StartTime: p.StartTime.UnixNano()}
 	if p.PID == 0 && len(p.Listeners) > 0 {
 		k.Listener = p.Listeners[0]
+		k.Listener.ContainerID = "" // set only while Docker answers; the row is the same either way
 	}
 	return k
 }

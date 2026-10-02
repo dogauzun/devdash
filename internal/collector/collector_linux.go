@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -21,7 +23,7 @@ import (
 func New() Collector { return newLinux("/proc") }
 
 func newLinux(root string) *linuxCollector {
-	c := &linuxCollector{root: root, euid: os.Geteuid()}
+	c := &linuxCollector{root: root, euid: os.Geteuid(), ptrace: hasPtrace()}
 	// btime is read once: the kernel shifts it when the wall clock is stepped,
 	// which would move every StartTime and break (pid, start time) identity.
 	c.btime = sync.OnceValues(func() (int64, error) {
@@ -39,9 +41,10 @@ func newLinux(root string) *linuxCollector {
 }
 
 type linuxCollector struct {
-	root  string // proc root, "/proc" outside tests
-	euid  int    // whose fds the walk reads (all when 0); os.Geteuid outside tests
-	btime func() (int64, error)
+	root   string // proc root, "/proc" outside tests
+	euid   int    // whose fds the walk reads (all when 0); os.Geteuid outside tests
+	ptrace bool   // CAP_SYS_PTRACE is effective; only read for the hints when euid is 0
+	btime  func() (int64, error)
 
 	// fd-walk state carried to the next Collect. A Collect abandoned on timeout may still be
 	// running when the next one starts, so it is copied in and out under mu.
@@ -88,11 +91,38 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 			unknown++
 		}
 	}
+	fieldsHint, ownerHint := c.hints()
 	if unknown > 0 {
-		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown,
-			Hint: "processes of other users have unreadable fields; run with sudo to see them"})
+		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown, Hint: fieldsHint})
 	}
+	res.OwnerHint = ownerHint
 	return res, nil
+}
+
+// hints are the process_fields_unreadable hint and model.Raw.OwnerHint. Root is denied only
+// by ptrace access checks, so sudo cannot help: without CAP_SYS_PTRACE (a Docker container's
+// default) the hint names the capability, with it the denial comes from a security module.
+func (c *linuxCollector) hints() (fields, owner string) {
+	switch {
+	case c.euid != 0:
+		return "processes of other users have unreadable fields; run with sudo to see them", ""
+	case !c.ptrace:
+		const why = "running as root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE"
+		return why + " to see them", why + " to see owners"
+	default:
+		const why = "denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"
+		return "some processes have unreadable fields: " + why, why
+	}
+}
+
+// hasPtrace reports whether CAP_SYS_PTRACE is in this process's effective set. If capget
+// fails it reports true, so the hints do not claim a missing capability.
+func hasPtrace() bool {
+	var data [2]unix.CapUserData // _LINUX_CAPABILITY_VERSION_3 uses two 32-bit words
+	if err := unix.Capget(&unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}, &data[0]); err != nil {
+		return true
+	}
+	return data[unix.CAP_SYS_PTRACE/32].Effective&(1<<(unix.CAP_SYS_PTRACE%32)) != 0
 }
 
 // processes reads every user-space process in one pass per pid, so a pid
