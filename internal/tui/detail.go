@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -78,7 +76,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 		detailListeners(d, p.Listeners)
 		for _, w := range s.Warnings {
 			if slices.Contains(detailOwnerWarnings, w.Code) && w.Hint != "" {
-				d.field("hint", w.Hint)
+				d.field("hint", quote(w.Hint))
 			}
 		}
 		return
@@ -88,7 +86,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 			return
 		}
 	case r.Container != nil:
-		d.title(detailClean(r.Container.Name) + " · container")
+		d.title(quote(r.Container.Name) + " · container")
 	default:
 		return
 	}
@@ -100,32 +98,32 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	if m.o.DockerSocket != nil {
 		if sock := m.o.DockerSocket(); sock != "" {
 			d.blank()
-			d.wrap("docker socket: " + detailClean(sock))
+			d.wrap("docker socket: " + quote(sock))
 		}
 	}
 }
 
 // detailProcess writes the fields of a real process.
 func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) {
-	d.title(fmt.Sprintf("%s %d · %s", detailClean(p.Name), p.PID, p.Kind))
+	d.title(fmt.Sprintf("%s %d · %s", quote(p.Name), p.PID, p.Kind))
 	switch {
 	case p.Unknown&model.FieldArgv != 0:
 		d.field("command", "unknown")
 	case len(p.Argv) == 0:
 		d.field("command", "none")
 	default:
-		d.words("command", detailArgv(p.Argv), " ")
+		d.words("command", quoteArgv(p.Argv), " ")
 	}
 	cwd := "unknown"
 	if p.Cwd != "" {
-		cwd = detailClean(p.Cwd)
+		cwd = quote(p.Cwd)
 	}
 	d.field("cwd", cwd)
 	if pr := detailProject(s, p.ProjectID); pr != nil {
 		d.field("project", detailProjectTitle(pr))
-		d.field("root", detailClean(pr.Root))
+		d.field("root", quote(pr.Root))
 		if pr.Worktree && pr.MainRepo != "" {
-			d.field("main repo", detailClean(pr.MainRepo))
+			d.field("main repo", quote(pr.MainRepo))
 		}
 	} else {
 		d.field("project", "none")
@@ -142,7 +140,7 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 	}
 	user := fmt.Sprintf("uid %d", p.UID)
 	if p.User != "" {
-		user = fmt.Sprintf("%s (uid %d)", detailClean(p.User), p.UID)
+		user = fmt.Sprintf("%s (uid %d)", quote(p.User), p.UID)
 	}
 	d.field("user", user)
 	cpu := "unknown"
@@ -171,7 +169,7 @@ func detailListeners(d *detailDoc, ls []model.Listener) {
 		return
 	}
 	for i, l := range ls {
-		v := []string{l.Proto, netip.AddrPortFrom(l.Addr, l.Port).String()}
+		v := []string{quote(l.Proto), netip.AddrPortFrom(l.Addr, l.Port).String()}
 		if l.Addr.IsUnspecified() {
 			v = append(v, "(every interface)") // wraps as one word
 		}
@@ -184,27 +182,27 @@ func detailListeners(d *detailDoc, ls []model.Listener) {
 func detailContainer(d *detailDoc, r model.Row) {
 	c := r.Container
 	if c == nil {
-		d.field("container", detailClean(r.Process.ContainerID))
+		d.field("container", quote(r.Process.ContainerID))
 		return
 	}
-	d.field("container", detailClean(c.Name))
-	d.field("image", detailClean(c.Image))
-	d.field("state", detailClean(c.State))
+	d.field("container", quote(c.Name))
+	d.field("image", quote(c.Image))
+	d.field("state", quote(c.State))
 	if c.ComposeProject != "" {
-		v := detailClean(c.ComposeProject)
+		v := quote(c.ComposeProject)
 		if c.ComposeService != "" {
-			v += " / " + detailClean(c.ComposeService)
+			v += " / " + quote(c.ComposeService)
 		}
 		d.field("compose", v)
 	}
 	for i, pm := range c.Ports {
-		v := fmt.Sprintf("%d/%s (not published)", pm.ContainerPort, detailClean(pm.Proto))
+		v := fmt.Sprintf("%d/%s (not published)", pm.ContainerPort, quote(pm.Proto))
 		if pm.HostPort != 0 {
 			host := ":" + strconv.Itoa(int(pm.HostPort))
 			if pm.HostIP.IsValid() {
 				host = netip.AddrPortFrom(pm.HostIP, pm.HostPort).String()
 			}
-			v = fmt.Sprintf("%s -> %d/%s", host, pm.ContainerPort, detailClean(pm.Proto))
+			v = fmt.Sprintf("%s -> %d/%s", host, pm.ContainerPort, quote(pm.Proto))
 		}
 		d.field(detailFirst(i, "ports"), v)
 	}
@@ -225,25 +223,25 @@ func detailHeader(d *detailDoc, s model.Snapshot, r model.Row) {
 	case model.GroupProject:
 		pr := r.Project
 		if pr == nil {
-			d.title(detailClean(k.Group))
+			d.title(quote(k.Group))
 			return
 		}
 		d.title(detailProjectTitle(pr))
-		d.field("root", detailClean(pr.Root))
-		branch := detailClean(pr.Branch)
+		d.field("root", quote(pr.Root))
+		branch := quote(pr.Branch)
 		if pr.Branch == "" {
-			branch = "detached at " + detailClean(pr.ShortSHA)
+			branch = "detached at " + quote(pr.ShortSHA)
 		}
 		d.field("branch", branch)
 		if pr.Worktree && pr.MainRepo != "" {
-			d.field("main repo", detailClean(pr.MainRepo))
+			d.field("main repo", quote(pr.MainRepo))
 		}
 	case model.GroupCompose:
-		d.title(detailClean(k.Group) + " (compose)")
+		d.title(quote(k.Group) + " (compose)")
 		var names []string
 		for _, c := range s.Containers {
 			if c.ComposeProject == k.Group {
-				names = append(names, detailClean(c.Name))
+				names = append(names, quote(c.Name))
 			}
 		}
 		if len(names) > 0 {
@@ -264,9 +262,9 @@ func detailProjectTitle(pr *model.Project) string {
 	if ref == "" {
 		ref = pr.ShortSHA
 	}
-	t := detailClean(pr.Name)
+	t := quote(pr.Name)
 	if ref != "" {
-		t += " @ " + detailClean(ref)
+		t += " @ " + quote(ref)
 	}
 	if pr.Worktree {
 		t += " (worktree)"
@@ -305,7 +303,7 @@ func detailParents(s model.Snapshot, p *model.Process) []string {
 			chain = append(chain, fmt.Sprintf("pid %d", c.PPID))
 			break
 		}
-		chain = append(chain, fmt.Sprintf("%s %d", detailClean(par.Name), par.PID))
+		chain = append(chain, fmt.Sprintf("%s %d", quote(par.Name), par.PID))
 		c = par
 	}
 	return chain
@@ -317,32 +315,6 @@ func detailStartedBefore(a, b *model.Process) bool {
 		return c < 0
 	}
 	return a.PID < b.PID
-}
-
-// detailArgv returns argv for display: an argument that is empty, holds a space, a character
-// that is not printable (a terminal escape in a process title) or invalid UTF-8 (a lone 0x9b
-// is a C1 CSI, yet decodes to the printable U+FFFD) is Go-quoted, so the pane shows where each
-// argument ends and nothing in it reaches the terminal.
-func detailArgv(argv []string) []string {
-	out := make([]string, len(argv))
-	for i, a := range argv {
-		if a == "" || !utf8.ValidString(a) ||
-			strings.ContainsFunc(a, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) {
-			a = strconv.Quote(a)
-		}
-		out[i] = a
-	}
-	return out
-}
-
-// detailClean returns s, Go-quoted when it holds a character that is not printable or is not
-// valid UTF-8, so that no name, path or label from the snapshot can send control sequences to
-// the terminal.
-func detailClean(s string) string {
-	if !utf8.ValidString(s) || strings.ContainsFunc(s, func(r rune) bool { return r != ' ' && !unicode.IsPrint(r) }) {
-		return strconv.Quote(s)
-	}
-	return s
 }
 
 // detailBytes formats n in binary units: "512 B", "1.5 KiB", "178.9 MiB".
