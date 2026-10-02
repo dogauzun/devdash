@@ -1,0 +1,87 @@
+# Release pipeline (spec: Build, release and distribution).
+# CI runs `goreleaser release --snapshot --clean` on every push; a pushed v* tag
+# runs the real release from .github/workflows/release.yml.
+version: 2
+
+project_name: devdash
+
+builds:
+  - id: devdash
+    main: ./cmd/devdash
+    binary: devdash
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    # The version keeps its leading v, as `go install …@v0.1.0` reports it (DEV-64).
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
+    # Commit time, not build time, so rebuilding a tag gives the same archives.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: devdash
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot.{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]+\))?!?:'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix(\([^)]+\))?!?:'
+      order: 1
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - '^(docs|test|chore|ci|refactor)(\([^)]+\))?!?:'
+
+release:
+  github:
+    owner: dogauzun
+    name: devdash
+  # v0.1.0-rc1 and the like are published as prereleases.
+  prerelease: auto
+
+# A cask, not a formula: goreleaser deprecated `brews` in v2.16, and casks cover
+# Linux too, so `brew install dogauzun/tap/devdash` works on both (DEV-63).
+homebrew_casks:
+  - name: devdash
+    ids: [devdash]
+    repository:
+      owner: dogauzun
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/dogauzun/devdash
+    description: What is running on this machine, grouped by git repository
+    license: MIT
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "devdash {{ .Tag }}"
+    # Prerelease tags do not touch the tap.
+    skip_upload: auto
+    hooks:
+      post:
+        # The darwin binaries are only ad-hoc signed (spec: Signing), so Gatekeeper
+        # would refuse a quarantined download.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/devdash"]
+          end
