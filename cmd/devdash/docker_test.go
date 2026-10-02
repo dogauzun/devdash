@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -63,6 +64,38 @@ func TestDockerDiscovered(t *testing.T) {
 	t.Setenv("DEVDASH_TEST_DOCKER_ENV", "x")
 	if env.Getenv("DEVDASH_TEST_DOCKER_ENV") != "x" {
 		t.Error("Getenv does not read the environment")
+	}
+}
+
+// TestDockerRetryFollowsTick: after a failure or a missing socket the Source waits 10
+// refresh ticks rounded up to the 5 s Docker beat (spec "Failure modes": "retry every 10th
+// tick"), not 10 of its own fetches.
+func TestDockerRetryFollowsTick(t *testing.T) {
+	stubDiscover(t, docker.Endpoint{Network: "unix", Address: "/run/docker.sock"}, true, nil)
+	for _, tc := range []struct {
+		tick, want time.Duration
+	}{
+		{0, 20 * time.Second}, // the default 2 s tick
+		{2 * time.Second, 20 * time.Second},
+		{500 * time.Millisecond, 5 * time.Second},
+		{3 * time.Second, 30 * time.Second},
+		{1100 * time.Millisecond, 15 * time.Second}, // 11 s, rounded up to the 15 s Docker beat
+		{600 * time.Millisecond, 10 * time.Second},  // 6 s, rounded up to the 10 s Docker beat
+	} {
+		src, ok := options{Tick: tc.tick}.engine(fake()).Docker.(*docker.Source)
+		if !ok {
+			t.Fatalf("--tick %v: Docker is not a Source", tc.tick)
+		}
+		if got := src.RetryAfter(); got != tc.want {
+			t.Errorf("--tick %v: RetryAfter = %v, want %v", tc.tick, got, tc.want)
+		}
+	}
+	o, err := parse([]string{"--tick", "1s"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src := o.engine(fake()).Docker.(*docker.Source); src.RetryAfter() != 10*time.Second {
+		t.Errorf("--tick 1s parsed: RetryAfter = %v, want 10s", src.RetryAfter())
 	}
 }
 

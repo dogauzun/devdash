@@ -11,7 +11,9 @@ import (
 
 // Docker cadence (spec "Architecture", threading): its own goroutine, its own timeout.
 const (
-	dockerTick    = 5 * time.Second
+	// DockerTick is the beat Run calls Fetch on; a docker.Source rounds its retry holdoff up
+	// to whole beats of it.
+	DockerTick    = 5 * time.Second
 	dockerTimeout = time.Second // bounds one Fetch; the Source applies its own 500 ms per request
 )
 
@@ -52,10 +54,10 @@ func fetch(ctx context.Context, src ContainerSource) dockerResult {
 	return dockerResult{containers: cs, warning: w, took: time.Since(start), done: true}
 }
 
-// watchDocker fetches at once, then every dockerTick, storing each result, until ctx is done.
-// A Fetch slower than dockerTick skips the beats it overlapped instead of queueing them.
+// watchDocker fetches at once, then every DockerTick, storing each result, until ctx is done.
+// A Fetch slower than DockerTick skips the beats it overlapped instead of queueing them.
 func (e *Engine) watchDocker(ctx context.Context) {
-	t := time.NewTicker(dockerTick)
+	t := time.NewTicker(DockerTick)
 	defer t.Stop()
 	for {
 		e.docker.store(fetch(ctx, e.o.Docker))

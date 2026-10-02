@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -310,12 +311,14 @@ func parsePort(s string) (uint16, error) {
 }
 
 // engine returns the engine options for these flags. Unless --no-docker, it looks for a
-// Docker endpoint; the colour setting is not an engine option, its readers take it from o.
+// Docker endpoint, retried after a failure on the first 5 s Docker beat once 10 ticks of
+// --tick have passed (a zero Tick, as in tests, is the default tick); the colour setting is
+// not an engine option, its readers take it from o.
 func (o options) engine(c collector.Collector) engine.Options {
 	home, _ := os.UserHomeDir()
 	eo := engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
 	if !o.NoDocker {
-		eo.Docker = dockerSource(home)
+		eo.Docker = dockerSource(home, cmp.Or(o.Tick, engine.DefaultTick))
 	}
 	return eo
 }
@@ -325,8 +328,9 @@ var discover = docker.Discover
 
 // dockerSource is the container source for this machine: nil when no endpoint is found (no
 // containers, no warning), a docker.Source when one is, and endpointError when DOCKER_HOST or
-// the docker context names an endpoint devdash cannot use.
-func dockerSource(home string) engine.ContainerSource {
+// the docker context names an endpoint devdash cannot use. tick is the refresh interval,
+// which with engine.DockerTick sets the Source's retry cadence.
+func dockerSource(home string, tick time.Duration) engine.ContainerSource {
 	ep, ok, err := discover(docker.Env{Getenv: os.Getenv, Home: home})
 	switch {
 	case err != nil:
@@ -334,7 +338,7 @@ func dockerSource(home string) engine.ContainerSource {
 	case !ok:
 		return nil // not a typed nil: Options.Docker must compare equal to nil
 	}
-	return docker.NewSource(ep)
+	return docker.NewSource(ep, tick, engine.DockerTick)
 }
 
 // endpointError is the source for an endpoint devdash cannot use: no containers, and one
