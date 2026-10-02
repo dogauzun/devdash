@@ -1,12 +1,240 @@
 # devdash
 
-What is running on this machine, and for which project — in one terminal screen.
+What is running on this machine, and for which project, in one terminal screen.
 
-devdash groups processes by git repository, attaches listening ports and Docker
-containers to the processes that own them, and lets you kill any of it. One
-static Go binary for macOS and Linux.
+Forgotten dev servers hold ports, watchers keep running in abandoned worktrees, and agent
+sessions pile up. Finding them usually takes `lsof`, `ps`, `docker ps` and some guessing.
+devdash groups every process by the git repository it runs in, attaches listening ports and
+Docker containers to the processes that own them, and lets you kill any of it. It is one
+static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
+shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
-Status: pre-spike. Nothing is built yet.
+<!-- demo GIF: DEV-65 -->
 
-- Spec: https://claude.ai/artifact/KAMHVNSXtKDT9fLjxLDryS
-- Board: https://stockpuppet.atlassian.net/jira/software/projects/DEV/boards
+## Install
+
+**Homebrew** (macOS and Linux), a cask from the `dogauzun/tap` tap:
+
+```sh
+brew install dogauzun/tap/devdash
+```
+
+**Go** 1.27.1 or newer (the version in `go.mod`):
+
+```sh
+go install github.com/dogauzun/devdash/cmd/devdash@latest
+```
+
+**Release archives.** Each [GitHub release](https://github.com/dogauzun/devdash/releases) has
+an archive for darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64, and a `checksums.txt`.
+Check the download, unpack it and put `devdash` on your `PATH`:
+
+```sh
+sha256sum --ignore-missing -c checksums.txt            # Linux
+shasum -a 256 --ignore-missing -c checksums.txt        # macOS
+```
+
+All binaries are built with `CGO_ENABLED=0` and are static. The macOS build loads libproc at
+run time through [purego](https://github.com/ebitengine/purego), so it needs no cgo either.
+
+## Usage
+
+### The dashboard
+
+```sh
+devdash
+```
+
+One screen: a header, a table grouped by project, and a footer with key hints and warnings.
+Each project header shows `name @ branch (worktree)`. Inside a group, processes form a tree by
+parent pid, and each has a kind: agent, test, watcher, editor, shell, server, container or
+other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
+Processes with no project go under `other`, and containers without a compose project under
+`containers`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
+It is meant to be usable at 80 columns by 24 rows.
+
+The dashboard is being built (Phase 4 in [docs/SPEC.md](docs/SPEC.md)). Until it ships,
+`devdash` with no command prints a message and exits 2; use `--json`, `port` and `kill`.
+
+### `devdash --json`
+
+Prints one snapshot as a JSON document on stdout. It samples twice, 200 ms apart, so
+`cpu_percent` is a real number. Trimmed output on Linux:
+
+```console
+$ devdash --json | head -12
+{
+  "schema_version": 1,
+  "taken_at": "2026-10-02T19:12:02.099069847Z",
+  "host": {
+    "os": "linux",
+    "arch": "amd64",
+    "hostname": "dev-box",
+    "uid": 0
+  },
+  "projects": [
+    {
+      "id": "/home/me/code/shop",
+```
+
+For scripts, for example every process that listens on a port:
+
+```sh
+devdash --json | jq -r '.processes[] | select(.listeners | length > 0) | "\(.pid)\t\(.name)\t\([.listeners[].port] | join(","))"'
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | the snapshot was printed |
+| 2 | usage error |
+| 5 | devdash failed: no snapshot could be taken, or stdout could not be written |
+
+### `devdash port N`
+
+Who listens on TCP port N: one line per listener with pid, name, project (`-` for none) and
+bind address. A listener whose owner devdash cannot read is pid 0 with a hint.
+
+```console
+$ devdash port 5173
+15669  python3  shop  0.0.0.0:5173
+$ devdash port 2024
+0  unknown  -  0.0.0.0:2024  owner unknown: run with sudo to see owners
+$ devdash port 4999
+free
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | something listens on N |
+| 1 | the port is free |
+| 2 | usage error |
+| 5 | devdash failed, so it could not look |
+
+Exit 1 only ever means "free", so `devdash port 3000 || npm run dev` never starts a second
+server because devdash failed.
+
+### `devdash kill N`
+
+```sh
+devdash kill N [--tree] [--force] [--yes] [--timeout 3s]
+```
+
+Stops whatever listens on TCP port N. devdash prints the plan first (mode, signal, and every
+pid with its name, project and ports), asks for confirmation on the terminal, signals, waits,
+and reports what survived. Then it checks the port again and says whether it is free.
+
+- Default: `SIGTERM` to each owner of the port.
+- `--tree`: the owner and all its descendants, parent first, so a supervisor such as nodemon
+  or air cannot respawn a child. A process-group leader also gets one signal to its group.
+- `--force`: `SIGKILL` instead of `SIGTERM`, for whichever set was chosen.
+- `--yes`: do not ask. Without a terminal on stdin, kill needs `--yes`.
+- `--timeout d`: how long to wait for the signalled processes to exit (default 3s).
+
+A target outside every project asks a second time, because it is usually a system service.
+devdash refuses pid 1, itself and its ancestors (your shell and terminal), container ports
+(with a `docker stop <name>` hint) and container-runtime processes such as `dockerd`,
+`docker-proxy` and `com.docker.backend`. If any owner is refused, nothing is signalled. Each
+pid's start time is checked again right before `kill(2)`, so a reused pid is never signalled.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | every signalled process exited, or nothing listens on N |
+| 2 | usage error, or no terminal to confirm on and no `--yes` |
+| 3 | permission denied, or the owner is unknown (another user's; try sudo) |
+| 4 | survivors remain (try `--force`) |
+| 5 | devdash failed before anything was signalled |
+| 6 | nothing signalled: a refused target, or the confirmation was declined |
+
+### `devdash version`
+
+Prints the version, commit and build date. Exits 0.
+
+### Global flags
+
+Flags may come before or after the command. `-h` or `--help` prints the usage and exits 0.
+
+| Flag | Effect |
+| --- | --- |
+| `--roots paths` | only count git repositories under these directories; comma-separated and repeatable; a leading `~` is `$HOME` |
+| `--tick d` | dashboard refresh interval (default 2s, minimum 500ms) |
+| `--all` | show shells and editors in the dashboard (`--json` always lists every process) |
+| `--no-docker` | do not ask Docker for containers |
+| `--no-color` | no colour; also when `NO_COLOR` is set and not empty |
+| `--json` | print one snapshot as JSON |
+
+## Keybindings
+
+The key table lands here with the dashboard.
+
+<!-- keybindings table: DEV-65 -->
+
+## JSON output
+
+`--json` follows schema version 1, documented field by field in
+[docs/json-schema.md](docs/json-schema.md).
+
+## Why another port tool
+
+Tools such as [portview](https://docs.rs/portview),
+[porthog](https://pypi.org/project/porthog/),
+[PortPilot](https://dev.to/abdullahtarakji/building-portpilot-a-modern-tui-for-port-management-2p18),
+[killport-tui](https://github.com/last1chosen/killport-tui) and
+[somo](https://github.com/theopfr/somo) answer "who has port N", and answer it well. devdash
+answers "what is running for project X". A port is one attribute of a process, not the unit
+the tool is built around.
+
+| Question | devdash |
+| --- | --- |
+| Who has port N? | `devdash port N`, or filter the dashboard by port |
+| Which processes belong to this repository? | every process is grouped under the git repository of its working directory, linked worktrees included |
+| What runs here without a port? | watchers, test runners and agent sessions are shown under their project, listening or not |
+| Which container holds this port? | a published port is shown as its container under its compose project, not as `docker-proxy` |
+| What exactly will this kill do? | the plan lists every pid before any signal is sent |
+
+If you only want to free a port, any of the tools above will do, and some cover ground devdash
+does not: portview can inspect remote hosts over SSH, and killport-tui runs on Windows.
+
+## Known limitations
+
+- **Other users' processes.** Without sudo, their rows are shown but argv, cwd, CPU and
+  memory may be unknown, and their listeners have no owner (pid 0, "owner unknown"). devdash
+  shows a warning instead of hiding them. On Linux, root in a container with default
+  capabilities (no `CAP_SYS_PTRACE`) is in the same position; `--cap-add SYS_PTRACE` fixes it
+  (see [DECISIONS.md](DECISIONS.md), DEV-13).
+- **Linux `hidepid`.** With `/proc` mounted `hidepid=1` or `2` (`noaccess` or `invisible`),
+  other users' processes are invisible and their listeners stay without an owner. devdash
+  warns and names the mount option.
+- **macOS socket list.** Other users' listeners come from the kernel's TCP socket list, which
+  macOS withholds when an ancestor of devdash is ad-hoc signed (for example `go run`). An
+  empty list is treated as unknown, not as "no listeners", and a footer hint says so. Start
+  devdash directly from a shell, or use sudo. Your own listeners are always found. See the
+  Signing notes in [docs/SPEC.md](docs/SPEC.md#build-release-and-distribution) and [DECISIONS.md](DECISIONS.md) (DEV-10).
+- **Docker.** Docker is optional; with no socket there are no container rows and no warning.
+  A published port with no userland proxy behind it (iptables only) shows as a container row
+  with no process. OrbStack, Colima and Podman may hold ports in processes devdash does not
+  know, which then show with an unknown owner. `port N` only reports ports listening on the
+  host, not unpublished ports inside a Docker network.
+- **UDP and unix sockets** are not shown in v1 (planned for v1.1).
+- **Windows** is not supported. Neither are remote hosts, a config file or a background
+  daemon: devdash runs only while its terminal is open.
+
+## Building from source
+
+```sh
+CGO_ENABLED=0 go build ./...
+go vet ./...
+go test -race ./...
+golangci-lint run
+```
+
+Build for the other OS too, for example `GOOS=darwin CGO_ENABLED=0 go build ./...`.
+
+## Contributing
+
+The spec in [docs/SPEC.md](docs/SPEC.md) is the authority. [CLAUDE.md](CLAUDE.md) has the
+layout, commands and conventions (conventional commits, tests first, no cgo, a short
+dependency list). Non-obvious choices get one dated line in [DECISIONS.md](DECISIONS.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
