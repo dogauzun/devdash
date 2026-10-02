@@ -229,7 +229,7 @@
     },
     {
       "code": "listener_owner_unreadable",
-      "count": 2,
+      "count": 1,
       "hint": "run with sudo to see owners"
     }
   ],

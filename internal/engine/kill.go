@@ -99,7 +99,8 @@ func (r Result) ExitCode() int {
 // osys is the OS seam: unit tests replace it, so they record signals instead of sending them.
 type osys struct {
 	// start returns a pid's start time read from the OS now, in the collector's terms, or
-	// errGone when the pid does not exist or is a zombie.
+	// errGone when the pid does not exist or is a zombie (on Linux, once every thread has
+	// exited, so its files are closed).
 	start   func(pid int) (time.Time, error)
 	ppid    func(pid int) (int, error) // read from the OS now, from the same source as start
 	getpgid func(pid int) (int, error)
