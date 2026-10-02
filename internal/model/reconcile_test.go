@@ -41,6 +41,8 @@ func TestReconcile(t *testing.T) {
 	local2 := Container{ID: "l2", Ports: []PortMapping{pm("127.0.0.2", 8080, 80, "tcp")}}
 	open := Container{ID: "open", Ports: []PortMapping{pm("0.0.0.0", 8080, 80, "tcp")}}
 	podman := Container{ID: "pod", Ports: []PortMapping{pm("", 8000, 80, "tcp")}}
+	v4 := Container{ID: "v4", Ports: []PortMapping{pm("0.0.0.0", 8080, 80, "tcp")}}
+	v6 := Container{ID: "v6", Ports: []PortMapping{pm("::", 8080, 80, "tcp")}}
 	dns := Container{ID: "dns", Ports: []PortMapping{pm("0.0.0.0", 53, 53, "udp"), pm("", 0, 9000, "tcp")}}
 
 	type want struct {
@@ -98,6 +100,26 @@ func TestReconcile(t *testing.T) {
 			[]Process{rp(52, "docker-proxy", KindServer, lst("tcp4", any4, 8080))},
 			[]Container{local2, open},
 			[]want{{"open", KindContainer, []string{"open"}}}},
+		{"each family's every-interface mapping is a different container's",
+			[]Process{rp(0, "unknown", KindOther, lst("tcp4", any4, 8080)), rp(0, "unknown", KindOther, lst("tcp6", any6, 8080))},
+			[]Container{v4, v6},
+			[]want{{"v4", KindContainer, []string{"v4"}}, {"v6", KindContainer, []string{"v6"}}}},
+		{"same, in the other API order",
+			[]Process{rp(0, "unknown", KindOther, lst("tcp6", any6, 8080)), rp(0, "unknown", KindOther, lst("tcp4", any4, 8080))},
+			[]Container{v6, v4},
+			[]want{{"v6", KindContainer, []string{"v6"}}, {"v4", KindContainer, []string{"v4"}}}},
+		{"podman's empty host IP is either family",
+			[]Process{rp(31, "pasta", KindServer, lst("tcp6", any6, 8000))},
+			[]Container{podman},
+			[]want{{"pod", KindContainer, []string{"pod"}}}},
+		{"unspecified listener takes one container's specific mapping",
+			[]Process{rp(54, "docker-proxy", KindServer, lst("tcp4", any4, 8080))},
+			[]Container{local2},
+			[]want{{"l2", KindContainer, []string{"l2"}}}},
+		{"unspecified listener does not guess between containers' specific mappings",
+			[]Process{rp(54, "docker-proxy", KindServer, lst("tcp4", any4, 8080))},
+			[]Container{local1, local2},
+			[]want{{"", KindServer, []string{""}}}},
 		{"a specific listener never takes an every-interface mapping",
 			[]Process{rp(53, "docker-proxy", KindServer, lst("tcp4", lo, 5432))},
 			[]Container{db},
@@ -159,5 +181,19 @@ func TestBuildReconciles(t *testing.T) {
 	s = Build(raw, Snapshot{}, containers[:1], NewResolver("", nil))
 	if got, want := render(Flatten(s, ViewOptions{})), []string{"[compose shop]", "  com.docker.backend@shop-db-1"}; !slices.Equal(got, want) {
 		t.Errorf("rows %q, want %q", got, want)
+	}
+}
+
+// TestReconcileKeepsRowKey: a PID 0 row is the same row whether or not Docker answered.
+func TestReconcileKeepsRowKey(t *testing.T) {
+	raw := Raw{TakenAt: start, Listeners: []RawListener{{"tcp4", any4, 5432, 0}}}
+	db := Container{ID: "db", Ports: []PortMapping{pm("0.0.0.0", 5432, 5432, "tcp")}}
+	without := Build(raw, Snapshot{}, nil, NewResolver("", nil)).Processes[0]
+	with := Build(raw, Snapshot{}, []Container{db}, NewResolver("", nil)).Processes[0]
+	if with.Listeners[0].ContainerID != "db" {
+		t.Fatalf("not reconciled: %+v", with.Listeners)
+	}
+	if with.Key() != without.Key() {
+		t.Errorf("key %+v with Docker, %+v without", with.Key(), without.Key())
 	}
 }

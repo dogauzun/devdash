@@ -4,9 +4,12 @@ import "net/netip"
 
 // Reconcile matches listeners to published container ports (spec "Docker integration",
 // Reconciliation). A listener matches a tcp mapping with a host port when the ports are equal
-// and its owner is a port proxy (proxyNames) or unknown (PID 0), and its bind address equals
-// the mapping's host IP or, failing any such mapping, is unspecified; an unspecified listener
-// prefers a mapping on every interface (an empty host IP counts as one, as Podman reports it).
+// and its owner is a port proxy (proxyNames) or unknown (PID 0), tried in order: the bind
+// address equals the mapping's host IP (an unspecified listener also takes an empty host IP,
+// which Podman reports for every interface of either family); an unspecified listener takes the
+// other family's every-interface mapping (Docker Desktop holds 0.0.0.0 mappings on [::]); an
+// unspecified listener takes a specific mapping on its port only when they are all one
+// container's. A specific listener never takes an every-interface mapping.
 //
 // A matched listener gets ContainerID, and its process kind container. The process itself gets
 // ContainerID only when all its matched listeners are one container's: Docker Desktop's
@@ -17,7 +20,7 @@ import "net/netip"
 func Reconcile(procs []Process, containers []Container) []Process {
 	type mapping struct {
 		id string
-		ip netip.Addr // unspecified for every interface
+		ip netip.Addr // invalid for every interface of either family (Podman's empty host IP)
 	}
 	byPort := map[uint16][]mapping{}
 	for _, c := range containers {
@@ -25,28 +28,35 @@ func Reconcile(procs []Process, containers []Container) []Process {
 			if m.Proto != "tcp" || m.HostPort == 0 {
 				continue
 			}
-			ip := m.HostIP.Unmap()
-			if !ip.IsValid() {
-				ip = netip.IPv4Unspecified()
-			}
-			byPort[m.HostPort] = append(byPort[m.HostPort], mapping{c.ID, ip})
+			byPort[m.HostPort] = append(byPort[m.HostPort], mapping{c.ID, m.HostIP.Unmap()})
 		}
 	}
 	if len(byPort) == 0 {
 		return procs
 	}
 	match := func(l Listener) string {
-		addr := l.Addr.Unmap()
-		fallback := ""
-		for _, m := range byPort[l.Port] {
-			switch {
-			case addr == m.ip || addr.IsUnspecified() && m.ip.IsUnspecified():
+		addr, ms := l.Addr.Unmap(), byPort[l.Port]
+		for _, m := range ms {
+			if addr == m.ip || addr.IsUnspecified() && !m.ip.IsValid() {
 				return m.id
-			case addr.IsUnspecified() && fallback == "":
-				fallback = m.id
 			}
 		}
-		return fallback
+		if !addr.IsUnspecified() {
+			return ""
+		}
+		for _, m := range ms {
+			if m.ip.IsUnspecified() {
+				return m.id // the other family's: the same family's matched above
+			}
+		}
+		owner := ""
+		for _, m := range ms {
+			if owner != "" && owner != m.id {
+				return "" // specific mappings of several containers: no way to tell which
+			}
+			owner = m.id
+		}
+		return owner
 	}
 	for i := range procs {
 		p := &procs[i]
