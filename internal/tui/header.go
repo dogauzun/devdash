@@ -16,7 +16,7 @@ const staleAfter = 2
 // containers, and the active filter (spec "TUI design", Header).
 func (m *Model) headerView(w int) string {
 	s := m.upd.Snapshot
-	host := s.Host.Hostname
+	host := clean(s.Host.Hostname)
 	if host == "" {
 		host = "devdash"
 	}
@@ -39,9 +39,9 @@ func (m *Model) headerView(w int) string {
 	}
 	switch {
 	case m.filtering:
-		parts = append(parts, styleAccent.Render("/"+m.filter+"_"))
+		parts = append(parts, styleAccent.Render("/"+clean(m.filter)+"_"))
 	case m.filter != "":
-		parts = append(parts, styleAccent.Render("filter: "+m.filter))
+		parts = append(parts, styleAccent.Render("filter: "+clean(m.filter)))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -69,13 +69,14 @@ const footerHints = "↑↓ move  ←→ fold  enter detail  / filter  x kill  o
 
 // footerView is the one-shot status message or the warnings (collector, Build and engine
 // hints, deduplicated by hint text) on their own line when there are any, then the key hints.
+// Status and warnings embed snapshot text (names, paths, errors), so both are cleaned.
 func (m *Model) footerView(w int) string {
 	var lines []string
 	if m.status != "" {
-		lines = append(lines, styleWarn.Render(m.status))
+		lines = append(lines, styleWarn.Render(clean(m.status)))
 	}
 	if ws := m.warnings(); len(ws) > 0 {
-		lines = append(lines, styleWarn.Render(strings.Join(ws, " · ")))
+		lines = append(lines, styleWarn.Render(clean(strings.Join(ws, " · "))))
 	}
 	return strings.Join(append(lines, styleDim.Render(footerHints)), "\n")
 }

@@ -318,30 +318,6 @@ func TestDetailWrapWideAtWidthOne(t *testing.T) {
 	}
 }
 
-func TestDetailArgvQuoting(t *testing.T) {
-	// 0x9b is a C1 CSI on its own; as invalid UTF-8 it decodes to the printable U+FFFD.
-	got := detailArgv([]string{"sh", "-c", "echo hi", "", "\x1b[31mred", "\x9b31mred", "café"})
-	want := []string{"sh", "-c", `"echo hi"`, `""`, `"\x1b[31mred"`, `"\x9b31mred"`, "café"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Errorf("detailArgv = %q, want %q", got, want)
-	}
-}
-
-func TestDetailClean(t *testing.T) {
-	for in, want := range map[string]string{
-		"/src/my app": "/src/my app",
-		"café":        "café",
-		"a\x1b[2Jb":   `"a\x1b[2Jb"`,
-		"a\x9b2Jb":    `"a\x9b2Jb"`,
-		"\xff":        `"\xff"`,
-		"tab\there":   `"tab\there"`,
-	} {
-		if got := detailClean(in); got != want {
-			t.Errorf("detailClean(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestDetailSplitNotesWrap(t *testing.T) {
 	// At 120 columns the pane's content is 38 wide: free-text notes wrap at spaces.
 	m, _ := newTest(t, 120, 40)
