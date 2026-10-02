@@ -10,6 +10,7 @@
 | Keys | Every key in the tables is always present, except `timing_ms` keys marked otherwise. Key order is stable but not part of the contract. |
 | Absent values | `null`, never `""`, `0` or `[]` as a stand-in. A list that is known and empty is `[]`; a list that could not be read is `null`. |
 | Unreadable fields | Named in the process's `unknown` list, and their value is `null`. |
+| Strings | UTF-8. A byte that is not valid UTF-8 (in `argv`, `cwd`, `name`, a project path) is written as U+FFFD, so such a value cannot be turned back into the original bytes. |
 | Times | RFC 3339 in UTC, `Z` suffix, with the fraction the OS gives (Linux: 10 ms; macOS: 1 µs), trailing zeros dropped. |
 | Sizes | Bytes. |
 | Durations | Milliseconds, a number with up to 3 decimals (1 µs). |
@@ -78,7 +79,7 @@ The top-level object.
 | Field | Type | Present | Description |
 | --- | --- | --- | --- |
 | `proto` | string | always | `tcp4` or `tcp6`. A dual-stack socket is one `tcp6` listener on `::`; a v4-mapped bind is `tcp4`. |
-| `addr` | string | always | Bind address; `0.0.0.0` or `::` means every interface. |
+| `addr` | string | always | Bind address; `0.0.0.0` or `::` means every interface. A scoped IPv6 address (link-local) carries its zone on macOS: `fe80::1%lo0`. |
 | `port` | integer | always | TCP port, 1 to 65535. |
 
 ## container

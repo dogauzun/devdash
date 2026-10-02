@@ -80,7 +80,7 @@ type Process struct {
     Listeners   []Listener
     Kind        Kind
     ProjectID   string     // Project.ID or ""
-    ContainerID string     // set when this process holds a container's published port
+    ContainerID string     // set when every published port this process holds is one container's
     Unknown     FieldSet   // which fields could not be read (argv, cwd, cpu, mem, owner)
 }
 
@@ -88,6 +88,7 @@ type Listener struct {
     Proto string      // "tcp4" | "tcp6"
     Addr  netip.Addr  // bind address; unspecified means every interface
     Port  uint16
+    ContainerID string // the container whose published port this is, "" otherwise
 }
 
 type Project struct {
@@ -177,7 +178,7 @@ Socket discovery, in order: `DOCKER_HOST` when set (unix and tcp URLs); the endp
 
 The client is `net/http` with a custom `DialContext` on the socket, and requests are versioned at `/v1.41/` so that Docker 20.10 and newer and Podman's compatibility API both answer. `GET /_ping` runs once at start and after each failure; `GET /containers/json` runs every 5 s on its own goroutine. Only these fields are read: `Id`, `Names`, `Image`, `State`, `Labels["com.docker.compose.project"]`, `Labels["com.docker.compose.service"]`, and `Ports[].{IP, PrivatePort, PublicPort, Type}`. The moby client library is not imported; it would multiply the dependency tree for two endpoints.
 
-Reconciliation runs in `model` after every collector snapshot: a listener matches a container port mapping when the ports are equal, the listener's bind address is unspecified or equal to the mapping's host IP, and either the listener's process name is one of `docker-proxy`, `com.docker.backend`, `vpnkit`, `gvproxy`, `rootlessport`, `slirp4netns`, or the listener's owner is unknown (root-owned docker-proxy on Linux). A matched process gets `ContainerID`, kind `container`, and is displayed with the container name and image instead of the proxy's name; the container row is placed under its compose project, or under `containers` when it has no compose label. An unmatched published port (userland proxy disabled, iptables-only) still appears as a container row with no process behind it.
+Reconciliation runs in `model` after every collector snapshot: a listener matches a published tcp mapping when the ports are equal, the listener's bind address equals the mapping's host IP or, failing that, is unspecified (an unspecified listener prefers a mapping on every interface; an empty host IP, as Podman reports it, means every interface), and either the listener's process name is one of `docker-proxy`, `com.docker.backend`, `com.docker.vpnkit`, `vpnkit`, `gvproxy`, `rootlesskit`, `rootlessport`, `slirp4netns`, `pasta`, `limactl`, or the listener's owner is unknown (root-owned docker-proxy on Linux). A matched listener gets `ContainerID` and its process kind `container`. The process gets `ContainerID` only when all its matched listeners are one container's: it is then displayed with the container name and image instead of the proxy's name, under the container's compose project, or under `containers` when it has no compose label. Docker Desktop's `com.docker.backend` holds every container's ports in one process, so when it holds two or more containers' ports it keeps its own row and each container gets a container row. An unmatched published port (userland proxy disabled, iptables-only) still appears as a container row with no process behind it.
 
 Failure handling: a missing socket produces no warning at all; a socket that exists but does not answer produces one footer hint ("docker: not reachable at <path>") and a retry every 10th tick; a request slower than 500 ms keeps the previous container list for this tick.
 
@@ -295,7 +296,7 @@ Rules for the loop: collection runs with a context timeout of 1.5 s; a timed-out
 
 | Condition | Behaviour |
 | --- | --- |
-| cwd, argv, fd or task info unreadable (other uid) | row shown, fields marked unknown, one warning with a count, footer hint `run with sudo` |
+| cwd, argv, fd or task info unreadable (other uid) | row shown, fields marked unknown, one warning with a count, footer hint `run with sudo` (as Linux root, which sudo cannot help: names the missing CAP_SYS_PTRACE, `--cap-add SYS_PTRACE`; with it, names a security module or sandbox) |
 | macOS PCB list empty or denied | other users' listeners treated as unknown (own-uid listeners still come from the fd walk); one warning; hint in footer; no netstat fallback |
 | Docker socket absent | no Docker rows, no warning |
 | Docker socket present but unreachable or slow | previous container list kept, one footer hint, retry every 10th tick |

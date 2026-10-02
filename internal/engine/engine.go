@@ -42,6 +42,13 @@ type Options struct {
 	// user, then the user database, then the number itself. Tests set it so their output does
 	// not depend on the accounts of the machine they run on.
 	LookupUser func(uid int) string
+	Docker     ContainerSource // nil means no Docker; unused until DEV-61
+}
+
+// ContainerSource is the Docker input, implemented by docker.Source. Fetch returns the
+// containers to use now and a warning when Docker is present but not answering.
+type ContainerSource interface {
+	Fetch(ctx context.Context) ([]model.Container, *model.Warning)
 }
 
 // Update is what Run publishes after every tick, good or not.

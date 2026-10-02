@@ -13,7 +13,7 @@ func TestResolvePlaceholder(t *testing.T) {
 
 func TestClassifyPlaceholder(t *testing.T) {
 	server := proc(10, 0)
-	server.Listeners = []Listener{{"tcp4", lo, 80}}
+	server.Listeners = []Listener{{Proto: "tcp4", Addr: lo, Port: 80}}
 	unknown := Process{Name: "unknown", Listeners: server.Listeners, Unknown: unknownOwner}
 	if Classify(server) != KindServer || Classify(proc(11, 0)) != KindOther || Classify(unknown) != KindOther {
 		t.Error("want server with a listener, other without, other for the PID 0 pseudo-process")
@@ -33,8 +33,8 @@ func TestReconcilePlaceholder(t *testing.T) {
 func TestRowKeysDistinct(t *testing.T) {
 	keys := []RowKey{
 		proc(10, 0).Key(),
-		{PID: 0, Listener: Listener{"tcp4", any4, 22}},
-		{PID: 0, Listener: Listener{"tcp4", any4, 631}},
+		{PID: 0, Listener: Listener{Proto: "tcp4", Addr: any4, Port: 22}},
+		{PID: 0, Listener: Listener{Proto: "tcp4", Addr: any4, Port: 631}},
 		{ContainerID: "shop"},
 		{Header: GroupProject, Group: "shop"},
 		{Header: GroupCompose, Group: "shop"},

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"maps"
 	"math"
 	"net/netip"
@@ -20,6 +21,9 @@ type Raw struct {
 	Listeners []RawListener
 	Warnings  []Warning // may repeat a Code; Build merges them
 	Timings   Timing
+	// OwnerHint replaces the listener_owner_unreadable hint when the collector knows sudo
+	// cannot help (devdash already runs as root on Linux); "" keeps "run with sudo to see owners".
+	OwnerHint string
 }
 
 // RawListener is a listening socket with the pid that owns it, 0 when no owner was readable.
@@ -119,7 +123,8 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 		warnings = append(warnings, w)
 	}
 	if n := len(seen); n > 0 {
-		warnings = append(warnings, Warning{Code: "listener_owner_unreadable", Count: n, Hint: "run with sudo to see owners"})
+		hint := cmp.Or(raw.OwnerHint, "run with sudo to see owners")
+		warnings = append(warnings, Warning{Code: "listener_owner_unreadable", Count: n, Hint: hint})
 	}
 
 	timing := Timing{}
