@@ -50,15 +50,23 @@ func decodeFDList(b []byte) []int {
 	return fds
 }
 
+// sock is a listener with its kernel socket handle (soi_so in the fd walk, xso_so in the PCB
+// list: both are the same VM_KERNEL_ADDRPERM-obfuscated socket pointer), so a socket shared
+// across fork is recognised as one socket and SO_REUSEPORT siblings as distinct ones.
+type sock struct {
+	Listener
+	so uint64
+}
+
 // decodeSocketFDInfo decodes struct socket_fdinfo and reports a TCP listener
-// (soi_kind SOCKINFO_TCP = 2 at 256, tcpsi_state TSI_S_LISTEN = 1 at 344, insi_lport at 268
-// as an int holding a network-order u_short, insi_vflag at 288, insi_laddr at 312).
-func decodeSocketFDInfo(b []byte) (Listener, bool) {
+// (soi_so at 160, soi_kind SOCKINFO_TCP = 2 at 256, tcpsi_state TSI_S_LISTEN = 1 at 344,
+// insi_lport at 268 as an int holding a network-order u_short, insi_vflag at 288, insi_laddr at 312).
+func decodeSocketFDInfo(b []byte) (sock, bool) {
 	if len(b) < sizeofSocketFDInfo || le.Uint32(b[256:]) != 2 || le.Uint32(b[344:]) != 1 {
-		return Listener{}, false
+		return sock{}, false
 	}
 	proto, addr := inpAddr(b[288], b[312:328])
-	return Listener{Proto: proto, Addr: addr, Port: binary.BigEndian.Uint16(b[268:])}, proto != ""
+	return sock{Listener{Proto: proto, Addr: addr, Port: binary.BigEndian.Uint16(b[268:])}, le.Uint64(b[160:])}, proto != ""
 }
 
 // inpAddr picks an inpcb's local address by its vflag, as netstat does, so the fd walk and the
@@ -76,35 +84,38 @@ func inpAddr(vflag byte, laddr []byte) (string, netip.Addr) {
 	return "", netip.Addr{}
 }
 
-// decodeProcArgs2 decodes kern.procargs2: int32 argc, the exec path, NUL padding,
-// then argc NUL-terminated strings (followed by the environment, which is ignored).
+// decodeProcArgs2 decodes kern.procargs2: int32 argc, the exec path NUL-padded to a multiple
+// of 8 bytes counted from its start (XNU's exec_extract_strings pads it to the pointer size),
+// then exactly argc NUL-terminated strings, empty ones included, then the environment, which is
+// never read. Trailing empty strings are dropped and an all-empty argv is nil, as on Linux,
+// where /proc/[pid]/cmdline cannot tell them from a blanked argv.
 func decodeProcArgs2(b []byte) ([]string, bool) {
 	if len(b) < 4 {
 		return nil, false
 	}
 	argc := int(int32(le.Uint32(b)))
 	b = b[4:]
-	i := bytes.IndexByte(b, 0) // skip the exec path
-	if i < 0 || argc < 0 {
+	i := bytes.IndexByte(b, 0)
+	if i < 0 || argc < 0 || roundup8(uint32(i+1)) > len(b) {
 		return nil, false
 	}
-	b = b[i:]
-	for len(b) > 0 && b[0] == 0 {
-		b = b[1:]
-	}
-	argv := make([]string, 0, argc)
+	b = b[roundup8(uint32(i+1)):]
+	argv := make([]string, 0, min(argc, len(b))) // each string takes at least its NUL
 	for range argc {
-		if len(b) == 0 {
-			break
-		}
 		i := bytes.IndexByte(b, 0)
 		if i < 0 {
-			i = len(b)
+			return nil, false // truncated
 		}
 		argv = append(argv, string(b[:i]))
-		b = b[min(i+1, len(b)):]
+		b = b[i+1:]
 	}
-	return argv, len(argv) > 0
+	for len(argv) > 0 && argv[len(argv)-1] == "" {
+		argv = argv[:len(argv)-1]
+	}
+	if len(argv) == 0 {
+		return nil, true
+	}
+	return argv, true
 }
 
 // PCB list record kinds (XSO_* in bsd/sys/socketvar.h). netstat waits for all six per TCP PCB.
@@ -116,30 +127,51 @@ const (
 	sizeofXgen = 24   // struct xinpgen
 )
 
-// decodePCBList walks net.inet.tcp.pcblist_n: a struct xinpgen, then per PCB a group of
-// records each starting with {u32 len, u32 kind} and padded to 8 bytes, then a closing xinpgen.
-// It mirrors netstat's protopr loop and returns the LISTEN sockets and the total PCB count.
-func decodePCBList(b []byte) (ls []Listener, pcbs int) {
+// decodePCBList decodes net.inet.tcp.pcblist_n and returns the LISTEN sockets, with
+// so_last_pid as the owner, and the number of PCBs whose so_last_pid is not self (pass -1 to
+// count all). A list withheld from devdash still holds devdash's own sockets, so zero others
+// means withheld.
+func decodePCBList(b []byte, self int) (ls []sock, others int) {
+	walkPCBList(b, func(_ []byte, s sock, listen bool) {
+		if s.PID != self {
+			others++
+		}
+		if listen {
+			ls = append(ls, s)
+		}
+	})
+	return ls, others
+}
+
+// walkPCBList walks net.inet.tcp.pcblist_n: a struct xinpgen, then per PCB a group of records
+// each starting with {u32 len, u32 kind} and padded to 8 bytes, then a closing xinpgen. It
+// mirrors netstat's protopr loop, calls fn with each complete group's bytes, and returns the
+// offset where the walk stopped (the closing xinpgen).
+func walkPCBList(b []byte, fn func(group []byte, s sock, listen bool)) (end int) {
 	if len(b) < sizeofXgen {
-		return nil, 0
+		return len(b)
 	}
 	var which uint32
-	var cur Listener
-	var state int
-	for off := roundup8(le.Uint32(b)); off+8 <= len(b); {
+	var cur sock
+	state, start := 0, 0
+	off := roundup8(le.Uint32(b))
+	for off+8 <= len(b) {
 		n, kind := le.Uint32(b[off:]), le.Uint32(b[off+4:])
 		if n <= sizeofXgen || off+int(n) > len(b) {
 			break
 		}
 		rec := b[off : off+int(n)]
-		off += roundup8(n)
+		if which == 0 {
+			start = off
+		}
+		off = min(off+roundup8(n), len(b))
 		if kind &= xsoAllTCP; kind == 0 || which&kind != 0 {
 			continue
 		}
 		which |= kind
 		switch kind {
 		case xsoSocket:
-			cur.PID = decodeXsocketN(rec)
+			cur.so, cur.PID = decodeXsocketN(rec)
 		case xsoInpcb:
 			cur.Proto, cur.Addr, cur.Port = decodeXinpcbN(rec)
 		case xsoTcpcb:
@@ -148,21 +180,19 @@ func decodePCBList(b []byte) (ls []Listener, pcbs int) {
 		if which != xsoAllTCP {
 			continue
 		}
-		pcbs++
-		if state == 1 && cur.Proto != "" { // TCPS_LISTEN
-			ls = append(ls, cur)
-		}
-		which, cur, state = 0, Listener{}, 0
+		fn(b[start:off], cur, state == 1 && cur.Proto != "") // TCPS_LISTEN
+		which, cur, state = 0, sock{}, 0
 	}
-	return ls, pcbs
+	return min(off, len(b))
 }
 
-// decodeXsocketN decodes struct xsocket_n: so_last_pid at 68 (so_uid at 64 is not needed yet).
-func decodeXsocketN(b []byte) (lastPID int) {
+// decodeXsocketN decodes struct xsocket_n: xso_so (the socket handle) at 8 and so_last_pid at 68
+// (so_uid at 64 is not needed).
+func decodeXsocketN(b []byte) (so uint64, lastPID int) {
 	if len(b) < 72 {
-		return 0
+		return 0, 0
 	}
-	return int(int32(le.Uint32(b[68:])))
+	return le.Uint64(b[8:]), int(int32(le.Uint32(b[68:])))
 }
 
 // decodeXinpcbN decodes struct xinpcb_n: inp_lport (network order) at 18, inp_vflag at 44,

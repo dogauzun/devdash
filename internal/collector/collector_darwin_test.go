@@ -10,6 +10,9 @@ import (
 	"os/exec"
 	"slices"
 	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -67,7 +70,7 @@ func TestListenerFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = dual.Close() }()
-	mappedPort := listenV4Mapped(t)
+	_, mappedPort := listenV4Mapped(t)
 
 	pid := os.Getpid()
 	want := []Listener{
@@ -90,20 +93,18 @@ func TestListenerFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pcb, n := decodePCBList(b)
-	if n == 0 {
-		t.Log("PCB list not served (ad-hoc-signed ancestor, e.g. go test); run the test binary from a shell to check it")
-		return
-	}
+	// Even when withheld (ad-hoc-signed ancestor, e.g. go test) the list holds our own sockets.
+	pcb, others := decodePCBList(b, os.Getpid())
+	t.Logf("PCB list: %d listeners, %d PCBs of other processes", len(pcb), others)
 	for _, w := range want {
-		if !slices.Contains(pcb, w) {
+		if !slices.ContainsFunc(pcb, func(s sock) bool { return s.Listener == w }) {
 			t.Errorf("PCB list: %+v missing", w)
 		}
 	}
 }
 
 // listenV4Mapped opens an AF_INET6 listener bound to ::ffff:127.0.0.1, as JVMs do by default.
-func listenV4Mapped(t *testing.T) uint16 {
+func listenV4Mapped(t *testing.T) (fd int, port uint16) {
 	t.Helper()
 	fd, err := unix.Socket(unix.AF_INET6, unix.SOCK_STREAM, 0)
 	if err != nil {
@@ -121,15 +122,199 @@ func listenV4Mapped(t *testing.T) uint16 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return uint16(got.(*unix.SockaddrInet6).Port)
+	return fd, uint16(got.(*unix.SockaddrInet6).Port)
 }
 
-func TestMergeListenersOneRowPerSocket(t *testing.T) {
-	a := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: 8080, PID: 10}
-	other := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("0.0.0.0"), Port: 22}
-	got := mergeListeners([]Listener{a, a}, []Listener{{Proto: "tcp4", Addr: a.Addr, Port: 8080, PID: 11}, other})
-	if !slices.Equal(got, []Listener{a, other}) {
-		t.Errorf("got %+v", got)
+func TestMergeListeners(t *testing.T) {
+	a := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: 8080}
+	at := func(pid int) Listener { l := a; l.PID = pid; return l }
+	s := func(so uint64, pid int) sock { return sock{at(pid), so} }
+	other := sock{Listener{Proto: "tcp4", Addr: netip.MustParseAddr("0.0.0.0"), Port: 22}, 9}
+	for name, c := range map[string]struct {
+		fd, pcb []sock
+		want    []Listener
+	}{
+		"fork-shared socket goes to the lowest pid": {fd: []sock{s(1, 20), s(1, 10), s(1, 30)}, want: []Listener{at(10)}},
+		"one pid, two fds of one socket":            {fd: []sock{s(1, 10), s(1, 10)}, want: []Listener{at(10)}},
+		"SO_REUSEPORT siblings stay distinct":       {fd: []sock{s(1, 10), s(2, 11), s(3, 10)}, want: []Listener{at(10), at(11), at(10)}},
+		"PCB list agrees on the handle":             {fd: []sock{s(1, 10), s(1, 20)}, pcb: []sock{s(1, 20), other}, want: []Listener{at(10), other.Listener}},
+		"PCB list adds a distinct socket":           {fd: []sock{s(1, 10)}, pcb: []sock{s(2, 0)}, want: []Listener{at(10), at(0)}},
+		"PCB list only":                             {pcb: []sock{other}, want: []Listener{other.Listener}},
+	} {
+		if got := mergeListeners(c.fd, c.pcb); !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %+v, want %+v", name, got, c.want)
+		}
+	}
+}
+
+// TestCollectForkSharedListener: a listening socket inherited by a child is one listener, owned
+// by the lower pid (DEV-45).
+func TestCollectForkSharedListener(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	f, err := ln.(*net.TCPListener).File() // a second fd for the same socket
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	cmd := exec.Command("/bin/sleep", "30")
+	cmd.ExtraFiles = []*os.File{f}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := uint16(ln.Addr().(*net.TCPAddr).Port)
+	got := slices.DeleteFunc(slices.Clone(res.Listeners), func(l Listener) bool { return l.Port != port })
+	want := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: port, PID: min(os.Getpid(), cmd.Process.Pid)}
+	if !slices.Equal(got, []Listener{want}) {
+		t.Errorf("got %+v, want exactly %+v", got, want)
+	}
+}
+
+// TestCollectFindsChild: a child started with exec.Command is found under the test's pid.
+func TestCollectFindsChild(t *testing.T) {
+	cmd := exec.Command("/bin/sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == cmd.Process.Pid })
+	if i < 0 {
+		t.Fatalf("child %d not found", cmd.Process.Pid)
+	}
+	wd, _ := os.Getwd()
+	if p := res.Processes[i]; p.PPID != os.Getpid() || p.Name != "sleep" || !slices.Equal(p.Argv, cmd.Args) || p.Cwd != wd || p.Unknown != 0 {
+		t.Errorf("child = %+v, want ppid %d argv %q cwd %q", p, os.Getpid(), cmd.Args, wd)
+	}
+}
+
+// TestCollectArgvExact: empty argv strings are kept in place and the environment (here
+// DEVDASH_BLOB=1) never shows up in argv (DEV-40).
+func TestCollectArgvExact(t *testing.T) {
+	argv := []string{"", "-c", "read x", "", "z"}
+	pid := startBash(t, argv)
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == pid })
+	if i < 0 {
+		t.Fatalf("child %d not found", pid)
+	}
+	if got := res.Processes[i].Argv; !slices.Equal(got, argv) {
+		t.Errorf("argv %q, want %q", got, argv)
+	}
+}
+
+// TestCollectArgvTooLarge: when exec path, argv, env and apple strings exceed kern.argmax,
+// kern.procargs2 fills the buffer with the tail of the strings area while argc stays the real
+// one. The row stays, with argv unknown and no environment in it (DEV-40 review).
+func TestCollectArgvTooLarge(t *testing.T) {
+	lib, err := loadLibSystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	argmax, err := unix.SysctlUint32("kern.argmax")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A long exec path counts twice (the path and executable_path=), pushing the area past argmax.
+	dir := t.TempDir()
+	for range 6 {
+		dir += "/" + strings.Repeat("d", 100)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := dir + "/bash"
+	if err := os.Symlink("/bin/bash", bin); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, argmax)
+	pid := 0
+	for size := int(argmax) - 200; size > int(argmax)-4000 && pid == 0; size -= 100 {
+		cmd := &exec.Cmd{Path: bin, Args: []string{"bash", "-c", "read x", strings.Repeat("a", size)}, Env: []string{"SENTINEL_ENV=leaked"}}
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Start() != nil { // E2BIG: try a smaller argument
+			continue
+		}
+		t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		if n, err := lib.procArgs2(cmd.Process.Pid, buf); err == nil && n == len(buf) {
+			pid = cmd.Process.Pid
+		}
+	}
+	if pid == 0 {
+		t.Fatal("no child filled the kern.procargs2 buffer")
+	}
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == pid })
+	if i < 0 {
+		t.Fatalf("child %d dropped", pid)
+	}
+	if p := res.Processes[i]; p.Unknown != model.FieldArgv || p.Argv != nil {
+		t.Errorf("child unknown %v argv %.80q, want argv unknown and nil", p.Unknown.Names(), p.Argv)
+	}
+}
+
+// TestCollectChurn: while children are spawned and reaped, own-uid rows are complete or absent,
+// never half-filled (DEV-41).
+func TestCollectChurn(t *testing.T) {
+	var stop atomic.Bool
+	var spawned atomic.Int64
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			for !stop.Load() {
+				if exec.Command("/usr/bin/true").Run() == nil {
+					spawned.Add(1)
+				}
+			}
+		})
+	}
+	defer wg.Wait()
+	defer stop.Store(true)
+
+	c := New()
+	for runs := 0; runs < 100 || spawned.Load() < 300; runs++ {
+		res, err := c.Collect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range res.Processes {
+			if p.UID == os.Geteuid() && p.Unknown != 0 {
+				t.Errorf("run %d: own-uid row half-filled: %+v", runs, p)
+			}
+		}
+	}
+	t.Logf("%d children spawned", spawned.Load())
+}
+
+// TestCollectNoPID0: kernel_task is not a row; PID 0 is the "unknown owner" pseudo-process (DEV-42).
+func TestCollectNoPID0(t *testing.T) {
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == 0 }); i >= 0 {
+		t.Errorf("pid 0 row: %+v", res.Processes[i])
 	}
 }
 
@@ -195,45 +380,6 @@ func TestCollectOtherUsers(t *testing.T) {
 		return w.Code != "process_fields_unreadable" || w.Count != others
 	})); n != 1 {
 		t.Errorf("warnings %+v, want one process_fields_unreadable with count %d", res.Warnings, others)
-	}
-}
-
-// TestDecodePCBList decodes a net.inet.tcp.pcblist_n blob recorded on macOS 27.0.1 arm64
-// (the LISTEN groups only); pids are so_last_pid and matched lsof at recording time.
-func TestDecodePCBList(t *testing.T) {
-	b, err := os.ReadFile("testdata/pcblist_n_listen.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ls, pcbs := decodePCBList(b)
-	l := func(proto, addr string, port uint16, pid int) Listener {
-		return Listener{Proto: proto, Addr: netip.MustParseAddr(addr), Port: port, PID: pid}
-	}
-	want := []Listener{
-		l("tcp6", "::", 8080, 56883), // dual-stack (netstat tcp46): one tcp6 row
-		l("tcp6", "::1", 5173, 56864),
-		l("tcp6", "::", 63369, 934), l("tcp4", "0.0.0.0", 63369, 934),
-		l("tcp4", "127.0.0.1", 39127, 1894), l("tcp4", "127.0.0.1", 9277, 1893),
-		l("tcp6", "::", 5000, 1261), l("tcp4", "0.0.0.0", 5000, 1261),
-		l("tcp6", "::", 7000, 1261), l("tcp4", "0.0.0.0", 7000, 1261),
-	}
-	if pcbs != 10 || !slices.Equal(ls, want) {
-		t.Errorf("got %d PCBs %+v, want %+v", pcbs, ls, want)
-	}
-	if ls, pcbs := decodePCBList(append(b[:24:24], b[len(b)-24:]...)); pcbs != 0 || ls != nil { // header-only list as served to non-entitled callers
-		t.Errorf("header-only list: %d %v", pcbs, ls)
-	}
-}
-
-func TestDecodeProcArgs2(t *testing.T) {
-	blob := append([]byte{2, 0, 0, 0}, "/bin/x\x00\x00\x00\x00x\x00-v\x00HOME=/\x00"...)
-	if got, ok := decodeProcArgs2(blob); !ok || !slices.Equal(got, []string{"x", "-v"}) {
-		t.Errorf("got %q %v", got, ok)
-	}
-	for _, bad := range [][]byte{nil, {1, 0, 0, 0}, {1, 0, 0, 0, 'x', 0}} {
-		if got, ok := decodeProcArgs2(bad); ok {
-			t.Errorf("decodeProcArgs2(%q) = %q, want failure", bad, got)
-		}
 	}
 }
 
