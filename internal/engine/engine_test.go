@@ -389,3 +389,46 @@ func TestLookupUser(t *testing.T) {
 		t.Errorf("unknown uid: %q, want the number", got)
 	}
 }
+
+func TestLookupUserOption(t *testing.T) {
+	calls := 0
+	lookup := func(uid int) string { calls++; return "user" + strconv.Itoa(uid) }
+	steps := func() *collector.Fake {
+		s := collector.Step{Result: collector.Result{Processes: []collector.Process{{PID: 10, UID: 7}, {PID: 11, UID: 7}}}}
+		return &collector.Fake{Steps: []collector.Step{s, s}}
+	}
+	check := func(t *testing.T, what string, s model.Snapshot) {
+		t.Helper()
+		for _, p := range s.Processes {
+			if p.User != "user7" {
+				t.Errorf("%s: pid %d user %q, want user7", what, p.PID, p.User)
+			}
+		}
+	}
+
+	o := Options{Collector: steps(), Resolver: model.NewResolver("", nil), LookupUser: lookup}
+	first, err := Snapshot(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, "Snapshot", first)
+	s, err := SnapshotAfter(context.Background(), o, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, "SnapshotAfter", s)
+	if calls != 2 {
+		t.Errorf("%d lookups, want one per uid per call", calls)
+	}
+
+	synctest.Test(t, func(t *testing.T) {
+		calls = 0
+		e, stop := start(t, Options{Collector: steps(), LookupUser: lookup})
+		defer stop()
+		check(t, "Run", (<-e.Updates()).Snapshot)
+		check(t, "Run", (<-e.Updates()).Snapshot)
+		if calls != 1 {
+			t.Errorf("Run: %d lookups, want one per uid for the engine's life", calls)
+		}
+	})
+}

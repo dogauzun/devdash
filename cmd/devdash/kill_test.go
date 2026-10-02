@@ -96,6 +96,8 @@ func TestKill(t *testing.T) {
 	outside := []collector.Process{fproc(a, 1, "/"), fproc(b, a, "/")}
 	held := fstep(inRepo, flisten(a, 3000))
 	free := fstep(inRepo)
+	reused := fproc(a, 1, repo) // pid a again, but a new process: it started after the signal
+	reused.StartTime = t0.Add(time.Second)
 
 	tests := []struct {
 		name      string
@@ -109,6 +111,7 @@ func TestKill(t *testing.T) {
 		wantPlans [][]int // pids of each Plan passed to killFn
 		stdout    []string
 		stderr    []string
+		notStdout []string
 	}{
 		{name: "nothing listens", args: []string{"--yes"}, steps: []collector.Step{free}, res: exited, want: 0,
 			stdout: []string{"nothing listens on port 3000\n"}},
@@ -120,10 +123,14 @@ func TestKill(t *testing.T) {
 		{name: "permission denied", args: []string{"--yes"}, steps: []collector.Step{held}, res: denied, want: 3, wantPlans: [][]int{{a}},
 			stdout: []string{"not signalled: permission denied, run with sudo"}},
 		{name: "survivors", args: []string{"--yes", "--timeout", "1s"}, steps: []collector.Step{held}, res: survives, want: 4, wantPlans: [][]int{{a}},
-			stdout: []string{"signalled, still running", "survivors: 5000001 node1 (try --force)\n", "port 3000 is still held by 5000001 node1\n"}},
+			stdout:    []string{"signalled, still running", "survivors: 5000001 node1 (try --force)\n", "port 3000 is still held by 5000001 node1\n"},
+			notStdout: []string{"try --tree"}},
 		{name: "forked child still holds the port", args: []string{"--yes"}, steps: []collector.Step{held, fstep(inRepo[1:], flisten(b, 3000))},
 			res: exited, want: 0, wantPlans: [][]int{{a}},
 			stdout: []string{"port 3000 is still held by 5000002 node2; a forked child can hold it after its parent exits: try --tree\n"}},
+		{name: "reused pid holds the port", args: []string{"--yes"}, steps: []collector.Step{held, fstep([]collector.Process{reused}, flisten(a, 3000))},
+			res: exited, want: 0, wantPlans: [][]int{{a}},
+			stdout: []string{"port 3000 is still held by 5000001 node1; a forked child can hold it after its parent exits: try --tree\n"}},
 		{name: "two owners, one confirmation", args: nil, tty: true, input: "y\n", steps: []collector.Step{fstep(inRepo, flisten(a, 3000), flisten(b, 3000))},
 			res: exited, want: 0, wantPlans: [][]int{{a}, {b}}, stdout: []string{"SIGTERM to 2 processes:\n"}, stderr: []string{"Send SIGTERM to 2 processes? [y/N] "}},
 		{name: "owner inside another owner's tree", args: []string{"--yes", "--tree"}, steps: []collector.Step{fstep(inRepo, flisten(a, 3000), flisten(b, 3000))},
@@ -172,6 +179,11 @@ func TestKill(t *testing.T) {
 			for _, s := range tt.stdout {
 				if !strings.Contains(stdout.String(), s) {
 					t.Errorf("stdout lacks %q:\n%s", s, stdout.String())
+				}
+			}
+			for _, s := range tt.notStdout {
+				if strings.Contains(stdout.String(), s) {
+					t.Errorf("stdout has %q:\n%s", s, stdout.String())
 				}
 			}
 			for _, s := range tt.stderr {
@@ -268,6 +280,26 @@ func TestKillStdoutFails(t *testing.T) {
 	f := &collector.Fake{Steps: []collector.Step{fstep([]collector.Process{fproc(fakePID+1, 1, "/")}, flisten(fakePID+1, 3000))}}
 	if code := run([]string{"kill", "3000", "--yes"}, failWriter{}, &stderr, f); code != 5 || len(*plans) != 0 {
 		t.Errorf("exit %d, %d plans; want 5 and none", code, len(*plans))
+	}
+}
+
+// TestKillRefusesRuntime: Docker Desktop's backend holds a published port and Docker gave no
+// container list (unreachable, or --no-docker), so nothing marks the port as a container's. The
+// kill is still refused, nothing is signalled, and the exit code is 6 (DEV-51).
+func TestKillRefusesRuntime(t *testing.T) {
+	for _, args := range [][]string{{"kill", "5432", "--yes"}, {"kill", "5432", "--yes", "--tree", "--force"}, {"kill", "5432", "--yes", "--no-docker"}} {
+		plans := stubKill(t, false, "", exited)
+		backend := fproc(fakePID+1, 1, "/")
+		backend.Name, backend.Argv = "com.docker.backend", []string{"/Applications/Docker.app/Contents/MacOS/com.docker.backend"}
+		f := &collector.Fake{Steps: []collector.Step{fstep([]collector.Process{backend}, flisten(fakePID+1, 5432))}}
+		var stdout, stderr bytes.Buffer
+		code := run(args, &stdout, &stderr, f)
+		if code != 6 || len(*plans) != 0 {
+			t.Errorf("%v: exit %d, %d plans; want 6 and none", args, code, len(*plans))
+		}
+		if !strings.Contains(stderr.String(), "com.docker.backend) is part of the container runtime") || !strings.Contains(stderr.String(), "docker ps --filter publish=5432") {
+			t.Errorf("%v: stderr %q", args, stderr.String())
+		}
 	}
 }
 

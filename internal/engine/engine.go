@@ -37,6 +37,11 @@ type Options struct {
 	Collector collector.Collector
 	Resolver  *model.Resolver // reused across ticks; only the refresh goroutine touches it
 	Tick      time.Duration   // refresh interval; 0 means DefaultTick, raised to MinTick
+	// LookupUser names a uid for Process.User, called once per uid for the engine's life (each
+	// Snapshot or SnapshotAfter call is its own engine). nil means the OS lookup: the current
+	// user, then the user database, then the number itself. Tests set it so their output does
+	// not depend on the accounts of the machine they run on.
+	LookupUser func(uid int) string
 }
 
 // Update is what Run publishes after every tick, good or not.
@@ -82,11 +87,14 @@ func New(o Options) *Engine {
 		o.Tick = DefaultTick
 	}
 	o.Tick = max(o.Tick, MinTick)
+	if o.LookupUser == nil {
+		o.LookupUser = lookupUser
+	}
 	return &Engine{
 		o:        o,
 		updates:  make(chan Update, 1),
 		refresh:  make(chan struct{}, 1),
-		users:    userCache{names: map[int]string{}, lookup: lookupUser},
+		users:    userCache{names: map[int]string{}, lookup: o.LookupUser},
 		interval: o.Tick,
 	}
 }
