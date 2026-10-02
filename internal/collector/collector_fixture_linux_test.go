@@ -129,6 +129,9 @@ func proc500() ([]fixProc, []fixListen) {
 		fixProc{pid: 1144, ppid: 1100, ruid: fixUser, euid: fixUser, state: 'X', comm: "node", cwd: "/", drop: true},
 		fixProc{pid: 1145, ppid: 1001, ruid: fixUser, euid: fixUser, comm: "make", only: []string{"stat", "status"}, drop: true},
 		fixProc{pid: 1146, ppid: 1001, ruid: fixUser, euid: fixUser, comm: "cc", only: []string{"cmdline"}, drop: true},
+		// Mid-exec (DEV-47): comm is already the new program's, but the kernel has not yet set
+		// the argv range (create_elf_tables), so cmdline reads zero bytes. Kept, Argv nil.
+		fixProc{pid: 1148, ppid: 1001, ruid: fixUser, euid: fixUser, state: 'R', comm: "sleep", cwd: src + "api", fds: std(1148)},
 		// uvicorn 1200 forked 1150 (after the pid space wrapped): the lower pid owns the shared socket.
 		user(1150, 1200, "uvicorn", src+"chat", []string{"uvicorn", "main:app", "--reload"}, sock(2006)),
 		user(1200, 1001, "uvicorn", src+"chat", []string{"uvicorn", "main:app", "--reload"}, sock(2006)),
