@@ -119,7 +119,6 @@ func TestRunExitCodes(t *testing.T) {
 		wantStdout string // "*" means any non-empty output
 	}{
 		// Commands.
-		{nil, 2, ""}, // the dashboard is not implemented yet
 		{[]string{"version"}, 0, "devdash dev (commit none, built unknown)\n"},
 		{[]string{"--tick", "1s", "version"}, 0, "devdash dev (commit none, built unknown)\n"},
 		{[]string{"--json"}, 0, "*"},
