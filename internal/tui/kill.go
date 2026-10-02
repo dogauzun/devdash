@@ -48,6 +48,8 @@ type killState struct {
 	refusal   string            // why the target, or the current options, cannot be planned
 	result    engine.Result     // killReport
 	err       error             // killReport: Kill's own error, nothing was signalled
+	top       int               // first list line shown when the list scrolls
+	page      int               // list lines the last render showed (the pgup/pgdown step)
 }
 
 // killDoneMsg is Kill's answer, delivered back to the UI goroutine.
@@ -103,7 +105,7 @@ func (m *Model) killReplan(o engine.KillOptions) {
 		}
 		return
 	}
-	k.plan, k.refusal, k.projects = p, "", killProjects(s)
+	k.plan, k.refusal, k.projects, k.top = p, "", killProjects(s), 0
 }
 
 // killProjects maps project IDs to names in s.
@@ -119,6 +121,20 @@ func killProjects(s model.Snapshot) map[string]string {
 func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 	k := &m.kill
 	s := key.String()
+	switch s { // scrolling only reads, so it works in every stage
+	case "up", "k":
+		m.killScroll(-1)
+		return nil
+	case "down", "j":
+		m.killScroll(1)
+		return nil
+	case "pgup":
+		m.killScroll(-max(k.page, 1))
+		return nil
+	case "pgdown":
+		m.killScroll(max(k.page, 1))
+		return nil
+	}
 	if k.stage == killRunning {
 		return nil
 	}
@@ -161,7 +177,7 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 
 // killSignal shows p as being signalled and returns the command that runs Kill on it.
 func (m *Model) killSignal(p engine.Plan) tea.Cmd {
-	m.kill.stage, m.kill.plan = killRunning, p
+	m.kill.stage, m.kill.plan, m.kill.top = killRunning, p, 0
 	kill, timeout := m.o.Kill, m.o.KillTimeout
 	return func() tea.Msg {
 		r, err := kill(p, timeout)
@@ -190,7 +206,7 @@ func (m *Model) killDone(r engine.Result, err error) tea.Cmd {
 		}
 	}
 	if !all {
-		m.kill.stage, m.kill.result, m.kill.err = killReport, r, err
+		m.kill.stage, m.kill.result, m.kill.err, m.kill.top = killReport, r, err, 0
 		return nil
 	}
 	m.status = "killed " + killCount(killed, "process")
@@ -203,7 +219,7 @@ func (m *Model) killDone(r engine.Result, err error) tea.Cmd {
 
 // killView draws the modal in w by h: a title line, the processes indented below it, then
 // notes and the key hints. No borders (spec: no box drawing beyond table borders); a list
-// longer than the room ends with "and N more". Lines wider than w are cut by render.
+// longer than the room scrolls. Lines wider than w are cut by render.
 func (m *Model) killView(w, h int) string {
 	k := &m.kill
 	title := "kill " + k.name
@@ -222,7 +238,7 @@ func (m *Model) killView(w, h int) string {
 			tail = killReason(k.refusal)
 			tail[0] = "refused: " + tail[0]
 			tail = append(tail, "", "p process  t tree  f force  esc cancel")
-			return killLayout(w, h, styleBold.Render(title), nil, tail)
+			return m.killLayout(w, h, styleBold.Render(title), nil, tail)
 		case k.survivors:
 			title += ": force-kill survivors, SIGKILL to " + killCount(len(k.plan.Procs), "process")
 		default:
@@ -263,7 +279,7 @@ func (m *Model) killView(w, h int) string {
 			tail = []string{"f force-kill survivors (SIGKILL)  esc close"}
 		}
 	}
-	return killLayout(w, h, styleBold.Render(title), list, tail)
+	return m.killLayout(w, h, styleBold.Render(title), list, tail)
 }
 
 // killReason splits a refusal before its hint (the engine puts it after the last ": ", as in
@@ -304,9 +320,11 @@ func killTable(rows []string) []string {
 
 // killLayout stacks the title, a blank line, the list, a blank line and the tail, list and
 // tail indented, in w by h: tail lines (reasons, prompts, key hints) are wrapped to the width
-// so none is cut; the list is cut to the room left, ending with "and N more"; the blank
-// lines go first when not even one list line fits.
-func killLayout(w, h int, title string, list, tail []string) string {
+// so none is cut. A list longer than the room left scrolls: it shows the page from
+// m.kill.top (clamped here, and the page size kept for the keys) and a position line; the
+// blank lines go first when not even one list line fits.
+func (m *Model) killLayout(w, h int, title string, list, tail []string) string {
+	k := &m.kill
 	var wrapped []string
 	for _, l := range tail {
 		wrapped = append(wrapped, strings.Split(ansi.Wrap(l, max(w-2, 1), ""), "\n")...)
@@ -321,12 +339,21 @@ func killLayout(w, h int, title string, list, tail []string) string {
 	if room < min(len(list), 1) {
 		blank, room = nil, h-1-len(tail)
 	}
+	k.page = len(list)
 	if len(list) > room {
-		n := max(room-1, 0)
-		list = append(list[:n:n], fmt.Sprintf("and %d more", len(list)-n))
+		n := max(room-1, 0) // pid lines; the last line of the room is the position
+		k.page = max(n, 1)
+		k.top = max(min(k.top, len(list)-n), 0)
+		pos := fmt.Sprintf("%d pids", len(list))
+		if n > 0 {
+			pos = fmt.Sprintf("pids %d-%d of %d, ↑↓ to scroll", k.top+1, k.top+n, len(list))
+		}
+		list = append(list[k.top:k.top+n:k.top+n], pos)
 		if room <= 0 {
 			list = nil
 		}
+	} else {
+		k.top = 0
 	}
 	out := []string{title}
 	out = append(out, blank...)
@@ -340,6 +367,21 @@ func killLayout(w, h int, title string, list, tail []string) string {
 		out = append(out, "  "+l)
 	}
 	return strings.Join(out, "\n")
+}
+
+// killScroll moves the list by d lines, within the list as the last render laid it out.
+func (m *Model) killScroll(d int) {
+	k := &m.kill
+	n := len(k.plan.Procs)
+	if k.stage == killReport {
+		n = 0
+		for _, o := range k.result.Outcomes {
+			if !o.Exited {
+				n++
+			}
+		}
+	}
+	k.top = max(min(k.top+d, n-max(k.page, 1)), 0)
 }
 
 // killMode names the options as the CLI does: "process mode", "tree mode, force".

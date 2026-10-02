@@ -119,6 +119,20 @@ func selectRow(t *testing.T, m *Model, k model.RowKey) {
 	t.Fatalf("row %+v not reachable", k)
 }
 
+// scroll sends key presses like press, plus "pgup" and "pgdown", which press does not know.
+func scroll(m *Model, keys ...string) {
+	for _, k := range keys {
+		switch k {
+		case "pgup":
+			m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+		case "pgdown":
+			m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		default:
+			press(m, k)
+		}
+	}
+}
+
 // run executes cmd as the program would and delivers its message.
 func run(t *testing.T, m *Model, cmd tea.Cmd) {
 	t.Helper()
@@ -603,9 +617,98 @@ func TestKillViewFits(t *testing.T) {
 			}
 		}
 		if size == [2]int{80, 24} {
-			if line(m, "kill node") == "" || line(m, "more") == "" || line(m, "enter confirm") == "" {
-				t.Errorf("80x24 tree plan lacks the title, the cut or the hint:\n%s", screen(m))
+			if line(m, "kill node") == "" || line(m, "of 42, ↑↓ to scroll") == "" || line(m, "enter confirm") == "" {
+				t.Errorf("80x24 tree plan lacks the title, the position or the hint:\n%s", screen(m))
 			}
 		}
+	}
+}
+
+func TestKillScroll(t *testing.T) {
+	s := fixture()
+	// node, esbuild and 38 workers: a 40-pid tree plan, more than an 80x24 body shows.
+	for i := range 38 {
+		s.Processes = append(s.Processes, model.Process{PID: 1000 + i, PPID: 102, StartTime: at(time.Minute),
+			Name: "worker", ProjectID: shopID, Kind: model.KindOther})
+	}
+	m, _, fp, fk := newKillTest(t, 80, 24, s)
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "x", "t")
+	shown := fp.plans[len(fp.plans)-1]
+	if len(shown.Procs) != 40 {
+		t.Fatalf("plan has %d pids, want 40", len(shown.Procs))
+	}
+	if !strings.Contains(line(m, "kill node"), "SIGTERM to 40 processes") {
+		t.Errorf("title %q lacks the total count", line(m, "kill node"))
+	}
+	// 24 lines: header, footer warning and hints leave 21; title, two blank lines and the
+	// hint leave 17: 16 pids and the position line.
+	if line(m, "pids 1-16 of 40, ↑↓ to scroll") == "" {
+		t.Fatalf("first page position missing:\n%s", screen(m))
+	}
+	if line(m, "101 ") == "" || line(m, "1013 ") == "" || line(m, "1014 ") != "" {
+		t.Errorf("first page is not pids 1-16:\n%s", screen(m))
+	}
+
+	press(m, "down", "j")
+	if line(m, "pids 3-18 of 40") == "" || line(m, "101 ") != "" || line(m, "1015 ") == "" {
+		t.Errorf("down, j did not scroll by two:\n%s", screen(m))
+	}
+	press(m, "k")
+	if line(m, "pids 2-17 of 40") == "" {
+		t.Errorf("k did not scroll up:\n%s", screen(m))
+	}
+	scroll(m, "pgdown", "pgdown", "pgdown", "down")
+	if line(m, "pids 25-40 of 40") == "" || line(m, "1037 ") == "" || line(m, "1022 ") == "" || line(m, "1021 ") != "" {
+		t.Errorf("not at the end after paging past it:\n%s", screen(m))
+	}
+	press(m, "up")
+	if line(m, "pids 24-39 of 40") == "" {
+		t.Errorf("one up from the end:\n%s", screen(m))
+	}
+	scroll(m, "pgup", "pgup", "pgup")
+	if line(m, "pids 1-16 of 40") == "" {
+		t.Errorf("not at the top after paging past it:\n%s", screen(m))
+	}
+	scroll(m, "pgdown")
+	if len(fp.calls) != 2 || !m.kill.active() {
+		t.Fatal("scrolling re-planned or closed the modal")
+	}
+
+	// Confirming does not require scrolling to the end, and Kill gets the whole plan.
+	run(t, m, press(m, "enter"))
+	if len(fk.plans) != 1 || !reflect.DeepEqual(fk.plans[0], shown) {
+		t.Errorf("Kill got %d plans, want exactly the 40-pid plan shown", len(fk.plans))
+	}
+}
+
+func TestKillScrollResets(t *testing.T) {
+	s := fixture()
+	for i := range 38 {
+		s.Processes = append(s.Processes, model.Process{PID: 1000 + i, PPID: 102, StartTime: at(time.Minute),
+			Name: "worker", ProjectID: shopID, Kind: model.KindOther})
+	}
+	m, _, _, fk := newKillTest(t, 80, 24, s)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(model.Process) engine.Outcome { return engine.Outcome{Signalled: true} }), nil
+	})
+	selectRow(t, m, keyOf(s, 101))
+	scroll(m, "x", "t", "pgdown")
+	press(m, "f") // a re-plan starts at the top
+	if line(m, "pids 1-16 of 40") == "" {
+		t.Errorf("re-plan kept the scroll:\n%s", screen(m))
+	}
+	scroll(m, "pgdown")
+	run(t, m, press(m, "enter"))
+	// Every pid survived: the report scrolls too, from the top.
+	if line(m, "0 of 40 processes exited") == "" || !strings.Contains(line(m, "of 40, ↑↓ to scroll"), "pids 1-") {
+		t.Fatalf("survivor report does not start at the top:\n%s", screen(m))
+	}
+	scroll(m, "pgdown", "pgdown", "pgdown")
+	if !strings.Contains(line(m, "of 40, ↑↓ to scroll"), "-40 of 40") || line(m, "1037 ") == "" {
+		t.Errorf("survivor report does not scroll to the end:\n%s", screen(m))
+	}
+	if line(m, "f force-kill survivors") == "" {
+		t.Error("force offer lost while scrolling")
 	}
 }
