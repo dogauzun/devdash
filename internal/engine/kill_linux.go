@@ -37,8 +37,8 @@ func readBootTime() (int64, error) {
 }
 
 // procStat reads pid's start time (field 22, converted as the collector does) and parent
-// (field 4) from /proc/[pid]/stat. A missing pid, or state Z or X (an unreaped zombie),
-// counts as gone.
+// (field 4) from /proc/[pid]/stat. A missing pid, or an unreaped zombie whose threads have
+// all exited (see parseStat), counts as gone.
 func procStat(pid int) (time.Time, int, error) {
 	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
@@ -47,18 +47,43 @@ func procStat(pid int) (time.Time, int, error) {
 	if err != nil {
 		return time.Time{}, 0, err
 	}
+	ticks, ppid, err := parseStat(b)
+	switch {
+	case errors.Is(err, errGone):
+		return time.Time{}, 0, err
+	case err != nil:
+		return time.Time{}, 0, fmt.Errorf("/proc/%d/stat: %w", pid, err)
+	case bootErr != nil:
+		return time.Time{}, 0, bootErr
+	}
+	return time.Unix(bootTime, 0).Add(time.Duration(ticks) * clockTick), ppid, nil
+}
+
+// parseStat returns starttime (field 22, in clock ticks) and ppid (field 4) from a
+// /proc/[pid]/stat line, or errGone for state X, or Z with num_threads (field 20) 1.
+//
+// A multi-threaded process's leader shows Z as soon as its own thread has exited, while the
+// other threads are still in do_exit: the last of them closes the shared fd table, and the
+// process's sockets with it, before it is released and num_threads drops. Counting that Z as
+// gone let `devdash kill` re-check the port while it still listened, with no fd left to name
+// an owner, so a just-killed Go server's port showed as held by an unknown owner (DEV-83).
+func parseStat(b []byte) (ticks uint64, ppid int, err error) {
 	// Fields after comm, which may contain spaces and ')'; field n is f[n-3].
 	f := strings.Fields(string(b[bytes.LastIndexByte(b, ')')+1:]))
 	if len(f) < 20 {
-		return time.Time{}, 0, fmt.Errorf("malformed /proc/%d/stat", pid)
+		return 0, 0, errors.New("malformed")
 	}
-	if f[0] == "Z" || f[0] == "X" {
-		return time.Time{}, 0, errGone
+	if f[0] == "X" {
+		return 0, 0, errGone
 	}
 	ppid, err1 := strconv.Atoi(f[1])
-	ticks, err2 := strconv.ParseUint(f[19], 10, 64)
-	if err := errors.Join(err1, err2, bootErr); err != nil {
-		return time.Time{}, 0, err
+	threads, err2 := strconv.Atoi(f[17])
+	ticks, err3 := strconv.ParseUint(f[19], 10, 64)
+	if err := errors.Join(err1, err2, err3); err != nil {
+		return 0, 0, err
 	}
-	return time.Unix(bootTime, 0).Add(time.Duration(ticks) * clockTick), ppid, nil
+	if f[0] == "Z" && threads <= 1 {
+		return 0, 0, errGone
+	}
+	return ticks, ppid, nil
 }
