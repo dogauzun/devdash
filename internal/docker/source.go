@@ -27,14 +27,15 @@ type Source struct {
 }
 
 // NewSource returns a Source for ep that, after a failure or a missing socket, makes no
-// request until 10 refresh ticks of length tick (the --tick interval) have passed. It does
-// not connect.
-func NewSource(ep Endpoint, tick time.Duration) *Source {
-	return &Source{ep: ep, c: newClient(ep), timeout: requestTimeout, needPing: true, retry: newHoldoff(tick), now: time.Now}
+// request until 10 refresh ticks of length tick (the --tick interval) have passed, retrying
+// on the first beat at or after that: beat is the interval Fetch is called at
+// (engine.DockerTick), or 0 for no grid. It does not connect.
+func NewSource(ep Endpoint, tick, beat time.Duration) *Source {
+	return &Source{ep: ep, c: newClient(ep), timeout: requestTimeout, needPing: true, retry: newHoldoff(tick, beat), now: time.Now}
 }
 
 // RetryAfter is how long a failure or a missing socket keeps this Source off the network:
-// 10 refresh ticks.
+// 10 refresh ticks, rounded up to a whole number of beats.
 func (s *Source) RetryAfter() time.Duration { return s.retry.after }
 
 // Endpoint is the endpoint this Source asks, for the detail pane's footer.
@@ -43,10 +44,10 @@ func (s *Source) Endpoint() Endpoint { return s.ep }
 // Fetch returns the containers to use now and a warning when Docker is present but not
 // answering (nil otherwise). It pings once at start and after each failure; after a failure
 // or a missing socket it makes no request until RetryAfter has passed since the start of the
-// call that failed, so the retry is the first call at or after that time; a call up to
-// retrySlack (1 s) early counts, so the engine's beat that is nominally RetryAfter later
-// retries even when it wakes sooner after its beat than the failing call did. ctx bounds the
-// whole call.
+// call that failed, so the retry is the first call at or after that time; with a beat, a
+// call up to retrySlack (1 s) early counts, so the engine's beat that is nominally
+// RetryAfter later retries even when it wakes sooner after its beat than the failing call
+// did. ctx bounds the whole call.
 //
 // A unix socket that does not exist (ENOENT on the dial, at the ping or the list) is no
 // Docker at all: it clears the list, returns no warning, and calls until the retry return

@@ -68,7 +68,8 @@ func TestDockerDiscovered(t *testing.T) {
 }
 
 // TestDockerRetryFollowsTick: after a failure or a missing socket the Source waits 10
-// refresh ticks (spec "Failure modes": "retry every 10th tick"), not 10 of its own fetches.
+// refresh ticks rounded up to the 5 s Docker beat (spec "Failure modes": "retry every 10th
+// tick"), not 10 of its own fetches.
 func TestDockerRetryFollowsTick(t *testing.T) {
 	stubDiscover(t, docker.Endpoint{Network: "unix", Address: "/run/docker.sock"}, true, nil)
 	for _, tc := range []struct {
@@ -78,6 +79,8 @@ func TestDockerRetryFollowsTick(t *testing.T) {
 		{2 * time.Second, 20 * time.Second},
 		{500 * time.Millisecond, 5 * time.Second},
 		{3 * time.Second, 30 * time.Second},
+		{1100 * time.Millisecond, 15 * time.Second}, // 11 s, rounded up to the 15 s Docker beat
+		{600 * time.Millisecond, 10 * time.Second},  // 6 s, rounded up to the 10 s Docker beat
 	} {
 		src, ok := options{Tick: tc.tick}.engine(fake()).Docker.(*docker.Source)
 		if !ok {
