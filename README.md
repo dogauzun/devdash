@@ -9,11 +9,7 @@ Docker containers to the processes that own them, and lets you kill any of it. I
 static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
 shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
-Status: the CLI (`--json`, `port`, `kill`) works today, Docker containers included. The
-dashboard is being built (Phase 4 in [docs/SPEC.md](docs/SPEC.md)); the parts of this README
-that depend on it say so.
-
-<!-- demo GIF: DEV-65 -->
+![The devdash dashboard: four repositories grouped with their dev servers, watchers, a test runner and an agent; a port filter, the detail pane, and a tree kill of nodemon and its child](docs/demo.gif)
 
 ## Install
 
@@ -55,10 +51,8 @@ parent pid, and each has a kind: agent, test, watcher, editor, shell, server, co
 other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
 Processes with no project go under `other`, and containers without a compose project under
 `containers`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
-It is meant to be usable at 80 columns by 24 rows.
-
-The dashboard is being built (Phase 4 in [docs/SPEC.md](docs/SPEC.md)). Until it ships,
-`devdash` with no command prints a message and exits 2; use `--json`, `port` and `kill`.
+It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
+[Keybindings](#keybindings)) and `q` quits.
 
 ### `devdash --json`
 
@@ -141,7 +135,8 @@ and reports what survived. Then it checks the port again and says whether it is 
 
 A target outside every project asks a second time, because it is usually a system service.
 devdash refuses pid 1, itself and its ancestors (your shell and terminal), and
-container-runtime processes such as `dockerd`, `docker-proxy` and `com.docker.backend`. A
+container-runtime processes such as `dockerd`, `docker-proxy`, `com.docker.backend` and
+OrbStack's `OrbStack Helper`. A
 port published by a container is refused with a `docker stop <name>` hint. If any owner is
 refused, nothing is signalled. Each
 pid's start time is checked again right before `kill(2)`, so a reused pid is never signalled.
@@ -175,9 +170,25 @@ Flags may come before or after the command. `-h` or `--help` prints the usage an
 
 ## Keybindings
 
-The key table lands here with the dashboard.
+The dashboard's keys; `?` shows the same table inside it.
 
-<!-- keybindings table: DEV-65 -->
+| Key | Action |
+| --- | --- |
+| `↑ ↓ j k` | move the selection |
+| `← → h l` | collapse or expand a project group or a tree node |
+| `enter` | open or close the detail pane (esc closes it too) |
+| `/` | filter by port, name, argv, project or container; esc clears |
+| `x` | kill modal: p process, t tree, f force, esc cancel |
+| `o` | open http://localhost:&lt;port&gt; (the lowest port) |
+| `a` | show or hide shells and editors |
+| `d` | show or hide container rows |
+| `s` | cycle sort within groups: default, port, cpu, start time |
+| `r` | refresh now |
+| `?` | this help |
+| `q ctrl-c` | quit |
+
+In the kill modal, `enter` or `y` confirms. A target outside every project asks once more and
+takes only `Y`. When processes survive, `f` force-kills them.
 
 ## JSON output
 
@@ -223,15 +234,18 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
 - **Docker** is optional. devdash uses `DOCKER_HOST`, then the current docker context, then
   the first socket it finds among Docker Desktop's, OrbStack's, Colima's, `/var/run/docker.sock`
   and Podman's. With no socket there are no container rows and no warning, and the dashboard
-  looks again every 10 ticks (20 s by default), so Docker started after devdash shows up within
-  that time; `port`, `kill` and `--json` look once. An unreachable or slow engine gives a
-  warning and the last container list. Only plain `unix://` and `tcp://` endpoints are
-  supported, not TLS. A published port with no userland proxy behind it (iptables only) shows
-  as a container with no process. With `--no-docker`, or while Docker is not found, a
-  published port shows as the process that forwards it (`docker-proxy` on Linux,
-  `com.docker.backend` on Docker Desktop for Mac, another forwarder on OrbStack, Colima or
-  Podman), or with an unknown owner when root holds it. `port N` only reports ports listening
-  on the host, not unpublished ports inside a Docker network.
+  looks again every 10 ticks, rounded up to whole 5 s steps (20 s by default), so Docker
+  started after devdash shows up within that time; `port`, `kill` and `--json` look once. An
+  unreachable or slow engine gives a warning and the last container list. Only plain
+  `unix://` and `tcp://` endpoints are supported, not TLS. With the userland proxy disabled
+  (`--userland-proxy=false`), Docker 28+ holds each published port in `dockerd`, which shows
+  as the container when devdash runs as root and as an unknown owner reconciled to the
+  container otherwise; a published port with no socket on the host at all (older engines,
+  iptables only) shows as a container with no process. With `--no-docker`, or while Docker is
+  not found, a published port shows as the process that forwards it (`docker-proxy` on Linux,
+  `com.docker.backend` on Docker Desktop for Mac, `OrbStack Helper` on OrbStack, another
+  forwarder on Colima or Podman), or with an unknown owner when root holds it. `port N` only
+  reports ports listening on the host, not unpublished ports inside a Docker network.
 - **Container processes on Linux.** Processes running inside containers are also host
   processes on Linux, so devdash lists them in the `other` group as ordinary processes (with
   host user names for the container's uids), not under their container. A container on
@@ -252,6 +266,11 @@ make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI
 
 `make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
 `go test -race ./...`.
+
+`make demo` re-records the GIF above from [demo.tape](demo.tape) with
+[vhs](https://github.com/charmbracelet/vhs). It runs on Linux only, as root, with vhs, ttyd,
+ffmpeg and Chromium installed. [scripts/demo.sh](scripts/demo.sh) sets up the repositories it
+shows.
 
 ## Contributing
 

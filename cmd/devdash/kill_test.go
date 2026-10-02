@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dogauzun/devdash/internal/collector"
+	"github.com/dogauzun/devdash/internal/docker"
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
@@ -303,6 +304,40 @@ func TestKillRefusesRuntime(t *testing.T) {
 	}
 }
 
+// TestKillDockerHint: with a Docker warning and no container list, the refusal of an unknown
+// owner or of a runtime process ends with the Docker hint, since the port is most likely a
+// container's; the exit codes are unchanged (DEV-76).
+func TestKillDockerHint(t *testing.T) {
+	proxy := fproc(fakePID+1, 1, "/")
+	proxy.Name, proxy.Argv = "docker-proxy", []string{"/usr/bin/docker-proxy"}
+	const hint = `docker: DOCKER_HOST "ssh://box": scheme ssh is not supported`
+	for _, tt := range []struct {
+		name   string
+		docker bool // discovery fails, so every snapshot has docker_endpoint_invalid
+		holder int
+		want   int
+		stderr string
+	}{
+		{"unknown owner", true, 0, 3, "the owner of this port is unknown): run with sudo to see owners; " + hint + "\n"},
+		{"unknown owner, Docker fine", false, 0, 3, "the owner of this port is unknown): run with sudo to see owners\n"},
+		{"docker-proxy", true, fakePID + 1, 6, "find its container with docker ps --filter publish=18081; " + hint + "\n"},
+		{"docker-proxy, Docker fine", false, fakePID + 1, 6, "find its container with docker ps --filter publish=18081\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.docker {
+				stubDiscover(t, docker.Endpoint{}, false, errors.New(`DOCKER_HOST "ssh://box": scheme ssh is not supported`))
+			}
+			plans := stubKill(t, false, "", exited)
+			f := &collector.Fake{Steps: []collector.Step{fstep([]collector.Process{proxy}, flisten(tt.holder, 18081))}}
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"kill", "18081"}, &stdout, &stderr, f)
+			if code != tt.want || len(*plans) != 0 || !strings.Contains(stderr.String(), tt.stderr) {
+				t.Errorf("exit %d, %d plans, stderr %q; want %d, none and %q", code, len(*plans), stderr.String(), tt.want, tt.stderr)
+			}
+		})
+	}
+}
+
 func TestTargetsContainer(t *testing.T) {
 	s := model.Snapshot{Containers: []model.Container{
 		{ID: "abc", Name: "shop-db-1", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
@@ -487,9 +522,10 @@ func withContainers(t *testing.T, cs ...model.Container) {
 // TestKillContainers: a port that belongs to a container is refused with docker stop and
 // exit 6, never signalled and never answered with the sudo hint, whoever holds the socket:
 // an unknown owner (root's docker-proxy seen by a user), docker-proxy itself (under sudo),
-// Docker Desktop's backend shared by two containers, or nobody (iptables only) (DEV-52). A
-// port of the backend's own next to a container's (Kubernetes on 6443) is refused as the
-// runtime's: docker stop would stop the database and leave 6443 held (PR #29 review).
+// Docker Desktop's backend shared by two containers, or nobody (iptables only) (DEV-52), and
+// dockerd holding the port itself with the userland proxy off (DEV-74). A port of the
+// backend's or dockerd's own next to a container's (Kubernetes on 6443, the API on 2375) is
+// refused as the runtime's: docker stop would stop the database and leave it held (PR #29 review).
 func TestKillContainers(t *testing.T) {
 	lo4 := netip.MustParseAddr("127.0.0.1")
 	pm := func(port uint16) model.PortMapping {
@@ -503,10 +539,12 @@ func TestKillContainers(t *testing.T) {
 		return p
 	}
 	user, proxy, backend := fproc(fakePID+1, 1, "/"), named(fakePID+2, "docker-proxy"), named(fakePID+3, "com.docker.backend")
-	all := []collector.Process{user, proxy, backend}
+	dockerd := named(fakePID+4, "dockerd")
+	all := []collector.Process{user, proxy, backend, dockerd}
 
 	const stop = "use docker stop shop-db-1"
 	const runtime = "(com.docker.backend) is part of the container runtime, not your service: find the container with docker ps"
+	const dockerdRuntime = "(dockerd) is part of the container runtime, not your service: find the container with docker ps"
 	tests := []struct {
 		name       string
 		port       string
@@ -519,6 +557,10 @@ func TestKillContainers(t *testing.T) {
 		{"unknown owner, tree force", "5432", []string{"--tree", "--force"}, fstep(all, flisten(0, 5432)), []model.Container{db}, stop},
 		{"unknown owner next to a process of the user", "5432", nil, fstep(all, flisten(user.PID, 5432), flisten(0, 5432)), []model.Container{db}, stop},
 		{"docker-proxy", "5432", nil, fstep(all, flisten(proxy.PID, 5432)), []model.Container{db}, stop},
+		{"dockerd with userland-proxy off (DEV-74)", "5432", nil, fstep(all, flisten(dockerd.PID, 5432)), []model.Container{db}, stop},
+		{"dockerd with userland-proxy off, tree force", "5432", []string{"--tree", "--force"}, fstep(all, flisten(dockerd.PID, 5432)), []model.Container{db}, stop},
+		{"dockerd holding two containers' ports", "5432", nil, fstep(all, flisten(dockerd.PID, 5432), flisten(dockerd.PID, 6379)), []model.Container{db, cache}, stop},
+		{"dockerd's own API port next to a container's", "2375", nil, fstep(all, flisten(dockerd.PID, 5432), flisten(dockerd.PID, 2375)), []model.Container{db}, dockerdRuntime},
 		{"shared com.docker.backend", "5432", nil, fstep(all, flisten(backend.PID, 5432), flisten(backend.PID, 6379)), []model.Container{db, cache}, stop},
 		{"shared com.docker.backend, tree", "5432", []string{"--tree"}, fstep(all, flisten(backend.PID, 6379), flisten(backend.PID, 5432)), []model.Container{cache, db}, stop},
 		{"iptables only", "5432", nil, fstep(all), []model.Container{db}, stop},
@@ -536,7 +578,7 @@ func TestKillContainers(t *testing.T) {
 			}
 			e := stderr.String()
 			if !strings.Contains(e, tt.refusal) || strings.Contains(e, "cache") || strings.Contains(e, "sudo") ||
-				tt.refusal == runtime && strings.Contains(e, "docker stop") ||
+				tt.refusal != stop && strings.Contains(e, "docker stop") ||
 				strings.Count(e, "refused:") != 1 || !strings.Contains(e, "nothing was signalled") {
 				t.Errorf("stderr %q, want the %q refusal only", e, tt.refusal)
 			}
@@ -559,7 +601,7 @@ func TestTargetsSharedBackend(t *testing.T) {
 		{ID: "db", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
 		{ID: "cache", Ports: []model.PortMapping{{HostPort: 6379, ContainerPort: 6379, Proto: "tcp"}}},
 	}}
-	want := []target{{key: model.RowKey{ContainerID: "db"}}, {key: backend.Key()}}
+	want := []target{{key: model.RowKey{ContainerID: "db"}}, {key: backend.Key(), runtime: true}}
 	if got := targets(s, 5432); !slices.Equal(got, want) {
 		t.Errorf("targets %+v, want %+v", got, want)
 	}
