@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -64,11 +66,31 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// footerHints are the key hints, most useful first; the footer cuts them at the width.
-const footerHints = "↑↓ move  ←→ fold  enter detail  / filter  x kill  o open  a all  d docker  s sort  r refresh  ? help  q quit"
+// footerKeys are the key hints, most useful first; footerTail always ends the line, so help
+// and quit can be found at any width (the help overlay lists every key).
+var footerKeys = []string{"↑↓ move", "←→ fold", "enter detail", "/ filter", "x kill", "o open", "a all", "d docker", "s sort", "r refresh"}
 
-// footerView is the one-shot status message or the warnings (collector, Build and engine
-// hints, deduplicated by hint text) on their own line when there are any, then the key hints.
+const footerTail = "? help  q quit"
+
+// footerHints is the key hint line for width w: footerKeys in order as long as they fit
+// before footerTail, never a hint cut in the middle.
+func footerHints(w int) string {
+	s := ""
+	for _, k := range footerKeys {
+		if ansi.StringWidth(s+k+"  "+footerTail) > w {
+			break
+		}
+		s += k + "  "
+	}
+	return s + footerTail
+}
+
+// footerWarnLines is how many lines the warnings may take before the rest is cut.
+const footerWarnLines = 2
+
+// footerView is the one-shot status message, then the warnings (collector, Build and engine
+// hints, deduplicated by hint text) wrapped to at most two lines when there are any, then the
+// key hints.
 // Status and warnings embed snapshot text (names, paths, errors), so both are cleaned.
 func (m *Model) footerView(w int) string {
 	var lines []string
@@ -76,9 +98,16 @@ func (m *Model) footerView(w int) string {
 		lines = append(lines, styleWarn.Render(clean(m.status)))
 	}
 	if ws := m.warnings(); len(ws) > 0 {
-		lines = append(lines, styleWarn.Render(clean(strings.Join(ws, " · "))))
+		wl := detailWrap(strings.Fields(clean(strings.Join(ws, " · "))), " ", w)
+		if len(wl) > footerWarnLines {
+			last := footerWarnLines - 1
+			wl = append(wl[:last], ansi.Truncate(strings.Join(wl[last:], " "), w-1, "")+"…")
+		}
+		for _, l := range wl {
+			lines = append(lines, styleWarn.Render(l))
+		}
 	}
-	return strings.Join(append(lines, styleDim.Render(footerHints)), "\n")
+	return strings.Join(append(lines, styleDim.Render(footerHints(w))), "\n")
 }
 
 // warnings returns the distinct hints of the snapshot's and the engine's warnings, and the
