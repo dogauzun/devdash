@@ -9,9 +9,9 @@ Docker containers to the processes that own them, and lets you kill any of it. I
 static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
 shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
-Status: the CLI (`--json`, `port`, `kill`) works today. Docker containers and the dashboard
-are being built (Phases 3 and 4 in [docs/SPEC.md](docs/SPEC.md)); the parts of this README
-that depend on them say so.
+Status: the CLI (`--json`, `port`, `kill`) works today, Docker containers included. The
+dashboard is being built (Phase 4 in [docs/SPEC.md](docs/SPEC.md)); the parts of this README
+that depend on it say so.
 
 <!-- demo GIF: DEV-65 -->
 
@@ -96,11 +96,16 @@ devdash --json | jq -r '.processes[] | select(.listeners | length > 0) | "\(.pid
 ### `devdash port N`
 
 Who listens on TCP port N: one line per listener with pid, name, project (`-` for none) and
-bind address. A listener whose owner devdash cannot read is pid 0 with a hint.
+bind address. A listener whose owner devdash cannot read is pid 0 with a hint. A published
+container port shows as the container: the pid of the process forwarding it (`-` when there
+is none or devdash cannot see it), the container's name and compose project, the address, its
+image and the forwarder.
 
 ```console
 $ devdash port 5173
 15669  python3  shop  0.0.0.0:5173
+$ devdash port 5432
+20  shop-db-1  shop  0.0.0.0:5432  container (postgres:16) via docker-proxy
 $ devdash port 2024
 0  unknown  -  0.0.0.0:2024  owner unknown: run with sudo to see owners
 $ devdash port 4999
@@ -136,9 +141,9 @@ and reports what survived. Then it checks the port again and says whether it is 
 
 A target outside every project asks a second time, because it is usually a system service.
 devdash refuses pid 1, itself and its ancestors (your shell and terminal), and
-container-runtime processes such as `dockerd`, `docker-proxy` and `com.docker.backend`. Once
-Docker support lands it also refuses container ports, with a `docker stop <name>` hint. If
-any owner is refused, nothing is signalled. Each
+container-runtime processes such as `dockerd`, `docker-proxy` and `com.docker.backend`. A
+port published by a container is refused with a `docker stop <name>` hint. If any owner is
+refused, nothing is signalled. Each
 pid's start time is checked again right before `kill(2)`, so a reused pid is never signalled.
 
 | Exit code | Meaning |
@@ -164,7 +169,7 @@ Flags may come before or after the command. `-h` or `--help` prints the usage an
 | `--roots paths` | only count git repositories under these directories; comma-separated and repeatable; a leading `~` is `$HOME` |
 | `--tick d` | dashboard refresh interval (default 2s, minimum 500ms) |
 | `--all` | show shells and editors in the dashboard (`--json` always lists every process) |
-| `--no-docker` | do not ask Docker for containers (accepted now; takes effect when Docker support lands) |
+| `--no-docker` | do not ask Docker for containers |
 | `--no-color` | no colour; also when `NO_COLOR` is set and not empty |
 | `--json` | print one snapshot as JSON |
 
@@ -194,7 +199,7 @@ the tool is built around.
 | Who has port N? | `devdash port N`, or filter the dashboard by port |
 | Which processes belong to this repository? | every process is grouped under the git repository of its working directory, linked worktrees included |
 | What runs here without a port? | watchers, test runners and agent sessions are shown under their project, listening or not |
-| Which container holds this port? | once Docker support lands, a published port is shown as its container under its compose project, not as `docker-proxy` |
+| Which container holds this port? | a published port is shown as its container under its compose project, not as `docker-proxy` |
 | What exactly will this kill do? | the plan lists every pid before any signal is sent |
 
 If you only want to free a port, any of the tools above will do, and some cover ground devdash
@@ -215,15 +220,16 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   empty list is treated as unknown, not as "no listeners", and a footer hint says so. Start
   devdash directly from a shell, or use sudo. Your own listeners are always found. See the
   Signing notes in [docs/SPEC.md](docs/SPEC.md#build-release-and-distribution) and [DECISIONS.md](DECISIONS.md) (DEV-10).
-- **Docker** support is being built. Until it lands, a published container port shows as
-  the process that forwards it (`docker-proxy` on Linux, `com.docker.backend` on Docker
-  Desktop for Mac, another forwarder on OrbStack, Colima or Podman), or with an unknown owner
-  when root holds it. Once it lands: Docker is
-  optional; with no socket there are no container rows and no warning.
-  A published port with no userland proxy behind it (iptables only) shows as a container row
-  with no process. OrbStack, Colima and Podman may hold ports in processes devdash does not
-  know, which then show with an unknown owner. `port N` only reports ports listening on the
-  host, not unpublished ports inside a Docker network.
+- **Docker** is optional. devdash uses `DOCKER_HOST`, then the current docker context, then
+  the first socket it finds among Docker Desktop's, OrbStack's, Colima's, `/var/run/docker.sock`
+  and Podman's. With no socket there are no container rows and no warning; an unreachable or
+  slow engine gives a warning and the last container list. Only plain `unix://` and `tcp://`
+  endpoints are supported, not TLS. A published port with no userland proxy behind it
+  (iptables only) shows as a container with no process. With `--no-docker`, or when Docker is
+  not found, a published port shows as the process that forwards it (`docker-proxy` on Linux,
+  `com.docker.backend` on Docker Desktop for Mac, another forwarder on OrbStack, Colima or
+  Podman), or with an unknown owner when root holds it. `port N` only reports ports listening
+  on the host, not unpublished ports inside a Docker network.
 - **UDP and unix sockets** are not shown in v1 (planned for v1.1).
 - **Windows** is not supported. Neither are remote hosts, a config file or a background
   daemon: devdash runs only while its terminal is open.
@@ -231,13 +237,12 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
 ## Building from source
 
 ```sh
-CGO_ENABLED=0 go build ./...
-go vet ./...
-go test -race ./...
-golangci-lint run
+make build   # ./devdash
+make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI runs)
 ```
 
-Build for the other OS too, for example `GOOS=darwin CGO_ENABLED=0 go build ./...`.
+`make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
+`go test -race ./...`.
 
 ## Contributing
 
