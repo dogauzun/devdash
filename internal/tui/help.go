@@ -39,13 +39,21 @@ type helpPos struct {
 	total int // overlay lines
 }
 
-// helpLines is the overlay below its title: every key with its action, then, when there are
-// any, every current warning in full, one per line, wrapped to w with continuation lines
-// indented, with its count when above 1.
+// helpLines is the overlay below its title: every key with its action, the action wrapped to
+// w with continuation lines indented to the action column (as the detail pane's values), then,
+// when there are any, every current warning in full, one per line, wrapped to w with
+// continuation lines indented, with its count when above 1.
 func (m *Model) helpLines(w int) []string {
 	lines := make([]string, 0, len(helpKeys)+8)
+	pad := strings.Repeat(" ", helpKeyWidth)
 	for _, k := range helpKeys {
-		lines = append(lines, k[0]+strings.Repeat(" ", max(helpKeyWidth-ansi.StringWidth(k[0]), 1))+k[1])
+		for i, l := range detailWrap(strings.Fields(k[1]), " ", w-helpKeyWidth) {
+			prefix := pad
+			if i == 0 {
+				prefix = k[0] + strings.Repeat(" ", max(helpKeyWidth-ansi.StringWidth(k[0]), 1))
+			}
+			lines = append(lines, prefix+l)
+		}
 	}
 	ws := m.warnings()
 	if len(ws) == 0 {
