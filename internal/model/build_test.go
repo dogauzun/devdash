@@ -3,7 +3,9 @@ package model
 import (
 	"math"
 	"net/netip"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -105,6 +107,57 @@ func TestBuildOwnerHint(t *testing.T) {
 	want := []Warning{{"listener_owner_unreadable", 1, "add a capability"}}
 	if !reflect.DeepEqual(s.Warnings, want) {
 		t.Errorf("warnings %+v, want %+v", s.Warnings, want)
+	}
+}
+
+// TestBuildOwnerWarningContainers: an unknown owner that Reconcile matches to a container
+// (root's docker-proxy seen by a user on Linux) is explained, so it does not count towards
+// listener_owner_unreadable; the PID 0 row itself stays (DEV-77).
+func TestBuildOwnerWarningContainers(t *testing.T) {
+	l := func(port uint16, pid int) RawListener { return RawListener{"tcp4", any4, port, pid} }
+	db := Container{ID: "db", Ports: []PortMapping{{HostIP: any4, HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}}
+	var five []Container
+	for i := range uint16(5) {
+		five = append(five, Container{ID: string(rune('a' + i)), Ports: []PortMapping{{HostIP: any4, HostPort: 8000 + i, ContainerPort: 80, Proto: "tcp"}}})
+	}
+	tests := []struct {
+		name       string
+		listeners  []RawListener
+		containers []Container
+		wantCount  int // 0 for no warning
+		wantPID0   int // PID 0 rows, matched or not
+	}{
+		{"matched to a container", []RawListener{l(5432, 0)}, []Container{db}, 0, 1},
+		{"owner hidden, matched", []RawListener{l(5432, 99)}, []Container{db}, 0, 1},
+		{"not matched: other port", []RawListener{l(5433, 0)}, []Container{db}, 1, 1},
+		{"no Docker", []RawListener{l(5432, 0)}, nil, 1, 1},
+		{"matched and unmatched", []RawListener{l(5432, 0), l(22, 0)}, []Container{db}, 1, 2},
+		{"five published, five others", []RawListener{
+			l(8000, 0), l(8001, 0), l(8002, 0), l(8003, 0), l(8004, 0),
+			l(22, 0), l(25, 0), l(53, 0), l(631, 0), l(5353, 0),
+		}, five, 5, 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := Raw{TakenAt: t0, Processes: []Process{proc(10, 0)}, Listeners: tt.listeners}
+			s := Build(raw, Snapshot{}, tt.containers, NewResolver("", nil))
+			var want []Warning
+			if tt.wantCount > 0 {
+				want = []Warning{{"listener_owner_unreadable", tt.wantCount, "run with sudo to see owners"}}
+			}
+			if !reflect.DeepEqual(s.Warnings, want) {
+				t.Errorf("warnings %+v, want %+v", s.Warnings, want)
+			}
+			n := 0
+			for _, p := range s.Processes {
+				if p.PID == 0 {
+					n++
+				}
+			}
+			if n != tt.wantPID0 {
+				t.Errorf("%d PID 0 rows, want %d", n, tt.wantPID0)
+			}
+		})
 	}
 }
 
@@ -224,6 +277,71 @@ func TestBuildName(t *testing.T) {
 			}
 			if raw.Processes[0].Name != tt.comm {
 				t.Error("Build mutated raw")
+			}
+		})
+	}
+}
+
+// A container-runtime process inherits the daemon's cwd (dockerd started by hand from a
+// checkout, a systemd --user unit with WorkingDirectory in a repository), which says nothing
+// about where it belongs: it gets no project, whether or not a container claims its port, and
+// the repository it sits in is not a project of the snapshot unless another process is in it.
+func TestBuildRuntimeNoProject(t *testing.T) {
+	base := tmp(t)
+	repo := mkrepo(t, base, "devdash", "main")
+	sub := mkdir(t, repo, "cmd")
+	rt := func(pid, ppid int, name string, argv ...string) Process {
+		return Process{PID: pid, PPID: ppid, StartTime: start, Name: name, Argv: append([]string{"/usr/bin/" + name}, argv...), Cwd: sub}
+	}
+	raw := Raw{
+		TakenAt: t0,
+		Processes: []Process{
+			rt(2900, 1, "dockerd"),
+			rt(2910, 2900, "containerd"),
+			rt(2920, 1, "containerd-shim-runc-v2", "-namespace", "moby"),
+			rt(2943, 2900, "docker-proxy", "-proto", "tcp", "-host-ip", "0.0.0.0", "-host-port", "18081", filepath.Join(repo, "x")),
+			// Its cwd is unreadable: the parent chain stops at the runtime ancestor.
+			{PID: 2950, PPID: 2920, StartTime: start, Name: "nginx", Argv: []string{"nginx"}, Unknown: FieldCwd},
+		},
+		Listeners: []RawListener{{"tcp4", any4, 18081, 2943}},
+	}
+	web := Container{ID: "c0ffee", Name: "shop-web-1", ComposeProject: "shop",
+		Ports: []PortMapping{{HostIP: any4, HostPort: 18081, ContainerPort: 80, Proto: "tcp"}}}
+
+	for _, tt := range []struct {
+		name          string
+		containers    []Container
+		wantContainer string
+	}{
+		{"docker unreachable", nil, ""},
+		{"reconciled", []Container{web}, web.ID},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := Build(raw, Snapshot{}, tt.containers, NewResolver("", nil))
+			for _, p := range s.Processes {
+				if p.ProjectID != "" {
+					t.Errorf("%s (pid %d): ProjectID %q, want none", p.Name, p.PID, p.ProjectID)
+				}
+				if p.PID == 2943 && p.ContainerID != tt.wantContainer {
+					t.Errorf("docker-proxy ContainerID %q, want %q", p.ContainerID, tt.wantContainer)
+				}
+			}
+			if len(s.Projects) != 0 {
+				t.Errorf("projects %+v, want none", s.Projects)
+			}
+
+			// A process of the user's own in the repository still resolves, and is the
+			// project's only member.
+			own := raw
+			own.Processes = append(slices.Clone(raw.Processes), Process{PID: 3000, PPID: 1, StartTime: start, Name: "go", Argv: []string{"go"}, Cwd: repo})
+			s = Build(own, Snapshot{}, tt.containers, NewResolver("", nil))
+			for _, p := range s.Processes {
+				if want := map[bool]string{true: repo}[p.PID == 3000]; p.ProjectID != want {
+					t.Errorf("with own process: %s (pid %d): ProjectID %q, want %q", p.Name, p.PID, p.ProjectID, want)
+				}
+			}
+			if want := []Project{project(repo, "main")}; !slices.Equal(s.Projects, want) {
+				t.Errorf("with own process: projects %+v, want %+v", s.Projects, want)
 			}
 		})
 	}

@@ -201,9 +201,34 @@ func unreachable(ep Endpoint) *model.Warning {
 	return &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: not reachable at " + ep.String()}
 }
 
+// The tests' Sources are built for the default 2 s refresh tick, so a failure or a missing
+// socket holds them off for testRetry; the engine calls Fetch every beat.
+const (
+	testTick  = 2 * time.Second
+	testRetry = retryTicks * testTick // 20 s
+	beat      = 5 * time.Second       // engine.DockerTick
+)
+
+// clock is a fake time for Source.now that moves only when the test moves it.
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time      { return c.t }
+func (c *clock) add(d time.Duration) { c.t = c.t.Add(d) }
+
+// newSource is NewSource(ep, testTick, beat) on a fake clock.
+func newSource(ep Endpoint) (*Source, *clock) { return newSourceTick(ep, testTick) }
+
+// newSourceTick is NewSource(ep, tick, beat) on a fake clock.
+func newSourceTick(ep Endpoint, tick time.Duration) (*Source, *clock) {
+	c := &clock{t: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
+	s := NewSource(ep, tick, beat)
+	s.now = c.now
+	return s, c
+}
+
 func TestFetchDecodesDocker(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s := NewSource(e.ep, testTick, beat)
 	got, w := fetch(t, s)
 	if w != nil {
 		t.Fatalf("warning = %+v, want nil", w)
@@ -231,7 +256,7 @@ func TestFetchDecodesDocker(t *testing.T) {
 
 func TestFetchDecodesPodman(t *testing.T) {
 	e := newEngine(t, podmanBody)
-	got, w := fetch(t, NewSource(e.ep))
+	got, w := fetch(t, NewSource(e.ep, testTick, beat))
 	if w != nil {
 		t.Fatalf("warning = %+v, want nil", w)
 	}
@@ -242,7 +267,7 @@ func TestFetchDecodesPodman(t *testing.T) {
 
 func TestFetchEmptyList(t *testing.T) {
 	e := newEngine(t, "[]")
-	got, w := fetch(t, NewSource(e.ep))
+	got, w := fetch(t, NewSource(e.ep, testTick, beat))
 	if w != nil || len(got) != 0 {
 		t.Fatalf("Fetch = %+v, %+v; want no containers, no warning", got, w)
 	}
@@ -250,7 +275,7 @@ func TestFetchEmptyList(t *testing.T) {
 
 func TestFetchPingsOnceThenLists(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s := NewSource(e.ep, testTick, beat)
 	for range 3 {
 		if _, w := fetch(t, s); w != nil {
 			t.Fatalf("warning = %+v", w)
@@ -266,7 +291,7 @@ func TestFetchNegotiatesAPIVersion(t *testing.T) {
 	// Docker 29 answers 400 to any API version below 1.44.
 	e := newEngine(t, dockerBody)
 	e.set(func(e *engine) { e.version = "1.44"; e.tooOld = "1.41" })
-	s := NewSource(e.ep)
+	s := NewSource(e.ep, testTick, beat)
 	got, w := fetch(t, s)
 	if w != nil {
 		t.Fatalf("warning = %+v, want nil", w)
@@ -282,7 +307,7 @@ func TestFetchNegotiatesAPIVersion(t *testing.T) {
 
 func TestFetchRenegotiatesOnEachPing(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s, clk := newSource(e.ep)
 	if _, w := fetch(t, s); w != nil {
 		t.Fatalf("warning = %+v", w)
 	}
@@ -294,10 +319,8 @@ func TestFetchRenegotiatesOnEachPing(t *testing.T) {
 	if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
 		t.Fatalf("warning = %+v, want %+v", w, unreachable(e.ep))
 	}
-	for range retryEvery - 1 {
-		fetch(t, s)
-	}
 	e.take()
+	clk.add(testRetry)
 	got, w := fetch(t, s)
 	if w != nil || !reflect.DeepEqual(got, wantDocker) {
 		t.Fatalf("retry = %+v, %+v; want the list, no warning", got, w)
@@ -313,7 +336,7 @@ func TestFetchUnversionedWithoutAPIVersion(t *testing.T) {
 		t.Run(version, func(t *testing.T) {
 			e := newEngine(t, podmanBody)
 			e.set(func(e *engine) { e.version = version })
-			got, w := fetch(t, NewSource(e.ep))
+			got, w := fetch(t, NewSource(e.ep, testTick, beat))
 			if w != nil || !reflect.DeepEqual(got, wantPodman) {
 				t.Fatalf("Fetch = %+v, %+v; want the list, no warning", got, w)
 			}
@@ -327,34 +350,37 @@ func TestFetchUnversionedWithoutAPIVersion(t *testing.T) {
 
 func TestFetchMissingSocket(t *testing.T) {
 	sock := filepath.Join(tempDir(t), "d.sock")
-	s := NewSource(Endpoint{Network: "unix", Address: sock})
+	s, clk := newSource(Endpoint{Network: "unix", Address: sock})
 	got, w := fetch(t, s)
 	if got != nil || w != nil {
 		t.Fatalf("Fetch = %+v, %+v; want no containers, no warning", got, w)
 	}
 
-	// The engine appears; calls 2..10 still make no request, the 11th pings and lists.
+	// The engine appears; the beats at 5, 10 and 15 s still make no request, the one at
+	// 20 s (10 ticks) pings and lists.
 	e := newEngineAt(t, sock, dockerBody)
-	for call := 2; call <= retryEvery; call++ {
+	for at := beat; at < testRetry; at += beat {
+		clk.add(beat)
 		if got, w := fetch(t, s); got != nil || w != nil {
-			t.Fatalf("call %d = %+v, %+v; want no containers, no warning", call, got, w)
+			t.Fatalf("at %v: %+v, %+v; want no containers, no warning", at, got, w)
 		}
 		if r := e.take(); len(r) != 0 {
-			t.Fatalf("call %d: requests = %q, want none", call, r)
+			t.Fatalf("at %v: requests = %q, want none", at, r)
 		}
 	}
+	clk.add(beat)
 	got, w = fetch(t, s)
 	if w != nil || !reflect.DeepEqual(got, wantDocker) {
-		t.Fatalf("call 11 = %+v, %+v; want the list, no warning", got, w)
+		t.Fatalf("at %v: %+v, %+v; want the list, no warning", testRetry, got, w)
 	}
 	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
-		t.Fatalf("call 11: requests = %q, want ping then list", r)
+		t.Fatalf("at %v: requests = %q, want ping then list", testRetry, r)
 	}
 }
 
 func TestFetchSocketRemovedClearsList(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s, clk := newSource(e.ep)
 	if got, w := fetch(t, s); w != nil || !reflect.DeepEqual(got, wantDocker) {
 		t.Fatalf("first call = %+v, %+v", got, w)
 	}
@@ -365,22 +391,24 @@ func TestFetchSocketRemovedClearsList(t *testing.T) {
 		t.Fatalf("after removal = %+v, %+v; want no containers, no warning", got, w)
 	}
 
-	// Calls 2..10 stay off the network; the 11th finds the engine back.
+	// Beats before 10 ticks stay off the network; the one at 10 ticks finds the engine back.
 	e2 := newEngineAt(t, e.ep.Address, podmanBody)
-	for call := 2; call <= retryEvery; call++ {
+	for at := beat; at < testRetry; at += beat {
+		clk.add(beat)
 		if got, w := fetch(t, s); got != nil || w != nil {
-			t.Fatalf("call %d = %+v, %+v; want no containers, no warning", call, got, w)
+			t.Fatalf("at %v: %+v, %+v; want no containers, no warning", at, got, w)
 		}
 	}
 	if r := e2.take(); len(r) != 0 {
 		t.Fatalf("requests between retries = %q, want none", r)
 	}
+	clk.add(beat)
 	got, w = fetch(t, s)
 	if w != nil || !reflect.DeepEqual(got, wantPodman) {
-		t.Fatalf("call 11 = %+v, %+v; want the new list, no warning", got, w)
+		t.Fatalf("at %v: %+v, %+v; want the new list, no warning", testRetry, got, w)
 	}
 	if r := e2.take(); !reflect.DeepEqual(r, []string{ping, list}) {
-		t.Fatalf("call 11: requests = %q, want ping then list", r)
+		t.Fatalf("at %v: requests = %q, want ping then list", testRetry, r)
 	}
 }
 
@@ -395,7 +423,7 @@ func TestFetchRefusedSocketIsUnreachable(t *testing.T) {
 	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	_ = ln.Close()
 	ep := Endpoint{Network: "unix", Address: sock}
-	got, w := fetch(t, NewSource(ep))
+	got, w := fetch(t, NewSource(ep, testTick, beat))
 	if got != nil {
 		t.Errorf("containers = %+v, want nil", got)
 	}
@@ -404,37 +432,212 @@ func TestFetchRefusedSocketIsUnreachable(t *testing.T) {
 	}
 }
 
-func TestFetchUnreachableRetriesEveryTenthCall(t *testing.T) {
+// retryCases are refresh ticks with the retry they give at the engine's 5 s beat: 10 ticks
+// rounded up to a whole number of beats, so the retry is the first beat at or after 10 ticks.
+var retryCases = []struct {
+	tick  time.Duration
+	retry time.Duration
+}{
+	{testTick, 20 * time.Second},
+	{500 * time.Millisecond, 5 * time.Second},
+	{7 * time.Second, 70 * time.Second},
+	{1100 * time.Millisecond, 15 * time.Second}, // 11 s: not the 10 s beat
+	{600 * time.Millisecond, 10 * time.Second},  // 6 s: not the 5 s beat
+	{2100 * time.Millisecond, 25 * time.Second}, // 21 s: 1 s past the 20 s beat
+}
+
+// TestFetchRetryInterval pins the retry cadence (spec "Failure modes": "retry every 10th
+// tick"): after a failure or a missing socket, no request until the first 5 s beat at or
+// after 10 refresh ticks since the call that failed began, less retrySlack for a beat that
+// wakes early, and one request from that point on, whatever the tick.
+func TestFetchRetryInterval(t *testing.T) {
+	for _, tc := range retryCases {
+		tick, retry := tc.tick, tc.retry
+		early := retry - retrySlack // the first instant a retry is due
+
+		t.Run("unreachable/"+tick.String(), func(t *testing.T) {
+			e := newEngine(t, dockerBody)
+			e.set(func(e *engine) { e.down = true })
+			s, clk := newSourceTick(e.ep, tick)
+			if s.RetryAfter() != retry {
+				t.Fatalf("RetryAfter = %v, want %v", s.RetryAfter(), retry)
+			}
+			for round := range 3 {
+				if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
+					t.Fatalf("round %d: warning = %+v", round, w)
+				}
+				if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+					t.Fatalf("round %d: requests = %q, want a ping", round, r)
+				}
+				for _, d := range []time.Duration{time.Nanosecond, early / 2, early/2 - 2*time.Nanosecond} {
+					clk.add(d) // up to 1 ns short of the retry, less the slack
+					if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
+						t.Fatalf("round %d: warning = %+v while waiting", round, w)
+					}
+					if r := e.take(); len(r) != 0 {
+						t.Fatalf("round %d: requests %q before %v", round, r, early)
+					}
+				}
+				clk.add(time.Nanosecond) // retry - retrySlack after the failed call: the next round retries
+			}
+		})
+
+		t.Run("missing/"+tick.String(), func(t *testing.T) {
+			sock := filepath.Join(tempDir(t), "d.sock")
+			s, clk := newSourceTick(Endpoint{Network: "unix", Address: sock}, tick)
+			if got, w := fetch(t, s); got != nil || w != nil {
+				t.Fatalf("Fetch = %+v, %+v; want no containers, no warning", got, w)
+			}
+			e := newEngineAt(t, sock, dockerBody)
+			clk.add(early - time.Nanosecond)
+			if got, w := fetch(t, s); got != nil || w != nil {
+				t.Fatalf("1 ns before %v: %+v, %+v; want no containers, no warning", early, got, w)
+			}
+			if r := e.take(); len(r) != 0 {
+				t.Fatalf("1 ns before %v: requests = %q, want none", early, r)
+			}
+			clk.add(time.Nanosecond)
+			if got, w := fetch(t, s); w != nil || !reflect.DeepEqual(got, wantDocker) {
+				t.Fatalf("at %v: %+v, %+v; want the list, no warning", early, got, w)
+			}
+			if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+				t.Fatalf("at %v: requests = %q, want ping then list", early, r)
+			}
+		})
+	}
+}
+
+// TestFetchUnreachableRetriesEveryTenTicks: at the engine's 5 s beat and the default 2 s
+// tick, an endpoint that stays down is asked at 0, 20 and 40 s, not every 10th beat (50 s).
+func TestFetchUnreachableRetriesEveryTenTicks(t *testing.T) {
 	e := newEngine(t, dockerBody)
 	e.set(func(e *engine) { e.down = true })
-	s := NewSource(e.ep)
-	for call := 1; call <= 25; call++ {
+	s, clk := newSource(e.ep)
+	for at := time.Duration(0); at <= 45*time.Second; at += beat {
 		got, w := fetch(t, s)
 		if got != nil {
-			t.Fatalf("call %d: containers = %+v, want nil", call, got)
+			t.Fatalf("at %v: containers = %+v, want nil", at, got)
 		}
 		if !reflect.DeepEqual(w, unreachable(e.ep)) {
-			t.Fatalf("call %d: warning = %+v", call, w)
+			t.Fatalf("at %v: warning = %+v", at, w)
 		}
 		r := e.take()
 		var want []string
-		if call%10 == 1 { // calls 1, 11, 21 retry
+		if at%testRetry == 0 { // 0, 20 s, 40 s retry
 			want = []string{ping}
 		}
 		if !reflect.DeepEqual(r, want) {
-			t.Fatalf("call %d: requests = %q, want %q", call, r, want)
+			t.Fatalf("at %v: requests = %q, want %q", at, r, want)
 		}
+		clk.add(beat)
+	}
+}
+
+// TestFetchRetryOnJitteredBeat: the engine calls Fetch on a fixed 5 s ticker grid, and
+// each call starts a little after its beat by however long the goroutine took to wake.
+// When the failing beat woke late and the retry beat (the first at or after 10 ticks)
+// wakes early, the retry still happens on that beat, not the next one (PR #46 review: 25 s
+// instead of 20 s); and no earlier beat retries, however late it wakes, even when 10 ticks
+// end just after a beat (PR #46 review: --tick 1.1s retried on the 10 s beat, after about
+// 9 ticks).
+func TestFetchRetryOnJitteredBeat(t *testing.T) {
+	lags := []struct {
+		name                    string
+		failing, earlier, retry time.Duration // how late each beat's Fetch starts
+	}{
+		{"failing late, retry early", 300 * time.Millisecond, 900 * time.Millisecond, time.Millisecond},
+		{"all prompt", time.Millisecond, 2 * time.Millisecond, 0},
+	}
+	for _, tc := range retryCases {
+		for _, l := range lags {
+			t.Run(tc.tick.String()+"/"+l.name, func(t *testing.T) {
+				e := newEngine(t, dockerBody)
+				e.set(func(e *engine) { e.down = true })
+				s, clk := newSourceTick(e.ep, tc.tick)
+				grid := clk.t
+				at := func(beatAt, late time.Duration) { clk.t = grid.Add(beatAt + late) }
+
+				at(0, l.failing)
+				fetch(t, s)
+				if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+					t.Fatalf("failing beat: requests = %q, want a ping", r)
+				}
+				for b := beat; b < tc.retry; b += beat {
+					at(b, l.earlier)
+					fetch(t, s)
+					if r := e.take(); len(r) != 0 {
+						t.Fatalf("beat %v: requests = %q, want none before the %v beat", b, r, tc.retry)
+					}
+				}
+				at(tc.retry, l.retry)
+				fetch(t, s)
+				if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+					t.Fatalf("beat %v: requests = %q, want the retry's ping", tc.retry, r)
+				}
+			})
+		}
+	}
+}
+
+// TestFetchRetryWithoutBeat: with no beat grid (beat 0) the holdoff is exactly 10 ticks and
+// there is no slack, for a caller that does not fetch on the engine's 5 s beat.
+func TestFetchRetryWithoutBeat(t *testing.T) {
+	e := newEngine(t, dockerBody)
+	e.set(func(e *engine) { e.down = true })
+	s := NewSource(e.ep, 1100*time.Millisecond, 0)
+	clk := &clock{t: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
+	s.now = clk.now
+	if s.RetryAfter() != 11*time.Second {
+		t.Fatalf("RetryAfter = %v, want 11s", s.RetryAfter())
+	}
+	fetch(t, s)
+	e.take()
+	clk.add(11*time.Second - time.Nanosecond)
+	fetch(t, s)
+	if r := e.take(); len(r) != 0 {
+		t.Fatalf("1 ns before 11s: requests = %q, want none", r)
+	}
+	clk.add(time.Nanosecond)
+	fetch(t, s)
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+		t.Fatalf("at 11s: requests = %q, want a ping", r)
+	}
+}
+
+// TestFetchOneShotAfterFailure: the CLI's one-shot calls are not on the beat grid; a call
+// soon after a failure (--json's second sample, 200 ms on) answers from the failed state
+// without a request, and one well past the holdoff retries.
+func TestFetchOneShotAfterFailure(t *testing.T) {
+	e := newEngine(t, dockerBody)
+	e.set(func(e *engine) { e.down = true })
+	s, clk := newSource(e.ep)
+	if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
+		t.Fatalf("warning = %+v", w)
+	}
+	e.take()
+	clk.add(200 * time.Millisecond)
+	if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
+		t.Fatalf("second sample: warning = %+v, want the failure's", w)
+	}
+	if r := e.take(); len(r) != 0 {
+		t.Fatalf("second sample: requests = %q, want none", r)
+	}
+	clk.add(time.Minute)
+	fetch(t, s)
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+		t.Fatalf("a minute on: requests = %q, want a ping", r)
 	}
 }
 
 func TestFetchFailureKeepsPreviousListAndRecovers(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s, clk := newSource(e.ep)
 	if _, w := fetch(t, s); w != nil {
 		t.Fatalf("warning = %+v", w)
 	}
 	e.take()
 
+	clk.add(beat)
 	e.set(func(e *engine) { e.down = true })
 	got, w := fetch(t, s) // list fails: failure, warning, previous list
 	if !reflect.DeepEqual(got, wantDocker) || !reflect.DeepEqual(w, unreachable(e.ep)) {
@@ -445,17 +648,19 @@ func TestFetchFailureKeepsPreviousListAndRecovers(t *testing.T) {
 	}
 
 	e.set(func(e *engine) { e.down = false; e.body = podmanBody })
-	for call := 2; call <= 10; call++ { // calls 2..10 after the failure stay off the network
+	for at := beat; at < testRetry; at += beat { // beats before 10 ticks stay off the network
+		clk.add(beat)
 		got, w := fetch(t, s)
 		if !reflect.DeepEqual(got, wantDocker) || !reflect.DeepEqual(w, unreachable(e.ep)) {
-			t.Fatalf("call %d = %+v, %+v; want previous list and warning", call, got, w)
+			t.Fatalf("at %v = %+v, %+v; want previous list and warning", at, got, w)
 		}
 	}
 	if r := e.take(); len(r) != 0 {
 		t.Fatalf("requests between retries = %q, want none", r)
 	}
 
-	got, w = fetch(t, s) // 11th call: ping again, list, warning cleared
+	clk.add(beat)
+	got, w = fetch(t, s) // 10 ticks after the failure: ping again, list, warning cleared
 	if w != nil || !reflect.DeepEqual(got, wantPodman) {
 		t.Fatalf("recovered call = %+v, %+v; want new list, no warning", got, w)
 	}
@@ -466,7 +671,7 @@ func TestFetchFailureKeepsPreviousListAndRecovers(t *testing.T) {
 
 func TestFetchBadJSONIsUnreachable(t *testing.T) {
 	e := newEngine(t, `{"message":"not a list"`)
-	got, w := fetch(t, NewSource(e.ep))
+	got, w := fetch(t, NewSource(e.ep, testTick, beat))
 	if got != nil || !reflect.DeepEqual(w, unreachable(e.ep)) {
 		t.Fatalf("Fetch = %+v, %+v; want nil list and warning", got, w)
 	}
@@ -474,7 +679,7 @@ func TestFetchBadJSONIsUnreachable(t *testing.T) {
 
 func TestFetchSlowKeepsPreviousList(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s, clk := newSource(e.ep)
 	s.timeout = 50 * time.Millisecond
 	if _, w := fetch(t, s); w != nil {
 		t.Fatalf("warning = %+v", w)
@@ -483,6 +688,7 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 
 	// Spec "Failure modes": slow is handled like unreachable, so an engine that answers the
 	// ping and then hangs shows the previous list with the hint, not the list alone.
+	clk.add(beat)
 	e.set(func(e *engine) { e.delay = 5 * time.Second; e.body = podmanBody })
 	start := time.Now()
 	got, w := fetch(t, s)
@@ -497,17 +703,19 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 	}
 
 	e.set(func(e *engine) { e.delay = 0 })
-	for call := 2; call <= retryEvery; call++ {
+	for at := beat; at < testRetry; at += beat {
+		clk.add(beat)
 		got, w := fetch(t, s)
 		if !reflect.DeepEqual(got, wantDocker) || !reflect.DeepEqual(w, unreachable(e.ep)) {
-			t.Fatalf("call %d = %+v, %+v; want previous list and warning", call, got, w)
+			t.Fatalf("at %v = %+v, %+v; want previous list and warning", at, got, w)
 		}
 	}
 	if r := e.take(); len(r) != 0 {
 		t.Fatalf("requests between retries = %q, want none", r)
 	}
 
-	got, w = fetch(t, s) // 11th call: ping again, list, warning cleared
+	clk.add(beat)
+	got, w = fetch(t, s) // 10 ticks after the slow call: ping again, list, warning cleared
 	if w != nil || !reflect.DeepEqual(got, wantPodman) {
 		t.Fatalf("recovered call = %+v, %+v; want new list, no warning", got, w)
 	}
@@ -520,7 +728,7 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 // than looking like no Docker.
 func TestFetchSlowFirstList(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s := NewSource(e.ep, testTick, beat)
 	s.timeout = 50 * time.Millisecond
 	e.set(func(e *engine) { e.delay = 5 * time.Second })
 	got, w := fetch(t, s)
@@ -534,7 +742,7 @@ func TestFetchSlowFirstList(t *testing.T) {
 
 func TestFetchCanceledContext(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s := NewSource(e.ep, testTick, beat)
 	if _, w := fetch(t, s); w != nil {
 		t.Fatalf("warning = %+v", w)
 	}
@@ -553,7 +761,7 @@ func TestFetchCanceledContext(t *testing.T) {
 
 func TestFetchCancelDuringRequest(t *testing.T) {
 	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep)
+	s := NewSource(e.ep, testTick, beat)
 	s.timeout = 10 * time.Second
 	if _, w := fetch(t, s); w != nil {
 		t.Fatalf("warning = %+v", w)
@@ -589,7 +797,7 @@ func TestFetchTCPEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(e.serve))
 	t.Cleanup(srv.Close)
 	ep := Endpoint{Network: "tcp", Address: srv.Listener.Addr().String()}
-	got, w := fetch(t, NewSource(ep))
+	got, w := fetch(t, NewSource(ep, testTick, beat))
 	if w != nil || !reflect.DeepEqual(got, wantPodman) {
 		t.Fatalf("Fetch = %+v, %+v", got, w)
 	}
@@ -611,22 +819,29 @@ func dialing(s *Source, err error) *int {
 
 // TestFetchPermissionDenied: a socket the user may not open (Linux's root:docker 0660 for a
 // user outside the docker group) says so instead of "not reachable", which reads as Docker
-// being down. It is still a failure, with the failure cadence. The dial error is injected, so
-// this runs as root too (DEV-76).
+// being down. It is still a failure, with the failure holdoff: at the 5 s beat and the
+// default 2 s tick it is dialled at 0, 20 and 40 s. The dial error is injected, so this runs
+// as root too (DEV-76).
 func TestFetchPermissionDenied(t *testing.T) {
 	for _, errno := range []syscall.Errno{syscall.EACCES, syscall.EPERM} {
 		t.Run(errno.Error(), func(t *testing.T) {
 			ep := Endpoint{Network: "unix", Address: "/var/run/docker.sock"}
-			s := NewSource(ep)
+			s, clk := newSource(ep)
 			dials := dialing(s, &net.OpError{Op: "dial", Net: "unix", Err: os.NewSyscallError("connect", errno)})
-			for call := 1; call <= 21; call++ {
+			for at := time.Duration(0); at <= 45*time.Second; at += beat {
+				before := *dials
 				got, w := fetch(t, s)
 				if got != nil || !reflect.DeepEqual(w, denied(ep)) {
-					t.Fatalf("call %d = %+v, %+v; want no containers and %+v", call, got, w, denied(ep))
+					t.Fatalf("at %v = %+v, %+v; want no containers and %+v", at, got, w, denied(ep))
 				}
-			}
-			if *dials != 3 { // calls 1, 11 and 21
-				t.Errorf("%d dials in 21 calls, want 3", *dials)
+				want := 0
+				if at%testRetry == 0 { // 0, 20 s, 40 s retry
+					want = 1
+				}
+				if n := *dials - before; n != want {
+					t.Fatalf("at %v: %d dials, want %d", at, n, want)
+				}
+				clk.add(beat)
 			}
 		})
 	}
@@ -635,7 +850,7 @@ func TestFetchPermissionDenied(t *testing.T) {
 // TestFetchPermissionDeniedTCP: a tcp endpoint has no docker group to join.
 func TestFetchPermissionDeniedTCP(t *testing.T) {
 	ep := Endpoint{Network: "tcp", Address: "10.0.0.5:2375"}
-	s := NewSource(ep)
+	s, _ := newSource(ep)
 	dialing(s, &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EPERM)})
 	want := &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: permission denied on tcp://10.0.0.5:2375"}
 	if _, w := fetch(t, s); !reflect.DeepEqual(w, want) {
@@ -653,7 +868,7 @@ func TestFetchUnreadableSocket(t *testing.T) {
 	if err := os.Chmod(e.ep.Address, 0); err != nil {
 		t.Fatal(err)
 	}
-	got, w := fetch(t, NewSource(e.ep))
+	got, w := fetch(t, NewSource(e.ep, testTick, beat))
 	if got != nil || !reflect.DeepEqual(w, denied(e.ep)) {
 		t.Fatalf("Fetch = %+v, %+v; want no containers and %+v", got, w, denied(e.ep))
 	}

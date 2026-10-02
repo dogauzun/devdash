@@ -56,29 +56,37 @@ func realPath(p string) string {
 }
 
 // Resolve sets ProjectID on every element of procs in place (Build passes its own fresh
-// slice), "" for the "other" group and for PID 0 pseudo-processes, and returns each project
-// referenced by at least one process, once, in order of first reference.
+// slice), "" for the "other" group, for PID 0 pseudo-processes and for container-runtime
+// processes (IsContainerRuntime), and returns each project referenced by at least one process,
+// once, in order of first reference.
 //
 // Steps 1–5 of the spec: the nearest repository above the process cwd, else above the cwd of
 // its parent, grandparent and great-grandparent. Step 6, once every process has had steps
 // 1–5: the first absolute argv path inside a project found so far. Step 7: "".
+//
+// A runtime process's cwd is the daemon's (dockerd started from a checkout, a systemd --user
+// unit with a WorkingDirectory), not where its containers belong: it resolves to nothing, finds
+// no project for step 6, and ends the parent chain of a process below it (a container's
+// process under its shim), so a repository only runtime processes sit in is not a project.
 func (r *Resolver) Resolve(procs []Process) []Project {
 	clear(r.tick)
 	byPID := make(map[int]int, len(procs))
+	skip := make([]bool, len(procs)) // PID 0 pseudo-processes and runtime processes
 	for i, p := range procs {
 		if p.PID != 0 {
 			byPID[p.PID] = i
 		}
+		skip[i] = p.PID == 0 || IsContainerRuntime(p)
 	}
 
 	found := map[string]Project{}
 	for i := range procs {
 		procs[i].ProjectID = ""
-		if procs[i].PID == 0 {
+		if skip[i] {
 			continue
 		}
-		// Self, then up to three ancestors.
-		for hop, j := 0, i; hop < 4; hop++ {
+		// Self, then up to three ancestors, stopping at a runtime process.
+		for hop, j := 0, i; hop < 4 && !skip[j]; hop++ {
 			if p := r.dir(cwdOf(procs[j])); p.ID != "" {
 				procs[i].ProjectID = p.ID
 				found[p.ID] = p
@@ -93,7 +101,7 @@ func (r *Resolver) Resolve(procs []Process) []Project {
 	}
 
 	for i := range procs {
-		if procs[i].ProjectID == "" && procs[i].PID != 0 {
+		if procs[i].ProjectID == "" && !skip[i] {
 			procs[i].ProjectID = argvProject(procs[i].Argv, found)
 		}
 	}

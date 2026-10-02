@@ -37,7 +37,7 @@ func TestEngineSource(t *testing.T) {
 		done := make(chan struct{})
 		go func() { e.Run(ctx); close(done) }()
 
-		m := New(Options{Source: e, Now: time.Now})
+		m := New(Options{Source: e, Now: time.Now, Kill: failKill(t)})
 		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 		step := func() tea.Cmd { _, cmd := m.Update(m.wait()()); return cmd }
 
@@ -72,7 +72,7 @@ func TestRunReturnsOnCancel(t *testing.T) {
 	cancel()
 	src := &fakeSource{ch: make(chan engine.Update)}
 	var out strings.Builder
-	err := Run(ctx, Options{Source: src}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24))
+	err := Run(ctx, Options{Source: src, Kill: failKill(t)}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24))
 	if err != nil {
 		t.Errorf("Run with a cancelled ctx: %v, want nil", err)
 	}
