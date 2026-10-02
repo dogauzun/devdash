@@ -129,6 +129,18 @@ func TestFlattenTree(t *testing.T) {
 			want: []string{"[other]", "  unknown", "  unknown", "  blanklisten", "  child"},
 		},
 		{
+			name: "unreadable argv (other uid) is a row and keeps its children",
+			procs: []Process{
+				{PID: 30, PPID: 1, StartTime: start, Name: "sshd", Unknown: FieldArgv | FieldCwd},
+				fp(31, 30, 1, "worker", "", KindOther),
+				{PID: 32, PPID: 1, StartTime: start.Add(2 * time.Second), Name: "zsh", Kind: KindShell, Unknown: FieldArgv},
+				fp(33, 32, 3, "make", "", KindOther),
+				{PID: 34, PPID: 1, StartTime: start.Add(4 * time.Second), Name: "bash", Kind: KindShell, Unknown: FieldArgv}, // hidden by Name, nothing below
+				{PID: 35, PPID: 1, StartTime: start, Name: "blank"},                                                          // known-empty argv, no listener
+			},
+			want: []string{"[other]", "  sshd", "    worker", "  zsh (dim)", "    make"},
+		},
+		{
 			name: "unknown project id goes to other",
 			procs: []Process{
 				fp(10, 1, 0, "api", "/src/gone", KindServer, 80),

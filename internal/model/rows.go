@@ -87,7 +87,8 @@ type ViewOptions struct {
 // unless ShowAll or needed to connect a visible descendant (then Dimmed); children of collapsed
 // keys are skipped. s must not be modified while the rows are in use.
 //
-// A process with an empty argv and no listener is never a row. A group with no row to show
+// A process whose argv is known to be empty (not merely unreadable) and that has no listener
+// is never a row. A group with no row to show
 // is omitted. Equal sort keys fall back to the row key, so the order never depends on the
 // order of s.Processes.
 func Flatten(s Snapshot, opts ViewOptions) []Row {
@@ -118,7 +119,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 	withProcess := map[string]bool{}
 	for i := range s.Processes {
 		p := &s.Processes[i]
-		if p.PID != 0 && len(p.Argv) == 0 && len(p.Listeners) == 0 {
+		if p.PID != 0 && len(p.Argv) == 0 && p.Unknown&FieldArgv == 0 && len(p.Listeners) == 0 {
 			continue
 		}
 		n := &node{row: Row{Key: p.Key(), Process: p}, start: p.StartTime, cpu: p.CPUPercent, port: noPort,
