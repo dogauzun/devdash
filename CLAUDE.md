@@ -35,7 +35,6 @@ Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linu
   `header.go` (header, footer), and one file per feature with its own state type and `action` messages: `table.go`,
   `rows.go` (selection by row key, filter), `detail.go`, `help.go`, `open.go`, `kill.go`. Tested by sending `tea.Msg`s
   to the model and asserting on `View()`; shared fixture in `helpers_test.go`.
-- Later packages per the spec (`docker`) are added when their phase starts, not before.
 
 ## Conventions
 

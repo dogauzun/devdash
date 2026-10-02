@@ -11,6 +11,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -113,7 +114,7 @@ func New(o Options) *Model {
 func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) error {
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx)}, opts...)
 	_, err := tea.NewProgram(New(o), opts...).Run()
-	if err == tea.ErrProgramKilled && ctx.Err() != nil {
+	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil { // bubbletea wraps ctx.Err() into it
 		return nil
 	}
 	return err

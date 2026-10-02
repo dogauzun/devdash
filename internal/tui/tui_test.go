@@ -134,16 +134,21 @@ func TestKeyRouting(t *testing.T) {
 		t.Fatalf("down selected %+v, want api %+v", m.sel, want)
 	}
 	// While the filter prompt is open, letters go to it: j is not a move and q does not quit.
+	quits := func(cmd tea.Cmd) bool { return cmd != nil && cmd() == (tea.QuitMsg{}) }
 	press(m, "/")
-	typeText(m, "jq")
-	if cmd := press(m, "enter"); cmd != nil && cmd() == (tea.QuitMsg{}) {
+	typeText(m, "j")
+	if quits(press(m, "q")) {
 		t.Error("q quit from the filter prompt")
 	}
+	press(m, "enter")
 	if m.sel != want {
 		t.Errorf("selection moved while typing a filter: %+v, want %+v", m.sel, want)
 	}
+	press(m, "esc") // clear the filter
 	// Help takes the next key and closes; that key does nothing else.
-	press(m, "?", "q")
+	if quits(press(m, "?", "q")) {
+		t.Error("q quit from the help overlay")
+	}
 	if m.help {
 		t.Error("help still open")
 	}
