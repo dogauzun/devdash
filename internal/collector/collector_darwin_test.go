@@ -4,13 +4,18 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"slices"
 	"sort"
+	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestCollectFindsSelf(t *testing.T) {
@@ -48,6 +53,149 @@ func TestCollectFindsSelf(t *testing.T) {
 	}
 }
 
+// TestListenerFamilies checks that the fd walk and, when the kernel serves it, the PCB list name
+// a tcp6, a v4-mapped and a dual-stack listener identically and that Collect lists each once.
+func TestListenerFamilies(t *testing.T) {
+	v6, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = v6.Close() }()
+	dual, err := net.Listen("tcp", ":0") // AF_INET6 with IPV6_V6ONLY off
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dual.Close() }()
+	mappedPort := listenV4Mapped(t)
+
+	pid := os.Getpid()
+	want := []Listener{
+		{"tcp6", netip.MustParseAddr("::1"), uint16(v6.Addr().(*net.TCPAddr).Port), pid},
+		{"tcp6", netip.IPv6Unspecified(), uint16(dual.Addr().(*net.TCPAddr).Port), pid},
+		{"tcp4", netip.MustParseAddr("127.0.0.1"), mappedPort, pid}, // lsof shows 127.0.0.1 too
+	}
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range want {
+		got := slices.DeleteFunc(slices.Clone(res.Listeners), func(l Listener) bool { return l.Port != w.Port })
+		if !slices.Equal(got, []Listener{w}) {
+			t.Errorf("port %d: got %+v, want exactly %+v", w.Port, got, w)
+		}
+	}
+
+	b, err := unix.SysctlRaw("net.inet.tcp.pcblist_n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pcb, n := decodePCBList(b)
+	if n == 0 {
+		t.Log("PCB list not served (ad-hoc-signed ancestor, e.g. go test); run the test binary from a shell to check it")
+		return
+	}
+	for _, w := range want {
+		if !slices.Contains(pcb, w) {
+			t.Errorf("PCB list: %+v missing", w)
+		}
+	}
+}
+
+// listenV4Mapped opens an AF_INET6 listener bound to ::ffff:127.0.0.1, as JVMs do by default.
+func listenV4Mapped(t *testing.T) uint16 {
+	t.Helper()
+	fd, err := unix.Socket(unix.AF_INET6, unix.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(fd) })
+	sa := &unix.SockaddrInet6{Addr: netip.MustParseAddr("::ffff:127.0.0.1").As16()}
+	if err := unix.Bind(fd, sa); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Listen(fd, 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := unix.Getsockname(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uint16(got.(*unix.SockaddrInet6).Port)
+}
+
+func TestMergeListenersOneRowPerSocket(t *testing.T) {
+	a := Listener{"tcp4", netip.MustParseAddr("127.0.0.1"), 8080, 10}
+	other := Listener{"tcp4", netip.MustParseAddr("0.0.0.0"), 22, 0}
+	got := mergeListeners([]Listener{a, a}, []Listener{{"tcp4", a.Addr, 8080, 11}, other})
+	if !slices.Equal(got, []Listener{a, other}) {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// TestCollectDropsZombie: a process that is gone by the time libproc is asked (here a zombie,
+// ESRCH) is dropped rather than shown half-filled.
+func TestCollectDropsZombie(t *testing.T) {
+	cmd := exec.Command("/usr/bin/true")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Wait() }()
+	pid := cmd.Process.Pid
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+		if err == nil && kp.Proc.P_stat == 5 { // SZOMB
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("child did not become a zombie")
+		}
+	}
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == pid }); i >= 0 {
+		t.Errorf("zombie kept: %+v", res.Processes[i])
+	}
+}
+
+func TestExited(t *testing.T) {
+	for err, want := range map[error]bool{syscall.ESRCH: true, syscall.EPERM: false, syscall.EINVAL: false, nil: false} {
+		if exited(err) != want {
+			t.Errorf("exited(%v) = %v", err, !want)
+		}
+	}
+}
+
+// TestCollectOtherUsers: other users' processes stay as rows with argv, cwd, cpu and mem
+// unknown, counted in one warning.
+func TestCollectOtherUsers(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs a normal user")
+	}
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == 1 })
+	if i < 0 {
+		t.Fatal("launchd (pid 1) missing")
+	}
+	if p := res.Processes[i]; p.UID != 0 || p.Name != "launchd" || !slices.Equal(p.Unknown, []string{"argv", "cwd", "cpu", "mem"}) {
+		t.Errorf("pid 1 = %+v", p)
+	}
+	others := 0
+	for _, p := range res.Processes {
+		if p.UID != os.Geteuid() {
+			others++
+		}
+	}
+	want := fmt.Sprintf("%d processes of other users: argv, cwd or cpu/mem not readable without root", others)
+	if n := len(slices.DeleteFunc(slices.Clone(res.Warnings), func(w string) bool { return w != want })); n != 1 {
+		t.Errorf("warnings %q, want one %q", res.Warnings, want)
+	}
+}
+
 // TestDecodePCBList decodes a net.inet.tcp.pcblist_n blob recorded on macOS 27.0.1 arm64
 // (the LISTEN groups only); pids are so_last_pid and matched lsof at recording time.
 func TestDecodePCBList(t *testing.T) {
@@ -56,11 +204,12 @@ func TestDecodePCBList(t *testing.T) {
 		t.Fatal(err)
 	}
 	ls, pcbs := decodePCBList(b)
-	l := func(proto, addr string, port uint16, pid int) pcbListener {
-		return pcbListener{Listener{proto, netip.MustParseAddr(addr), port, pid}, 501}
+	l := func(proto, addr string, port uint16, pid int) Listener {
+		return Listener{proto, netip.MustParseAddr(addr), port, pid}
 	}
-	want := []pcbListener{
-		l("tcp6", "::", 8080, 56883), l("tcp6", "::1", 5173, 56864),
+	want := []Listener{
+		l("tcp6", "::", 8080, 56883), // dual-stack (netstat tcp46): one tcp6 row
+		l("tcp6", "::1", 5173, 56864),
 		l("tcp6", "::", 63369, 934), l("tcp4", "0.0.0.0", 63369, 934),
 		l("tcp4", "127.0.0.1", 39127, 1894), l("tcp4", "127.0.0.1", 9277, 1893),
 		l("tcp6", "::", 5000, 1261), l("tcp4", "0.0.0.0", 5000, 1261),

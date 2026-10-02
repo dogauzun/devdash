@@ -51,21 +51,29 @@ func decodeFDList(b []byte) []int {
 }
 
 // decodeSocketFDInfo decodes struct socket_fdinfo and reports a TCP listener
-// (soi_kind SOCKINFO_TCP = 2 at 256, tcpsi_state TSI_S_LISTEN = 1 at 344).
+// (soi_kind SOCKINFO_TCP = 2 at 256, tcpsi_state TSI_S_LISTEN = 1 at 344, insi_lport at 268
+// as an int holding a network-order u_short, insi_vflag at 288, insi_laddr at 312).
 func decodeSocketFDInfo(b []byte) (Listener, bool) {
 	if len(b) < sizeofSocketFDInfo || le.Uint32(b[256:]) != 2 || le.Uint32(b[344:]) != 1 {
 		return Listener{}, false
 	}
-	l := Listener{Port: binary.BigEndian.Uint16(b[268:])} // insi_lport: an int holding a network-order u_short
-	switch le.Uint32(b[184:]) {                           // soi_family
-	case 2: // AF_INET: in4in6_addr, the IPv4 address follows 12 bytes of padding
-		l.Proto, l.Addr = "tcp4", netip.AddrFrom4([4]byte(b[312+12:]))
-	case 30: // AF_INET6
-		l.Proto, l.Addr = "tcp6", netip.AddrFrom16([16]byte(b[312:]))
-	default:
-		return Listener{}, false
+	proto, addr := inpAddr(b[288], b[312:328])
+	return Listener{Proto: proto, Addr: addr, Port: binary.BigEndian.Uint16(b[268:])}, proto != ""
+}
+
+// inpAddr picks an inpcb's local address by its vflag, as netstat does, so the fd walk and the
+// PCB list name one socket identically. (soi_family would call an AF_INET6 socket bound to
+// ::ffff:127.0.0.1 tcp6; the kernel clears INP_IPV6 on a v4-mapped bind, so it is tcp4 here.)
+// A dual-stack socket bound to :: has both flags (netstat's tcp46) and is reported once, as tcp6.
+// laddr is an in6_addr, or an in_addr_4in6 with the IPv4 address after 12 bytes of padding.
+func inpAddr(vflag byte, laddr []byte) (string, netip.Addr) {
+	switch {
+	case vflag&0x2 != 0: // INP_IPV6
+		return "tcp6", netip.AddrFrom16([16]byte(laddr))
+	case vflag&0x1 != 0: // INP_IPV4
+		return "tcp4", netip.AddrFrom4([4]byte(laddr[12:]))
 	}
-	return l, true
+	return "", netip.Addr{}
 }
 
 // decodeProcArgs2 decodes kern.procargs2: int32 argc, the exec path, NUL padding,
@@ -108,21 +116,15 @@ const (
 	sizeofXgen = 24   // struct xinpgen
 )
 
-// pcbListener is one LISTEN entry from net.inet.tcp.pcblist_n.
-type pcbListener struct {
-	Listener
-	UID int
-}
-
 // decodePCBList walks net.inet.tcp.pcblist_n: a struct xinpgen, then per PCB a group of
 // records each starting with {u32 len, u32 kind} and padded to 8 bytes, then a closing xinpgen.
 // It mirrors netstat's protopr loop and returns the LISTEN sockets and the total PCB count.
-func decodePCBList(b []byte) (ls []pcbListener, pcbs int) {
+func decodePCBList(b []byte) (ls []Listener, pcbs int) {
 	if len(b) < sizeofXgen {
 		return nil, 0
 	}
 	var which uint32
-	var cur pcbListener
+	var cur Listener
 	var state int
 	for off := roundup8(le.Uint32(b)); off+8 <= len(b); {
 		n, kind := le.Uint32(b[off:]), le.Uint32(b[off+4:])
@@ -137,7 +139,7 @@ func decodePCBList(b []byte) (ls []pcbListener, pcbs int) {
 		which |= kind
 		switch kind {
 		case xsoSocket:
-			cur.PID, cur.UID = decodeXsocketN(rec)
+			cur.PID = decodeXsocketN(rec)
 		case xsoInpcb:
 			cur.Proto, cur.Addr, cur.Port = decodeXinpcbN(rec)
 		case xsoTcpcb:
@@ -150,33 +152,27 @@ func decodePCBList(b []byte) (ls []pcbListener, pcbs int) {
 		if state == 1 && cur.Proto != "" { // TCPS_LISTEN
 			ls = append(ls, cur)
 		}
-		which, cur, state = 0, pcbListener{}, 0
+		which, cur, state = 0, Listener{}, 0
 	}
 	return ls, pcbs
 }
 
-// decodeXsocketN decodes struct xsocket_n: so_uid at 64, so_last_pid at 68.
-func decodeXsocketN(b []byte) (lastPID, uid int) {
+// decodeXsocketN decodes struct xsocket_n: so_last_pid at 68 (so_uid at 64 is not needed yet).
+func decodeXsocketN(b []byte) (lastPID int) {
 	if len(b) < 72 {
-		return 0, -1
+		return 0
 	}
-	return int(int32(le.Uint32(b[68:]))), int(le.Uint32(b[64:]))
+	return int(int32(le.Uint32(b[68:])))
 }
 
 // decodeXinpcbN decodes struct xinpcb_n: inp_lport (network order) at 18, inp_vflag at 44,
-// inp_dependladdr at 64 (in6_addr, or in_addr_4in6 with the IPv4 address at +12).
+// inp_dependladdr at 64.
 func decodeXinpcbN(b []byte) (proto string, addr netip.Addr, port uint16) {
 	if len(b) < 80 {
 		return "", netip.Addr{}, 0
 	}
-	port = binary.BigEndian.Uint16(b[18:])
-	switch vflag := b[44]; {
-	case vflag&0x2 != 0: // INP_IPV6 (also set on dual-stack sockets, which netstat calls tcp46)
-		return "tcp6", netip.AddrFrom16([16]byte(b[64:])), port
-	case vflag&0x1 != 0: // INP_IPV4
-		return "tcp4", netip.AddrFrom4([4]byte(b[64+12:])), port
-	}
-	return "", netip.Addr{}, 0
+	proto, addr = inpAddr(b[44], b[64:80])
+	return proto, addr, binary.BigEndian.Uint16(b[18:])
 }
 
 // decodeXtcpcbN decodes struct xtcpcb_n: t_state at 36 (after t_segq, t_dupacks, t_timer[4]).

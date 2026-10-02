@@ -56,16 +56,9 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	pathBuf := make([]byte, sizeofVnodePathInfo)
 	taskBuf := make([]byte, sizeofProcTaskInfo)
 	denied := 0
-	for i := range res.Processes {
-		p := &res.Processes[i]
+	kept := res.Processes[:0]
+	for _, p := range res.Processes {
 		var argvErr, cwdErr, taskErr error
-		if n, err := lib.procArgs2(p.PID, argBuf); err != nil {
-			argvErr = err
-		} else if argv, ok := decodeProcArgs2(argBuf[:n]); ok {
-			p.Argv = argv
-		} else {
-			argvErr = syscall.EINVAL
-		}
 		if n, err := lib.pidinfo(p.PID, procPidVnodePathInfo, pathBuf); err != nil {
 			cwdErr = err
 		} else if cwd, ok := decodeVnodePathInfo(pathBuf[:n]); ok {
@@ -80,6 +73,16 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 		} else {
 			p.RSSBytes, p.CPUTime = rss, time.Duration(lib.machToNs(ticks))
 		}
+		if exited(cwdErr) || exited(taskErr) {
+			continue
+		}
+		if n, err := lib.procArgs2(p.PID, argBuf); err != nil {
+			argvErr = err // EINVAL for other users' processes, so not used to decide on exit
+		} else if argv, ok := decodeProcArgs2(argBuf[:n]); ok {
+			p.Argv = argv
+		} else {
+			argvErr = syscall.EINVAL
+		}
 		for _, f := range []struct {
 			name string
 			err  error
@@ -91,7 +94,9 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 		if errors.Is(argvErr, syscall.EPERM) || errors.Is(cwdErr, syscall.EPERM) || errors.Is(taskErr, syscall.EPERM) {
 			denied++
 		}
+		kept = append(kept, p)
 	}
+	res.Processes = kept
 	if denied > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d processes of other users: argv, cwd or cpu/mem not readable without root", denied))
 	}
@@ -148,7 +153,7 @@ func fdListeners(lib *libSystem, procs []Process) []Listener {
 
 // pcbListeners reads every TCP listener on the host from net.inet.tcp.pcblist_n, with
 // so_last_pid as the owner. An empty list means unknown, never "no listeners".
-func pcbListeners() ([]pcbListener, string) {
+func pcbListeners() ([]Listener, string) {
 	b, err := unix.SysctlRaw("net.inet.tcp.pcblist_n")
 	if err != nil {
 		return nil, "net.inet.tcp.pcblist_n: " + err.Error() + "; other users' listeners unknown"
@@ -163,7 +168,7 @@ func pcbListeners() ([]pcbListener, string) {
 // mergeListeners keeps the fd-walk listeners (exact pid; a socket shared by several pids is
 // listed once per pid) and adds PCB-list listeners whose (proto, addr, port) the fd walk did
 // not see, typically sockets of other users.
-func mergeListeners(fd []Listener, pcb []pcbListener) []Listener {
+func mergeListeners(fd, pcb []Listener) []Listener {
 	type key struct {
 		proto string
 		addr  netip.Addr
@@ -179,15 +184,17 @@ func mergeListeners(fd []Listener, pcb []pcbListener) []Listener {
 			out = append(out, l)
 		}
 	}
-	for _, p := range pcb {
-		k := key{p.Proto, p.Addr, p.Port}
-		if seen[k] {
-			continue
+	for _, l := range pcb {
+		k := key{l.Proto, l.Addr, l.Port}
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, l)
 		}
-		seen[k] = true
-		l := p.Listener
-		l.PID = max(l.PID, 0)
-		out = append(out, l)
 	}
 	return out
 }
+
+// exited reports whether a proc_pidinfo error means the process exited or is a zombie (ESRCH),
+// so its row is dropped rather than shown half-filled. EPERM (another user's process) keeps
+// the row with the field marked unknown.
+func exited(err error) bool { return errors.Is(err, syscall.ESRCH) }
