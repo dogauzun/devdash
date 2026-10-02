@@ -55,6 +55,8 @@ func TestBuildListeners(t *testing.T) {
 		{"no owner", []RawListener{l(22, 0), l(631, 0)}, map[int][]uint16{}, []uint16{22, 631}, 2},
 		{"owner not in process list", []RawListener{l(5432, 99)}, map[int][]uint16{}, []uint16{5432}, 1},
 		{"reuseport duplicates collapse", []RawListener{l(80, 0), l(80, 0), l(80, 98)}, map[int][]uint16{}, []uint16{80}, 1},
+		{"owner's reuseport duplicates collapse", []RawListener{l(80, 10), l(80, 10), l(80, 10), l(81, 10)}, map[int][]uint16{10: {80, 81}}, nil, 0},
+		{"same port, other address or proto kept", []RawListener{l(80, 10), {"tcp4", any4, 80, 10}, {"tcp6", netip.IPv6Unspecified(), 80, 10}}, map[int][]uint16{10: {80, 80, 80}}, nil, 0},
 		{"mixed", []RawListener{l(22, 0), l(80, 10)}, map[int][]uint16{10: {80}}, []uint16{22}, 1},
 	}
 	for _, tt := range tests {
@@ -77,7 +79,7 @@ func TestBuildListeners(t *testing.T) {
 						gotOwned[p.PID] = append(gotOwned[p.PID], l.Port)
 					}
 				}
-				if p.PID == 0 && (p.Name != "unknown" || p.Unknown != unknownOwner || len(p.Listeners) != 1 || p.Kind != KindServer) {
+				if p.PID == 0 && (p.Name != "unknown" || p.Unknown != unknownOwner || len(p.Listeners) != 1 || p.Kind != KindOther) {
 					t.Errorf("pseudo-process %+v", p)
 				}
 			}

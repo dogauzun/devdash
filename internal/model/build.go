@@ -4,6 +4,7 @@ import (
 	"maps"
 	"math"
 	"net/netip"
+	"slices"
 	"time"
 )
 
@@ -36,7 +37,7 @@ const unknownOwner = FieldOwner | FieldArgv | FieldCwd | FieldCPU | FieldMem
 // (nil without Docker). Build never mutates raw, prev or containers; the snapshot's Processes
 // slice and Timing map are fresh (Argv slices are shared read-only), so raw may be reused.
 //
-// Steps: copy processes; attach each listener to its owner; give every distinct listener with
+// Steps: copy processes; attach each listener to its owner, once per (proto, addr, port); give every distinct listener with
 // no owner in raw.Processes its own PID 0 "unknown" process; compute CPUPercent; merge
 // warnings by Code; then call r.Resolve, Classify and Reconcile, in that order.
 func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot {
@@ -52,7 +53,10 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 	for _, rl := range raw.Listeners {
 		l := Listener{Proto: rl.Proto, Addr: rl.Addr, Port: rl.Port}
 		if i, ok := byPID[rl.PID]; ok && rl.PID != 0 {
-			procs[i].Listeners = append(procs[i].Listeners, l)
+			// One entry per address: SO_REUSEPORT sockets of one process are one listener to the user.
+			if !slices.Contains(procs[i].Listeners, l) {
+				procs[i].Listeners = append(procs[i].Listeners, l)
+			}
 			continue
 		}
 		// No owner, or an owner that is not in the process list (exited, hidden): one row per
