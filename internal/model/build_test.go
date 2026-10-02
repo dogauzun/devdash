@@ -179,3 +179,41 @@ func TestBuildCopiesAndFills(t *testing.T) {
 		t.Error("Build mutated raw")
 	}
 }
+
+func TestBuildName(t *testing.T) {
+	tests := []struct {
+		name, comm string
+		argv       []string
+		unknown    FieldSet
+		want       string
+	}{
+		{"macOS cut p_comm", "com.docker.backe", []string{"/Applications/Docker.app/Contents/MacOS/com.docker.backend", "-x"}, 0, "com.docker.backend"},
+		{"Linux cut comm", "my-very-long-se", []string{"/tmp/my-very-long-service-name", "3000"}, 0, "my-very-long-service-name"},
+		{"cut, argv[0] with spaces", "Google Chrome He", []string{"/Applications/Google Chrome.app/x/Google Chrome Helper (Renderer)"}, 0, "Google Chrome Helper (Renderer)"},
+		{"cut, bare argv[0]", "SetStoreUpdateSe", []string{"SetStoreUpdateService"}, 0, "SetStoreUpdateService"},
+		{"cut, trailing slash", "my-very-long-se", []string{"/tmp/my-very-long-service-name/"}, 0, "my-very-long-service-name"},
+		{"cut login shell drops dash", "my-very-long-sh", []string{"-my-very-long-shell"}, 0, "my-very-long-shell"},
+		{"short name kept, login shell", "zsh", []string{"-zsh"}, 0, "zsh"},
+		{"short name kept, title rewrite", "nginx", []string{"nginx: master process /usr/sbin/nginx -g daemon off;"}, 0, "nginx"},
+		{"short name kept, title rewrite, prefix", "postgres", []string{"postgres: checkpointer"}, 0, "postgres"},
+		{"short name kept, symlink argv[0]", "python3.12", []string{"python3"}, 0, "python3.12"},
+		{"cut, argv[0] is something else", "my-very-long-se", []string{"/usr/bin/other"}, 0, "my-very-long-se"},
+		{"argv unknown", "com.docker.backe", []string{"/x/com.docker.backend"}, FieldArgv, "com.docker.backe"},
+		{"argv empty", "my-very-long-se", nil, 0, "my-very-long-se"},
+		{"argv[0] empty", "my-very-long-se", []string{"", "my-very-long-service-name"}, 0, "my-very-long-se"},
+		{"exactly 15, not cut", "fifteen-chars-x", []string{"/bin/fifteen-chars-x"}, 0, "fifteen-chars-x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := proc(10, 0)
+			p.Name, p.Argv, p.Unknown = tt.comm, tt.argv, tt.unknown
+			raw := Raw{TakenAt: t0, Processes: []Process{p}}
+			if got := Build(raw, Snapshot{}, nil, NewResolver("", nil)).Processes[0].Name; got != tt.want {
+				t.Errorf("Name = %q, want %q", got, tt.want)
+			}
+			if raw.Processes[0].Name != tt.comm {
+				t.Error("Build mutated raw")
+			}
+		})
+	}
+}
