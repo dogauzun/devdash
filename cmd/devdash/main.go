@@ -33,8 +33,9 @@ const usage = `usage: devdash [flags]              the dashboard (not implemente
 
 Flags may come before or after the subcommand and its arguments.
 
-  --roots paths    only count git repositories under these paths; comma-separated,
-                   repeatable (--roots ~/code,~/work or --roots ~/code --roots ~/work)
+  --roots paths    only count git repositories under these existing directories;
+                   comma-separated, repeatable (--roots ~/code,~/work or --roots ~/code
+                   --roots ~/work); a leading ~ is $HOME, ~user is not supported
   --tick d         refresh interval of the dashboard (default 2s, minimum 500ms)
   --all            show shells and editors (--json always lists every process)
   --no-docker      do not ask Docker for containers
@@ -42,14 +43,20 @@ Flags may come before or after the subcommand and its arguments.
   --json           print one snapshot as JSON on stdout
   -h, --help       print this help
 
-Exit codes: 0 ok, 1 port free or an error, 2 usage error.
+Exit codes: 0 ok (port: found), 1 port free, 2 usage error,
+5 devdash failed (no snapshot could be taken, or output could not be written).
 `
+
+// exitFailed is the exit code of every command when devdash itself fails: the snapshot could
+// not be taken or the output could not be written. 1 is "port free", 2 a usage error, and 3
+// and 4 belong to kill.
+const exitFailed = 5
 
 // options is the parsed command line. The dashboard (DEV-26 and later) and `kill N` (DEV-25)
 // read their settings from here.
 type options struct {
 	JSON     bool          // --json
-	Roots    []string      // --roots, made absolute; nil means every repository counts
+	Roots    []string      // --roots: existing directories, absolute, ~ expanded; nil means every repository counts
 	Tick     time.Duration // --tick, at least engine.MinTick
 	All      bool          // --all: show shells and editors in human views; --json and port ignore it
 	NoDocker bool          // --no-docker
@@ -114,7 +121,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 			if r == "" {
 				continue
 			}
-			abs, err := filepath.Abs(r)
+			abs, err := rootDir(r)
 			if err != nil {
 				return err
 			}
@@ -175,6 +182,33 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("--json takes no command, got %q", o.Cmd)
 	}
 	return o, nil
+}
+
+// rootDir turns one --roots entry into an absolute directory. A leading "~" or "~/" is $HOME,
+// because a shell expands "~" only at the start of a word (not after a comma or "=").
+// "~user" is refused, and so is a path that is not an existing directory.
+func rootDir(r string) (string, error) {
+	if r == "~" || strings.HasPrefix(r, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		r = home + r[1:]
+	} else if strings.HasPrefix(r, "~") {
+		return "", fmt.Errorf("%s: ~user is not supported, use the full path", r)
+	}
+	abs, err := filepath.Abs(r)
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", abs)
+	}
+	return abs, nil
 }
 
 // parsePort accepts a TCP port, 1 to 65535.

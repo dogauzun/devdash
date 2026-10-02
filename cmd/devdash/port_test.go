@@ -47,7 +47,7 @@ func TestWritePort(t *testing.T) {
 			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(11, "postgres")}, Listeners: tt.listeners}
 			s := model.Build(raw, model.Snapshot{}, nil, model.NewResolver("", nil))
 			var b bytes.Buffer
-			if found := writePort(&b, s, tt.port); found != tt.found || b.String() != tt.want {
+			if found, err := writePort(&b, s, tt.port); err != nil || found != tt.found || b.String() != tt.want {
 				t.Errorf("found %v, output\n%s\nwant %v\n%s", found, b.String(), tt.found, tt.want)
 			}
 		})
@@ -60,7 +60,7 @@ func TestWritePortProject(t *testing.T) {
 		Processes: []model.Process{{PID: 7, Name: "vite", ProjectID: "/code/shop", Listeners: []model.Listener{{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: 5173}}}},
 	}
 	var b bytes.Buffer
-	if writePort(&b, s, 5173); b.String() != "7  vite  shop  [::]:5173\n" {
+	if _, _ = writePort(&b, s, 5173); b.String() != "7  vite  shop  [::]:5173\n" {
 		t.Errorf("got %q", b.String())
 	}
 }

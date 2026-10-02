@@ -18,21 +18,22 @@ const cpuGap = 200 * time.Millisecond
 // runJSON prints one snapshot as schema v1 JSON (docs/json-schema.md). It samples twice,
 // cpuGap apart; timing_ms describes the second sample.
 func runJSON(ctx context.Context, o engine.Options, stdout, stderr io.Writer) int {
-	first, err := engine.Snapshot(ctx, o)
+	err := func() error {
+		first, err := engine.Snapshot(ctx, o)
+		if err != nil {
+			return err
+		}
+		time.Sleep(cpuGap)
+		start := time.Now()
+		snap, err := engine.SnapshotAfter(ctx, o, first)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, snap, time.Since(start))
+	}()
 	if err != nil {
 		fmt.Fprintln(stderr, "devdash:", err)
-		return 1
-	}
-	time.Sleep(cpuGap)
-	start := time.Now()
-	snap, err := engine.SnapshotAfter(ctx, o, first)
-	if err != nil {
-		fmt.Fprintln(stderr, "devdash:", err)
-		return 1
-	}
-	if err := writeJSON(stdout, snap, time.Since(start)); err != nil {
-		fmt.Fprintln(stderr, "devdash:", err)
-		return 1
+		return exitFailed
 	}
 	return 0
 }
@@ -51,10 +52,10 @@ type (
 		TimingMS      map[string]float64 `json:"timing_ms"`
 	}
 	jsonHost struct {
-		OS       string `json:"os"`
-		Arch     string `json:"arch"`
-		Hostname string `json:"hostname"`
-		UID      int    `json:"uid"`
+		OS       string  `json:"os"`
+		Arch     string  `json:"arch"`
+		Hostname *string `json:"hostname"`
+		UID      int     `json:"uid"`
 	}
 	jsonProject struct {
 		ID       string  `json:"id"`
@@ -98,7 +99,7 @@ type (
 	}
 	jsonPort struct {
 		HostIP        *string `json:"host_ip"`
-		HostPort      uint16  `json:"host_port"`
+		HostPort      *uint16 `json:"host_port"`
 		ContainerPort uint16  `json:"container_port"`
 		Proto         string  `json:"proto"`
 	}
@@ -114,7 +115,7 @@ func writeJSON(w io.Writer, s model.Snapshot, total time.Duration) error {
 	out := jsonSnapshot{
 		SchemaVersion: s.SchemaVersion,
 		TakenAt:       utc(s.TakenAt),
-		Host:          jsonHost{s.Host.OS, s.Host.Arch, s.Host.Hostname, s.Host.UID},
+		Host:          jsonHost{s.Host.OS, s.Host.Arch, str(s.Host.Hostname), s.Host.UID},
 		Projects:      []jsonProject{},
 		Processes:     []jsonProcess{},
 		Containers:    []jsonContainer{},
@@ -130,11 +131,14 @@ func writeJSON(w io.Writer, s model.Snapshot, total time.Duration) error {
 	for _, c := range s.Containers {
 		jc := jsonContainer{c.ID, c.Name, c.Image, c.State, str(c.ComposeProject), str(c.ComposeService), []jsonPort{}}
 		for _, m := range c.Ports {
-			var ip *string
+			jp := jsonPort{ContainerPort: m.ContainerPort, Proto: m.Proto}
 			if m.HostIP.IsValid() {
-				ip = str(m.HostIP.String())
+				jp.HostIP = str(m.HostIP.String())
 			}
-			jc.Ports = append(jc.Ports, jsonPort{ip, m.HostPort, m.ContainerPort, m.Proto})
+			if m.HostPort != 0 { // exposed, not published
+				jp.HostPort = &m.HostPort
+			}
+			jc.Ports = append(jc.Ports, jp)
 		}
 		out.Containers = append(out.Containers, jc)
 	}
@@ -160,7 +164,10 @@ func process(p model.Process) jsonProcess {
 		Container: str(p.ContainerID),
 	}
 	if p.PID != 0 { // the unknown-owner pseudo-process has no parent, start, owner or user
-		j.PPID, j.UID, j.StartTime, j.User = &p.PPID, &p.UID, str(utc(p.StartTime)), str(p.User)
+		j.UID, j.StartTime, j.User = &p.UID, str(utc(p.StartTime)), str(p.User)
+	}
+	if p.PPID != 0 { // 0: no parent (pid 1, launchd, a container's init) or the pid 0 entry
+		j.PPID = &p.PPID
 	}
 	if unknown&model.FieldArgv == 0 {
 		j.Argv = append([]string{}, p.Argv...) // known and empty is [], unknown is null

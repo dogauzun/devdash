@@ -1,6 +1,6 @@
 # `devdash --json` schema, version 1
 
-`devdash --json` prints one snapshot as one JSON document on stdout and exits 0; stderr stays empty on success. `cmd/devdash/json_test.go` checks real output against the tables below, so every field is listed here.
+`devdash --json` prints one snapshot as one JSON document on stdout and exits 0; stderr stays empty on success. If no snapshot can be taken, or stdout cannot be written, it exits 5 with the error on stderr and nothing on stdout (a failed write may leave part of the document). `cmd/devdash/json_test.go` checks real output against the tables below, so every field is listed here.
 
 ## Conventions
 
@@ -38,7 +38,7 @@ The top-level object.
 | --- | --- | --- | --- |
 | `os` | string | always | `darwin` or `linux` (Go's `GOOS`). |
 | `arch` | string | always | `arm64`, `amd64` (Go's `GOARCH`). |
-| `hostname` | string | always | As the OS reports it. |
+| `hostname` | string or null | always | As the OS reports it; `null` when it cannot be read. |
 | `uid` | integer | always | Effective uid devdash ran as. |
 
 ## project
@@ -58,7 +58,7 @@ The top-level object.
 | Field | Type | Present | Description |
 | --- | --- | --- | --- |
 | `pid` | integer | always | Process id; `0` for a listener whose owner could not be read (the "unknown owner" entry). |
-| `ppid` | integer or null | always | Parent pid; `null` for `pid: 0`. |
+| `ppid` | integer or null | always | Parent pid; `null` when there is no parent (the kernel reports 0: pid 1, launchd, a container's init) and for `pid: 0`. |
 | `start_time` | string or null | always | Start time (RFC 3339, UTC). With `pid` it identifies the process, since pids are reused. `null` for `pid: 0`. |
 | `uid` | integer or null | always | Effective uid; `null` for `pid: 0`. |
 | `user` | string or null | always | User name of `uid`, or the uid as a string when it has no name; `null` for `pid: 0`. |
@@ -98,7 +98,7 @@ The top-level object.
 | Field | Type | Present | Description |
 | --- | --- | --- | --- |
 | `host_ip` | string or null | always | Host address the port is published on; `null` when Docker reports none. |
-| `host_port` | integer | always | Published host port; `0` when the port is only exposed, not published. |
+| `host_port` | integer or null | always | Published host port; `null` when the port is only exposed, not published. |
 | `container_port` | integer | always | Port inside the container. |
 | `proto` | string | always | `tcp` or `udp`. |
 

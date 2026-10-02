@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,7 +17,8 @@ import (
 )
 
 func TestParse(t *testing.T) {
-	abs := func(p string) string { a, _ := filepath.Abs(p); return a }
+	home := testHome(t)
+	j := func(d string) string { return filepath.Join(home, d) }
 	def := options{Tick: 2 * time.Second}
 	with := func(f func(*options)) options { o := def; f(&o); return o }
 	tests := []struct {
@@ -25,15 +28,15 @@ func TestParse(t *testing.T) {
 		{nil, def},
 		{[]string{"--json"}, with(func(o *options) { o.JSON = true })},
 		{[]string{"-json"}, with(func(o *options) { o.JSON = true })},
-		{[]string{"--roots", "/a,/b,,rel"}, with(func(o *options) { o.Roots = []string{"/a", "/b", abs("rel")} })},
-		{[]string{"--roots", "/a", "--roots=/b"}, with(func(o *options) { o.Roots = []string{"/a", "/b"} })},
+		{[]string{"--roots", "~/code,~/work,,rel"}, with(func(o *options) { o.Roots = []string{j("code"), j("work"), j("rel")} })},
+		{[]string{"--roots=~/code", "--roots", "~", "--roots", j("work") + "/"}, with(func(o *options) { o.Roots = []string{j("code"), home, j("work")} })},
 		{[]string{"--tick", "500ms"}, with(func(o *options) { o.Tick = 500 * time.Millisecond })},
 		{[]string{"--tick=1m"}, with(func(o *options) { o.Tick = time.Minute })},
 		{[]string{"--all", "--no-docker", "--no-color"}, with(func(o *options) { o.All, o.NoDocker, o.NoColor = true, true, true })},
 		{[]string{"version"}, with(func(o *options) { o.Cmd = "version"; o.Args = []string{} })},
 		{[]string{"port", "3000"}, with(func(o *options) { o.Cmd, o.Args = "port", []string{"3000"} })},
-		{[]string{"--all", "port", "3000", "--tick", "1s", "--roots", "/r"}, with(func(o *options) {
-			o.All, o.Tick, o.Roots, o.Cmd, o.Args = true, time.Second, []string{"/r"}, "port", []string{"3000"}
+		{[]string{"--all", "port", "3000", "--tick", "1s", "--roots", "code"}, with(func(o *options) {
+			o.All, o.Tick, o.Roots, o.Cmd, o.Args = true, time.Second, []string{j("code")}, "port", []string{"3000"}
 		})},
 		{[]string{"kill", "3000", "4000"}, with(func(o *options) { o.Cmd, o.Args = "kill", []string{"3000", "4000"} })},
 	}
@@ -49,6 +52,40 @@ func TestParse(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("got  %+v\nwant %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// testHome makes a temporary $HOME holding the directories code, work and rel and the file
+// file, and makes it the working directory.
+func testHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	for _, d := range []string{"code", "work", "rel"} {
+		if err := os.Mkdir(filepath.Join(home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, "file"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Chdir(home)
+	return home
+}
+
+func TestRootsErrors(t *testing.T) {
+	home := testHome(t)
+	for _, root := range []string{"~nobody/code", "~/missing", filepath.Join(home, "missing"), "file", "code,~/nothing"} {
+		t.Run(root, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run([]string{"--roots", root, "--json"}, &stdout, &stderr, fake()); code != 2 || stdout.Len() != 0 {
+				t.Errorf("exit %d, stdout %q; want 2 and nothing", code, stdout.String())
+			}
+			bad := root[strings.LastIndex(root, "/")+1:]
+			if !strings.Contains(stderr.String(), bad) {
+				t.Errorf("stderr %q does not name %q", stderr.String(), bad)
 			}
 		})
 	}
@@ -129,6 +166,29 @@ func TestRunExitCodes(t *testing.T) {
 			}
 			if len(tt.args) == 1 && tt.args[0] == "--json" && !json.Valid(stdout.Bytes()) {
 				t.Errorf("--json output is not JSON: %s", stdout.String())
+			}
+		})
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+// TestRunFailed: devdash's own failure is exit 5 with nothing on stdout, never "free" (1).
+func TestRunFailed(t *testing.T) {
+	broken := func() *collector.Fake {
+		return &collector.Fake{Steps: []collector.Step{{Err: errors.New("collector broke")}}}
+	}
+	for _, args := range [][]string{{"--json"}, {"port", "3000"}, {"port", "3001"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run(args, &stdout, &stderr, broken()); code != 5 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "collector broke") {
+				t.Errorf("snapshot fails: exit %d, stdout %q, stderr %q; want 5, nothing, the error", code, stdout.String(), stderr.String())
+			}
+			stderr.Reset()
+			if code := run(args, failWriter{}, &stderr, fake()); code != 5 || !strings.Contains(stderr.String(), "disk full") {
+				t.Errorf("stdout fails: exit %d, stderr %q; want 5 and the error", code, stderr.String())
 			}
 		})
 	}

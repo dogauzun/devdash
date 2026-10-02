@@ -15,11 +15,15 @@ import (
 // line per listener when found, exit 1 and "free" when nothing listens.
 func runPort(ctx context.Context, o engine.Options, port uint16, stdout, stderr io.Writer) int {
 	s, err := engine.Snapshot(ctx, o)
-	if err != nil {
-		fmt.Fprintln(stderr, "devdash:", err)
-		return 1
+	var found bool
+	if err == nil {
+		found, err = writePort(stdout, s, port)
 	}
-	if !writePort(stdout, s, port) {
+	switch {
+	case err != nil:
+		fmt.Fprintln(stderr, "devdash:", err)
+		return exitFailed
+	case !found:
 		return 1
 	}
 	return 0
@@ -28,7 +32,7 @@ func runPort(ctx context.Context, o engine.Options, port uint16, stdout, stderr 
 // writePort prints one line per listener on port: pid, name, project (or -) and bind
 // address. A socket bound to both IPv4 and IPv6 (dual-stack ::) is one line; two sockets are
 // two lines. It prints "free" and returns false when nothing listens on port.
-func writePort(w io.Writer, s model.Snapshot, port uint16) bool {
+func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 	projects := map[string]string{}
 	for _, p := range s.Projects {
 		projects[p.ID] = p.Name
@@ -61,9 +65,8 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) bool {
 		}
 	}
 	if !found {
-		fmt.Fprintln(w, "free")
-		return false
+		_, err := fmt.Fprintln(w, "free")
+		return false, err
 	}
-	_ = tw.Flush()
-	return true
+	return true, tw.Flush()
 }

@@ -206,12 +206,12 @@ The CLI exposes the same snapshot the TUI shows, and its exit codes are the cont
 | Command | Output | Exit code |
 | --- | --- | --- |
 | `devdash` | the TUI | 0 |
-| `devdash --json` | one snapshot as a JSON document on stdout | 0 |
-| `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free |
-| `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | what was signalled, then survivors | 0 all exited, 3 permission denied, 4 survivors remain |
+| `devdash --json` | one snapshot as a JSON document on stdout | 0; 5 devdash failed |
+| `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free, 5 devdash failed |
+| `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | what was signalled, then survivors | 0 all exited, 3 permission denied, 4 survivors remain, 5 devdash failed |
 | `devdash version` | version, commit, build date | 0 |
 
-Global flags: `--roots <paths>` limits project scanning to repositories under those paths (comma-separated, and repeatable); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. A snapshot that cannot be taken exits 1 with the error on stderr.
+Global flags: `--roots <paths>` limits project scanning to repositories under those directories (comma-separated, and repeatable; a leading `~` is `$HOME`, `~user` is not supported, and a path that is not an existing directory is a usage error); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. Every command exits 5 when devdash itself fails (no snapshot could be taken, or the output could not be written), with the error on stderr and nothing on stdout; 1 is only ever "port free".
 
 The JSON document carries `schema_version`, and any field removal or rename bumps it. Additions do not. Times are RFC 3339 in UTC, sizes are bytes, durations are milliseconds, and unreadable fields are listed by name in `unknown` rather than filled with placeholders. Every key is always present; an absent or unreadable value is `null`. `--json` samples twice, 200 ms apart, so `cpu_percent` is a number (top-style: one core is 100). The full field reference is [`docs/json-schema.md`](json-schema.md); the example below follows it.
 

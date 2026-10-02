@@ -78,8 +78,8 @@
       "unknown": []
     },
     {
-      "pid": 102,
-      "ppid": 1,
+      "pid": 1,
+      "ppid": null,
       "start_time": "2026-10-02T07:12:44.12Z",
       "uid": 0,
       "user": "root",
@@ -175,7 +175,7 @@
       "ports": [
         {
           "host_ip": null,
-          "host_port": 0,
+          "host_port": null,
           "container_port": 80,
           "proto": "tcp"
         }

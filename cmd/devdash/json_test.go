@@ -47,7 +47,7 @@ func goldenSnapshot(t *testing.T, dir string) model.Snapshot {
 				Cwd: shop, CPUTime: time.Second + cpu/6, RSSBytes: 187563008},
 			{PID: 101, PPID: 100, UID: 54321, StartTime: started, Name: "go", Argv: []string{"go", "test", "./..."},
 				Cwd: cart, CPUTime: cpu, RSSBytes: 4096},
-			{PID: 102, PPID: 1, UID: 0, StartTime: started, Name: "launchd", Unknown: model.FieldArgv | model.FieldCwd | model.FieldCPU | model.FieldMem},
+			{PID: 1, PPID: 0, UID: 0, StartTime: started, Name: "launchd", Unknown: model.FieldArgv | model.FieldCwd | model.FieldCPU | model.FieldMem},
 		}
 		if late {
 			procs = append(procs, collector.Process{PID: 103, PPID: 100, UID: 54321, StartTime: t0, Name: "blank", Argv: nil, Cwd: shop})
