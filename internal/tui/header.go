@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -139,9 +138,13 @@ func footerHints(w int) string {
 // footerWarnLines is how many lines the warnings may take before the rest is cut.
 const footerWarnLines = 2
 
-// footerView is the one-shot status message, then the warnings (collector, Build and engine
-// hints, deduplicated by hint text) wrapped to at most two lines when there are any, then the
-// key hints.
+// footerCut ends the last warning line when the warnings do not fit: the help overlay lists
+// them all.
+const footerCut = "… (? for all)"
+
+// footerView is the one-shot status message, then the warnings' hints (m.warnings) joined by
+// " · " and wrapped to at most two lines when there are any, the second ending in footerCut
+// after the last whole word that fits when more is left, then the key hints.
 // Status and warnings embed snapshot text (names, paths, errors), so both are cleaned.
 func (m *Model) footerView(w int) string {
 	var lines []string
@@ -149,10 +152,17 @@ func (m *Model) footerView(w int) string {
 		lines = append(lines, styleWarn.Render(clean(m.status)))
 	}
 	if ws := m.warnings(); len(ws) > 0 {
-		wl := detailWrap(strings.Fields(clean(strings.Join(ws, " · "))), " ", w)
+		hints := make([]string, len(ws))
+		for i, x := range ws {
+			hints[i] = x.Hint
+		}
+		wl := detailWrap(strings.Fields(clean(strings.Join(hints, " · "))), " ", w)
 		if len(wl) > footerWarnLines {
 			last := footerWarnLines - 1
-			wl = append(wl[:last], ansi.Truncate(strings.Join(wl[last:], " "), w-1, "")+"…")
+			rest := strings.Fields(strings.Join(wl[last:], " "))
+			cut := detailWrap(rest, " ", w-ansi.StringWidth(footerCut))[0]
+			cut = strings.TrimRight(cut, " ·") // never end on a separator
+			wl = append(wl[:last], ansi.Truncate(cut+footerCut, w, ""))
 		}
 		for _, l := range wl {
 			lines = append(lines, styleWarn.Render(l))
@@ -161,25 +171,28 @@ func (m *Model) footerView(w int) string {
 	return strings.Join(append(lines, styleDim.Render(footerHints(w))), "\n")
 }
 
-// warnings returns the distinct hints of the snapshot's and the engine's warnings, and the
-// error of a failed tick, in order.
-func (m *Model) warnings() []string {
-	var hints []string
-	add := func(ws []model.Warning) {
+// warnings returns the snapshot's and then the engine's warnings, one per distinct hint (the
+// code stands in for an empty hint) in order of first appearance, with the counts of a
+// repeated hint summed, as Build sums a repeated code; then the error of a failed tick as
+// refresh_failed. Hints are raw: callers clean them.
+func (m *Model) warnings() []model.Warning {
+	var out []model.Warning
+	at := map[string]int{}
+	for _, ws := range [][]model.Warning{m.upd.Snapshot.Warnings, m.upd.Warnings} {
 		for _, w := range ws {
-			h := w.Hint
-			if h == "" {
-				h = w.Code
+			if w.Hint == "" {
+				w.Hint = w.Code
 			}
-			if !slices.Contains(hints, h) {
-				hints = append(hints, h)
+			if i, ok := at[w.Hint]; ok {
+				out[i].Count += w.Count
+				continue
 			}
+			at[w.Hint] = len(out)
+			out = append(out, w)
 		}
 	}
-	add(m.upd.Snapshot.Warnings)
-	add(m.upd.Warnings)
 	if m.upd.Err != nil {
-		hints = append(hints, "refresh failed: "+m.upd.Err.Error())
+		out = append(out, model.Warning{Code: "refresh_failed", Count: 1, Hint: "refresh failed: " + m.upd.Err.Error()})
 	}
-	return hints
+	return out
 }
