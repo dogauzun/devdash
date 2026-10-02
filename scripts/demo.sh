@@ -3,8 +3,9 @@
 #
 # Builds devdash and scripts/demoproc, then enters new PID, mount, UTS and network namespaces,
 # so the dashboard sees only the demo's processes and sockets and none of the host's. Inside,
-# it sets the hostname to dev-box, mounts a tmpfs on /home, and creates four repositories
-# under /home/me/code with something running in each:
+# it sets the hostname to dev-box, mounts a tmpfs on /home, /run and /var/run (no host Docker
+# or Podman socket), and creates four repositories under /home/me/code with something running
+# in each:
 #   shop        (main)                 nodemon server.js, whose child node server.js serves :3000
 #   shop-cart   (feat/cart, a linked   vite --port 5173, vitest --watch
 #                worktree of shop)
@@ -25,8 +26,17 @@ if [ "${DEMO_INSIDE:-}" != 1 ]; then
 	DEMO_INSIDE=1 DEMO_BIN=$bin exec unshare --pid --fork --mount-proc --uts --net sh "$0"
 fi
 
+# Only the unshare --pid --fork child is pid 1: never touch the host's hostname or mounts.
+[ "$$" = 1 ] || {
+	echo "demo.sh: not in the demo namespaces; run it without DEMO_INSIDE" >&2
+	exit 1
+}
 hostname dev-box
 mount -t tmpfs tmpfs /home
+# No container engine of the host: hide its sockets and drop the variables that name one.
+mount -t tmpfs tmpfs /run
+[ -L /var/run ] || mount -t tmpfs tmpfs /var/run
+unset DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG XDG_RUNTIME_DIR
 export HOME=/home/me
 mkdir -p "$HOME/bin" "$HOME/code"
 cp "$DEMO_BIN/devdash" "$DEMO_BIN/demoproc" "$HOME/bin/"
