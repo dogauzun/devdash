@@ -183,6 +183,8 @@ func TestNewPlan(t *testing.T) {
 		{name: "runtime holding one port, force", procs: []model.Process{backend}, key: backend.Key(), opt: KillOptions{Force: true}, refusedAs: "container runtime"},
 		{name: "runtime holding one port, tree force", procs: []model.Process{backend}, key: backend.Key(), opt: KillOptions{Tree: true, Force: true}, refusedAs: "container runtime"},
 		{name: "runtime holding many ports", procs: []model.Process{backendMany}, key: backendMany.Key(), refusedAs: "find the container with docker ps"},
+		{name: "podman forwarder", procs: []model.Process{func() model.Process { p := backend; p.Name = "pasta"; return p }()}, key: backend.Key(), refusedAs: "find the container with podman ps"},
+		{name: "forwarder of either runtime", procs: []model.Process{func() model.Process { p := backend; p.Name = "gvproxy"; return p }()}, key: backend.Key(), refusedAs: "find the container with docker ps or podman ps"},
 		{name: "tree containing docker-proxy", procs: []model.Process{proc(T, 7), dproxy}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true}, refusedAs: "pid 5000011 (docker-proxy) is part of the container runtime"},
 		{name: "group containing docker-proxy", procs: []model.Process{proc(T, 7), proc(X, 7), func() model.Process { p := dproxy; p.PPID = 7; return p }()}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true},
 			pgids: map[int]int{T: T, C1: T}, refusedAs: "docker-proxy"},

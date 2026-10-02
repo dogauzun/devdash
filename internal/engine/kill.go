@@ -237,9 +237,9 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 	return plan, nil
 }
 
-// runtimeHint is how to find the container behind a runtime process's ports: filtered on the
-// published port when it holds exactly one, plain `docker ps` otherwise (com.docker.backend
-// holds every container's ports).
+// runtimeHint is how to find the container behind a runtime process's ports: docker ps
+// filtered on the published port when it is Docker's and holds exactly one (com.docker.backend
+// holds every container's ports), else the plain listing of the runtime's CLI.
 func runtimeHint(p model.Process) string {
 	var ports []uint16
 	for _, l := range p.Listeners {
@@ -247,10 +247,14 @@ func runtimeHint(p model.Process) string {
 			ports = append(ports, l.Port)
 		}
 	}
-	if len(ports) == 1 {
+	switch cli := model.RuntimeCLI(p); {
+	case cli == "docker" && len(ports) == 1:
 		return fmt.Sprintf("find its container with docker ps --filter publish=%d", ports[0])
+	case cli != "":
+		return "find the container with " + cli + " ps"
+	default:
+		return "find the container with docker ps or podman ps"
 	}
-	return "find the container with docker ps"
 }
 
 // Kill signals p, waits up to timeout (DefaultKillTimeout when 0) for the signalled processes

@@ -120,22 +120,25 @@ var interpreters = map[string]bool{
 // scriptExts: extensions stripped from an interpreter's script, so nodemon.js matches nodemon.
 var scriptExts = map[string]bool{".js": true, ".cjs": true, ".mjs": true, ".ts": true, ".py": true, ".rb": true}
 
-// runtimeNames: processes of a container runtime (daemons, shims and the forwarders that hold
-// published ports). Killing one stops other containers or leaves a port dead, so the engine
+// runtimeNames: processes of a container runtime (daemons, shims, VM host agents and the
+// forwarders that hold published ports), each with the CLI that lists its containers ("" when
+// it serves either). Killing one stops other containers or leaves a port dead, so the engine
 // refuses them whether or not Docker answered (DEV-51). Matched by basename, like the kind
 // lists. The docker and podman CLIs are not here: a `docker compose up` you started is yours.
-var runtimeNames = map[string]bool{
-	"dockerd":            true, // Docker Engine daemon
-	"containerd":         true, // container runtime under dockerd
-	"docker-proxy":       true, // Docker's userland proxy, one per published port (Linux)
-	"com.docker.backend": true, // Docker Desktop backend, holds every published port (macOS)
-	"vpnkit":             true, // Docker Desktop's older port forwarder
-	"gvproxy":            true, // Podman machine and Docker Desktop network proxy
-	"rootlesskit":        true, // rootless Docker's namespace holder
-	"rootlessport":       true, // rootless Docker and Podman port forwarder
-	"slirp4netns":        true, // rootless network stack
-	"pasta":              true, // rootless Podman 5 network stack and port forwarder
-	"conmon":             true, // Podman container monitor
+var runtimeNames = map[string]string{
+	"dockerd":            "docker", // Docker Engine daemon
+	"containerd":         "docker", // container runtime under dockerd
+	"docker-proxy":       "docker", // Docker's userland proxy, one per published port (Linux)
+	"com.docker.backend": "docker", // Docker Desktop backend, holds every published port (macOS)
+	"com.docker.vpnkit":  "docker", // Docker Desktop for Mac's older port forwarder
+	"vpnkit":             "docker", // the same forwarder in Docker Desktop's Linux and Windows builds
+	"rootlesskit":        "docker", // rootless Docker's namespace holder and port driver
+	"gvproxy":            "",       // Podman machine and Docker Desktop network proxy
+	"rootlessport":       "",       // rootless Docker and Podman port forwarder
+	"slirp4netns":        "",       // rootless network stack
+	"limactl":            "",       // Lima host agent: forwards ports for Lima, Colima and Rancher Desktop
+	"pasta":              "podman", // rootless Podman 5 network stack and port forwarder
+	"conmon":             "podman", // Podman container monitor
 }
 
 // runtimePrefix: any basename starting with it is a containerd shim (containerd-shim-runc-v2).
