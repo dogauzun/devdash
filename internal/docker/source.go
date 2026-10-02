@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"time"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -10,7 +12,8 @@ import (
 const (
 	// requestTimeout bounds each Engine API request (spec "Docker integration").
 	requestTimeout = 500 * time.Millisecond
-	// retryEvery is the cadence of retries after a failure: every 10th Fetch call.
+	// retryEvery is the cadence of retries after a failure or a missing socket: every 10th
+	// Fetch call.
 	retryEvery = 10
 )
 
@@ -23,7 +26,7 @@ type Source struct {
 
 	prev     []model.Container // last good list, returned when a call cannot get a new one
 	warn     *model.Warning    // docker_unreachable while the endpoint is failing, else nil
-	needPing bool              // ping before the next list: at start and after each failure
+	needPing bool              // ping before the next list: at start, after each failure or missing socket
 	skip     int               // Fetch calls left to answer from prev without the network
 }
 
@@ -36,15 +39,18 @@ func NewSource(ep Endpoint) *Source {
 func (s *Source) Endpoint() Endpoint { return s.ep }
 
 // Fetch returns the containers to use now and a warning when Docker is present but not
-// answering (nil otherwise). It pings once at start and after each failure, retries an
-// unreachable endpoint only every 10th call, and keeps the previous list when a request takes
-// longer than 500 ms; ctx bounds the whole call.
+// answering (nil otherwise). It pings once at start and after each failure, retries only
+// every 10th call after a failure or a missing socket, and keeps the previous list when a
+// request takes longer than 500 ms; ctx bounds the whole call.
 //
-// An endpoint that does not answer (dial error, failed ping, non-2xx, bad JSON) sets the
-// docker_unreachable warning and makes the next 9 calls return the previous list without a
-// request. A slow list keeps the previous list and the current warning and pings next time.
-// A ctx that ends first is neither: the call returns the previous list and changes nothing.
-// A good list replaces the previous one and clears the warning.
+// A unix socket that does not exist (ENOENT on the dial, at the ping or the list) is no
+// Docker at all: it clears the list, returns no warning, and makes the next 9 calls return
+// nothing without a request. An endpoint that exists but does not answer (refused dial,
+// failed or slow ping, non-2xx, bad JSON) sets the docker_unreachable warning and makes the
+// next 9 calls return the previous list without a request. A list slower than the timeout
+// keeps the previous list and the current warning and changes nothing else. A ctx that ends
+// first is neither: the call returns the previous list and changes nothing. A good list
+// replaces the previous one and clears the warning.
 func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) {
 	if s.skip > 0 {
 		s.skip--
@@ -57,29 +63,49 @@ func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) 
 		rctx, cancel := context.WithTimeout(ctx, s.timeout)
 		err := s.c.ping(rctx)
 		cancel()
-		if err != nil {
-			if ctx.Err() != nil {
-				return s.prev, s.warn
-			}
+		switch {
+		case err == nil:
+			s.needPing = false
+		case ctx.Err() != nil:
+			return s.prev, s.warn
+		case s.missing(err):
+			return s.absent()
+		default:
 			return s.fail()
 		}
-		s.needPing = false
 	}
 	rctx, cancel := context.WithTimeout(ctx, s.timeout)
 	list, err := s.c.containers(rctx)
-	slow := rctx.Err() != nil
 	cancel()
 	switch {
 	case err == nil:
 		s.prev, s.warn = list, nil
 	case ctx.Err() != nil:
 		// The caller gave up; that says nothing about the endpoint.
-	case slow:
-		s.needPing = true
+	case errors.Is(err, context.DeadlineExceeded):
+		// Slow, not failed: keep the previous list and the current warning. The spec pings
+		// only at start and after failures, so the next call lists again directly.
+	case s.missing(err):
+		return s.absent()
 	default:
 		return s.fail()
 	}
 	return s.prev, s.warn
+}
+
+// missing reports whether err says the unix socket file does not exist, which means
+// Docker is not installed or not running here rather than failing.
+func (s *Source) missing(err error) bool {
+	return s.ep.Network == "unix" && errors.Is(err, fs.ErrNotExist)
+}
+
+// absent records a socket that does not exist: no containers and no warning, with the
+// failure cadence so a missing socket is looked for again only every 10th call.
+func (s *Source) absent() ([]model.Container, *model.Warning) {
+	s.prev, s.warn = nil, nil
+	s.needPing = true
+	s.skip = retryEvery - 1
+	return nil, nil
 }
 
 // fail records an endpoint that did not answer.

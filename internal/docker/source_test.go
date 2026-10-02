@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,39 +66,67 @@ var wantPodman = []model.Container{
 	},
 }
 
-// engine is a fake Engine API on a temporary unix socket. down makes every request fail
+// engine is a fake Engine API on a temporary unix socket. It answers /_ping with an
+// Api-Version header of version ("" sends none) and serves /_ping and /containers/json at the
+// root or under any /v<version>/ prefix, except that a path under /v<tooOld>/ gets the 400
+// Docker 29 sends a client below its minimum API version. down makes every request fail
 // with 503; delay holds /containers/json that long (or until the client gives up).
 type engine struct {
 	mu       sync.Mutex
 	body     string
+	version  string
+	tooOld   string
 	down     bool
 	delay    time.Duration
-	requests []string // "GET /v1.41/_ping", in arrival order
+	requests []string // "GET /v1.41/containers/json", in arrival order
 	hosts    []string
 	queries  []string
 
-	ep Endpoint
+	ep  Endpoint
+	srv *httptest.Server
 }
 
+// newEngine starts an engine on a socket in a new temporary directory.
 func newEngine(t *testing.T, body string) *engine {
+	t.Helper()
+	return newEngineAt(t, filepath.Join(tempDir(t), "d.sock"), body)
+}
+
+// newEngineAt starts an engine listening on the unix socket sock, advertising API 1.41.
+func newEngineAt(t *testing.T, sock, body string) *engine {
+	t.Helper()
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &engine{body: body, version: "1.41", ep: Endpoint{Network: "unix", Address: sock, Source: "default"}}
+	e.srv = httptest.NewUnstartedServer(http.HandlerFunc(e.serve))
+	_ = e.srv.Listener.Close()
+	e.srv.Listener = ln
+	e.srv.Start()
+	t.Cleanup(e.srv.Close)
+	return e
+}
+
+// tempDir is a short temporary directory: a unix socket path is limited to about 100 bytes,
+// which t.TempDir can exceed on macOS.
+func tempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "dd")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "d.sock")
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
+	return dir
+}
+
+// stop shuts the engine down; closing the unix listener removes the socket file.
+func (e *engine) stop(t *testing.T) {
+	t.Helper()
+	e.srv.Close()
+	if _, err := os.Stat(e.ep.Address); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("socket %s still there after stop: %v", e.ep.Address, err)
 	}
-	e := &engine{body: body, ep: Endpoint{Network: "unix", Address: sock, Source: "default"}}
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(e.serve))
-	_ = srv.Listener.Close()
-	srv.Listener = ln
-	srv.Start()
-	t.Cleanup(srv.Close)
-	return e
 }
 
 func (e *engine) serve(w http.ResponseWriter, r *http.Request) {
@@ -103,16 +134,28 @@ func (e *engine) serve(w http.ResponseWriter, r *http.Request) {
 	e.requests = append(e.requests, r.Method+" "+r.URL.Path)
 	e.hosts = append(e.hosts, r.Host)
 	e.queries = append(e.queries, r.URL.RawQuery)
-	down, delay, body := e.down, e.delay, e.body
+	down, delay, body, version, tooOld := e.down, e.delay, e.body, e.version, e.tooOld
 	e.mu.Unlock()
 	if down {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	switch r.URL.Path {
-	case "/v1.41/_ping":
+	path := r.URL.Path
+	if rest, ok := strings.CutPrefix(path, "/v"); ok {
+		v, p, _ := strings.Cut(rest, "/")
+		if tooOld != "" && v == tooOld {
+			http.Error(w, `{"message":"client version `+v+` is too old. Minimum supported API version is 1.44, please upgrade your client to a newer version"}`, http.StatusBadRequest)
+			return
+		}
+		path = "/" + p
+	}
+	switch path {
+	case "/_ping":
+		if version != "" {
+			w.Header().Set("Api-Version", version)
+		}
 		_, _ = w.Write([]byte("OK"))
-	case "/v1.41/containers/json":
+	case "/containers/json":
 		if delay > 0 {
 			select {
 			case <-time.After(delay):
@@ -142,8 +185,9 @@ func (e *engine) take() []string {
 	return r
 }
 
+// The requests of an engine advertising API 1.41: the ping is never versioned.
 const (
-	ping = "GET /v1.41/_ping"
+	ping = "GET /_ping"
 	list = "GET /v1.41/containers/json"
 )
 
@@ -217,13 +261,139 @@ func TestFetchPingsOnceThenLists(t *testing.T) {
 	}
 }
 
+func TestFetchNegotiatesAPIVersion(t *testing.T) {
+	// Docker 29 answers 400 to any API version below 1.44.
+	e := newEngine(t, dockerBody)
+	e.set(func(e *engine) { e.version = "1.44"; e.tooOld = "1.41" })
+	s := NewSource(e.ep)
+	got, w := fetch(t, s)
+	if w != nil {
+		t.Fatalf("warning = %+v, want nil", w)
+	}
+	if !reflect.DeepEqual(got, wantDocker) {
+		t.Fatalf("containers:\n got %+v\nwant %+v", got, wantDocker)
+	}
+	want := []string{ping, "GET /v1.44/containers/json"}
+	if r := e.take(); !reflect.DeepEqual(r, want) {
+		t.Fatalf("requests = %q, want %q", r, want)
+	}
+}
+
+func TestFetchRenegotiatesOnEachPing(t *testing.T) {
+	e := newEngine(t, dockerBody)
+	s := NewSource(e.ep)
+	if _, w := fetch(t, s); w != nil {
+		t.Fatalf("warning = %+v", w)
+	}
+	e.take()
+
+	// The engine is upgraded in place: the old version is refused, which is a failure, and
+	// the retry's ping picks up the new one.
+	e.set(func(e *engine) { e.version = "1.52"; e.tooOld = "1.41" })
+	if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
+		t.Fatalf("warning = %+v, want %+v", w, unreachable(e.ep))
+	}
+	for range retryEvery - 1 {
+		fetch(t, s)
+	}
+	e.take()
+	got, w := fetch(t, s)
+	if w != nil || !reflect.DeepEqual(got, wantDocker) {
+		t.Fatalf("retry = %+v, %+v; want the list, no warning", got, w)
+	}
+	want := []string{ping, "GET /v1.52/containers/json"}
+	if r := e.take(); !reflect.DeepEqual(r, want) {
+		t.Fatalf("requests = %q, want %q", r, want)
+	}
+}
+
+func TestFetchUnversionedWithoutAPIVersion(t *testing.T) {
+	for _, version := range []string{"", "2.0", "1.", "1.4x", "v1.44", "1.44/../x"} {
+		t.Run(version, func(t *testing.T) {
+			e := newEngine(t, podmanBody)
+			e.set(func(e *engine) { e.version = version })
+			got, w := fetch(t, NewSource(e.ep))
+			if w != nil || !reflect.DeepEqual(got, wantPodman) {
+				t.Fatalf("Fetch = %+v, %+v; want the list, no warning", got, w)
+			}
+			want := []string{ping, "GET /containers/json"}
+			if r := e.take(); !reflect.DeepEqual(r, want) {
+				t.Fatalf("requests = %q, want %q", r, want)
+			}
+		})
+	}
+}
+
 func TestFetchMissingSocket(t *testing.T) {
-	dir, err := os.MkdirTemp("", "dd")
+	sock := filepath.Join(tempDir(t), "d.sock")
+	s := NewSource(Endpoint{Network: "unix", Address: sock})
+	got, w := fetch(t, s)
+	if got != nil || w != nil {
+		t.Fatalf("Fetch = %+v, %+v; want no containers, no warning", got, w)
+	}
+
+	// The engine appears; calls 2..10 still make no request, the 11th pings and lists.
+	e := newEngineAt(t, sock, dockerBody)
+	for call := 2; call <= retryEvery; call++ {
+		if got, w := fetch(t, s); got != nil || w != nil {
+			t.Fatalf("call %d = %+v, %+v; want no containers, no warning", call, got, w)
+		}
+		if r := e.take(); len(r) != 0 {
+			t.Fatalf("call %d: requests = %q, want none", call, r)
+		}
+	}
+	got, w = fetch(t, s)
+	if w != nil || !reflect.DeepEqual(got, wantDocker) {
+		t.Fatalf("call 11 = %+v, %+v; want the list, no warning", got, w)
+	}
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+		t.Fatalf("call 11: requests = %q, want ping then list", r)
+	}
+}
+
+func TestFetchSocketRemovedClearsList(t *testing.T) {
+	e := newEngine(t, dockerBody)
+	s := NewSource(e.ep)
+	if got, w := fetch(t, s); w != nil || !reflect.DeepEqual(got, wantDocker) {
+		t.Fatalf("first call = %+v, %+v", got, w)
+	}
+	e.stop(t)
+
+	got, w := fetch(t, s)
+	if got != nil || w != nil {
+		t.Fatalf("after removal = %+v, %+v; want no containers, no warning", got, w)
+	}
+
+	// Calls 2..10 stay off the network; the 11th finds the engine back.
+	e2 := newEngineAt(t, e.ep.Address, podmanBody)
+	for call := 2; call <= retryEvery; call++ {
+		if got, w := fetch(t, s); got != nil || w != nil {
+			t.Fatalf("call %d = %+v, %+v; want no containers, no warning", call, got, w)
+		}
+	}
+	if r := e2.take(); len(r) != 0 {
+		t.Fatalf("requests between retries = %q, want none", r)
+	}
+	got, w = fetch(t, s)
+	if w != nil || !reflect.DeepEqual(got, wantPodman) {
+		t.Fatalf("call 11 = %+v, %+v; want the new list, no warning", got, w)
+	}
+	if r := e2.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+		t.Fatalf("call 11: requests = %q, want ping then list", r)
+	}
+}
+
+func TestFetchRefusedSocketIsUnreachable(t *testing.T) {
+	// A socket file nobody listens on (a stopped daemon's leftover): ECONNREFUSED, not
+	// ENOENT, so Docker is there but not answering.
+	sock := filepath.Join(tempDir(t), "d.sock")
+	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	ep := Endpoint{Network: "unix", Address: filepath.Join(dir, "none.sock")}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = ln.Close()
+	ep := Endpoint{Network: "unix", Address: sock}
 	got, w := fetch(t, NewSource(ep))
 	if got != nil {
 		t.Errorf("containers = %+v, want nil", got)
@@ -323,13 +493,15 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 		t.Fatalf("requests = %q", r)
 	}
 
+	// A slow list is not a failure: the next call lists again without a ping, since the
+	// spec pings only at start and after failures.
 	e.set(func(e *engine) { e.delay = 0 })
-	got, w = fetch(t, s) // next call pings again, then lists
+	got, w = fetch(t, s)
 	if w != nil || !reflect.DeepEqual(got, wantPodman) {
 		t.Fatalf("after slow = %+v, %+v; want new list, no warning", got, w)
 	}
-	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
-		t.Fatalf("requests = %q, want ping then list", r)
+	if r := e.take(); !reflect.DeepEqual(r, []string{list}) {
+		t.Fatalf("requests = %q, want list only", r)
 	}
 }
 
@@ -386,7 +558,7 @@ func TestFetchCancelDuringRequest(t *testing.T) {
 }
 
 func TestFetchTCPEndpoint(t *testing.T) {
-	e := &engine{body: podmanBody}
+	e := &engine{body: podmanBody, version: "1.41"}
 	srv := httptest.NewServer(http.HandlerFunc(e.serve))
 	t.Cleanup(srv.Close)
 	ep := Endpoint{Network: "tcp", Address: srv.Listener.Addr().String()}

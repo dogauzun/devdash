@@ -15,9 +15,9 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// apiPrefix pins the Engine API version: Docker 20.10 and newer and Podman's compatibility
-// API both answer it.
-const apiPrefix = "http://docker/v1.41"
+// base is every request's URL prefix; the host is ignored, since every request is dialled
+// to the endpoint.
+const base = "http://docker"
 
 // maxBody bounds a response body; a list of a few hundred containers is well under 1 MiB.
 const maxBody = 16 << 20
@@ -25,6 +25,9 @@ const maxBody = 16 << 20
 // client speaks the two Engine API requests devdash needs over one endpoint.
 type client struct {
 	hc *http.Client
+	// version is the API version path prefix ("/v1.44") the last good ping advertised, or ""
+	// for unversioned requests when it advertised none or a malformed one.
+	version string
 }
 
 func newClient(ep Endpoint) *client {
@@ -41,34 +44,59 @@ func newClient(ep Endpoint) *client {
 	return &client{hc: &http.Client{Transport: tr}}
 }
 
-// get sends GET apiPrefix+path and returns the body of a 2xx answer.
-func (c *client) get(ctx context.Context, path string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiPrefix+path, nil)
+// get sends GET base+path and returns the header and body of a 2xx answer.
+func (c *client) get(ctx context.Context, path string) (http.Header, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("GET %s: %s", path, resp.Status)
+		return nil, nil, fmt.Errorf("GET %s: %s", path, resp.Status)
 	}
 	if len(body) > maxBody {
-		return nil, fmt.Errorf("GET %s: body larger than %d bytes", path, maxBody)
+		return nil, nil, fmt.Errorf("GET %s: body larger than %d bytes", path, maxBody)
 	}
-	return body, nil
+	return resp.Header, body, nil
 }
 
-// ping is GET /_ping; any 2xx answer means the engine is there.
+// ping is the unversioned GET /_ping; any 2xx answer means the engine is there. It also
+// negotiates the API version: later requests use the one in the answer's Api-Version header,
+// which is the engine's highest, so an engine whose minimum has moved past a pinned version
+// (Docker 29 refuses anything below 1.44) still answers. A missing or malformed header means
+// unversioned requests, which the engine serves at its own version.
 func (c *client) ping(ctx context.Context) error {
-	_, err := c.get(ctx, "/_ping")
-	return err
+	h, _, err := c.get(ctx, "/_ping")
+	if err != nil {
+		return err
+	}
+	c.version = ""
+	if v := h.Get("Api-Version"); validAPIVersion(v) {
+		c.version = "/v" + v
+	}
+	return nil
+}
+
+// validAPIVersion reports whether v looks like "1.<digits>", so it can go into a path.
+func validAPIVersion(v string) bool {
+	minor, ok := strings.CutPrefix(v, "1.")
+	if !ok || minor == "" {
+		return false
+	}
+	for _, r := range minor {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // apiContainer holds the only /containers/json fields devdash reads.
@@ -86,9 +114,10 @@ type apiContainer struct {
 	} `json:"Ports"`
 }
 
-// containers is GET /containers/json: running containers only (no all=1).
+// containers is GET /containers/json at the negotiated version: running containers only
+// (no all=1).
 func (c *client) containers(ctx context.Context) ([]model.Container, error) {
-	body, err := c.get(ctx, "/containers/json")
+	_, body, err := c.get(ctx, c.version+"/containers/json")
 	if err != nil {
 		return nil, err
 	}
