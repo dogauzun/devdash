@@ -462,13 +462,46 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 	}
 }
 
+// TestHints: every hint names what is unreadable, so the fields and owner hints never read as
+// the same text twice when the footer joins them (DEV-87).
+func TestHints(t *testing.T) {
+	tests := []struct {
+		name          string
+		euid          int
+		ptrace        bool
+		fdDenied      bool
+		fields, owner string
+	}{
+		{"user", fixUser, false, true,
+			"processes of other users have unreadable fields; run with sudo to see them", ""},
+		{"root", 0, false, true,
+			"running as root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE to see them",
+			"running as root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE to see owners"},
+		{"root with CAP_SYS_PTRACE", 0, true, true,
+			"some processes have unreadable fields: denied even to root with CAP_SYS_PTRACE, by a security module or sandbox",
+			"listener owners unreadable: denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"},
+		{"root with CAP_SYS_PTRACE, nothing denied", 0, true, false,
+			"some processes have unreadable fields: denied even to root with CAP_SYS_PTRACE, by a security module or sandbox",
+			"owner not visible from this pid namespace, or the socket is held by the kernel"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &linuxCollector{euid: tt.euid, ptrace: tt.ptrace}
+			fields, owner := c.hints(tt.fdDenied)
+			if fields != tt.fields || owner != tt.owner {
+				t.Errorf("hints(%v)\n got %q, %q\nwant %q, %q", tt.fdDenied, fields, owner, tt.fields, tt.owner)
+			}
+		})
+	}
+}
+
 // TestCollectOwnerHint: as root, the owner hint blames permissions only when the fd walk was
 // denied a read, of fd/ or of an fd link. Otherwise an unowned listener belongs to a process
 // outside devdash's pid namespace or to the kernel, and the hint says so (DEV-66).
 func TestCollectOwnerHint(t *testing.T) {
 	const (
 		capability = "root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE"
-		module     = "denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"
+		module     = "listener owners unreadable: denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"
 		namespace  = "not visible from this pid namespace, or the socket is held by the kernel"
 	)
 	tests := []struct {
