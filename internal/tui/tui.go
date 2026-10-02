@@ -41,8 +41,8 @@ type Options struct {
 	KillTimeout time.Duration // engine.DefaultKillTimeout when 0
 	// Open opens a URL in the browser (open on macOS, xdg-open on Linux, when nil).
 	Open func(url string) error
-	// DockerSocket returns the Docker socket in use, shown in the detail pane of a container
-	// row; nil or "" shows nothing (until Phase 3 wires it).
+	// DockerSocket returns the Docker endpoint in use, shown in the detail pane of a container
+	// row; nil or "" shows nothing.
 	DockerSocket func() string
 	Now          func() time.Time // time.Now when nil; tests fix it
 	ShowAll      bool             // --all: start with shells and editors shown
