@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dogauzun/devdash/internal/collector"
+	"github.com/dogauzun/devdash/internal/docker"
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
@@ -303,6 +304,40 @@ func TestKillRefusesRuntime(t *testing.T) {
 	}
 }
 
+// TestKillDockerHint: with a Docker warning and no container list, the refusal of an unknown
+// owner or of a runtime process ends with the Docker hint, since the port is most likely a
+// container's; the exit codes are unchanged (DEV-76).
+func TestKillDockerHint(t *testing.T) {
+	proxy := fproc(fakePID+1, 1, "/")
+	proxy.Name, proxy.Argv = "docker-proxy", []string{"/usr/bin/docker-proxy"}
+	const hint = `docker: DOCKER_HOST "ssh://box": scheme ssh is not supported`
+	for _, tt := range []struct {
+		name   string
+		docker bool // discovery fails, so every snapshot has docker_endpoint_invalid
+		holder int
+		want   int
+		stderr string
+	}{
+		{"unknown owner", true, 0, 3, "the owner of this port is unknown): run with sudo to see owners; " + hint + "\n"},
+		{"unknown owner, Docker fine", false, 0, 3, "the owner of this port is unknown): run with sudo to see owners\n"},
+		{"docker-proxy", true, fakePID + 1, 6, "find its container with docker ps --filter publish=18081; " + hint + "\n"},
+		{"docker-proxy, Docker fine", false, fakePID + 1, 6, "find its container with docker ps --filter publish=18081\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.docker {
+				stubDiscover(t, docker.Endpoint{}, false, errors.New(`DOCKER_HOST "ssh://box": scheme ssh is not supported`))
+			}
+			plans := stubKill(t, false, "", exited)
+			f := &collector.Fake{Steps: []collector.Step{fstep([]collector.Process{proxy}, flisten(tt.holder, 18081))}}
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"kill", "18081"}, &stdout, &stderr, f)
+			if code != tt.want || len(*plans) != 0 || !strings.Contains(stderr.String(), tt.stderr) {
+				t.Errorf("exit %d, %d plans, stderr %q; want %d, none and %q", code, len(*plans), stderr.String(), tt.want, tt.stderr)
+			}
+		})
+	}
+}
+
 func TestTargetsContainer(t *testing.T) {
 	s := model.Snapshot{Containers: []model.Container{
 		{ID: "abc", Name: "shop-db-1", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
@@ -559,7 +594,7 @@ func TestTargetsSharedBackend(t *testing.T) {
 		{ID: "db", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
 		{ID: "cache", Ports: []model.PortMapping{{HostPort: 6379, ContainerPort: 6379, Proto: "tcp"}}},
 	}}
-	want := []target{{key: model.RowKey{ContainerID: "db"}}, {key: backend.Key()}}
+	want := []target{{key: model.RowKey{ContainerID: "db"}}, {key: backend.Key(), runtime: true}}
 	if got := targets(s, 5432); !slices.Equal(got, want) {
 		t.Errorf("targets %+v, want %+v", got, want)
 	}

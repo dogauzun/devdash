@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/dogauzun/devdash/internal/engine"
@@ -35,7 +36,9 @@ func runPort(ctx context.Context, o engine.Options, port uint16, stdout, stderr 
 // address. A socket bound to both IPv4 and IPv6 (dual-stack ::) is one line; two sockets are
 // two lines. A socket reconciled to a container prints the container instead of its holder:
 // the holder's pid (- when unknown), the container's name, its compose project (or -), the
-// address, then its image and the proxy holding the socket. A container that publishes port
+// address, then its image and the proxy holding the socket. When the snapshot carries a Docker
+// warning, a line whose holder is unknown or is a container runtime process ends with its
+// hint: the port is most likely a container's that Docker could not name. A container that publishes port
 // with no socket on it (iptables only) gets one line per published address, with pid -. It
 // prints "free" and returns false when nothing listens on port.
 func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
@@ -96,9 +99,12 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 			if project == "" {
 				project = "-"
 			}
-			if p.PID == 0 {
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\towner unknown: %s\n", p.PID, p.Name, project, addr, hint)
-			} else {
+			switch {
+			case p.PID == 0:
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\towner unknown: %s\n", p.PID, p.Name, project, addr, withDocker(hint, s))
+			case model.IsContainerRuntime(p) && dockerHint(s) != "":
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", p.PID, p.Name, project, addr, dockerHint(s))
+			default:
 				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, addr)
 			}
 		}
@@ -128,4 +134,23 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 		return false, err
 	}
 	return true, tw.Flush()
+}
+
+// dockerHint is the hint of the snapshot's Docker warning (docker_unreachable,
+// docker_endpoint_invalid), or "" when Docker answered or is not configured.
+func dockerHint(s model.Snapshot) string {
+	for _, w := range s.Warnings {
+		if strings.HasPrefix(w.Code, "docker_") {
+			return w.Hint
+		}
+	}
+	return ""
+}
+
+// withDocker is hint followed by the snapshot's Docker hint, when there is one.
+func withDocker(hint string, s model.Snapshot) string {
+	if d := dockerHint(s); d != "" {
+		return hint + "; " + d
+	}
+	return hint
 }

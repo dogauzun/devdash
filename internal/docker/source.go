@@ -45,8 +45,9 @@ func (s *Source) Endpoint() Endpoint { return s.ep }
 // A unix socket that does not exist (ENOENT on the dial, at the ping or the list) is no
 // Docker at all: it clears the list, returns no warning, and makes the next 9 calls return
 // nothing without a request. An endpoint that exists but does not answer (refused dial,
-// ping or list slower than 500 ms, non-2xx, bad JSON) sets the docker_unreachable warning
-// and makes the next 9 calls return the previous list without a request (spec "Failure
+// ping or list slower than 500 ms, non-2xx, bad JSON, a dial the socket's mode denies) sets
+// the docker_unreachable warning, whose hint says which (see hint), and makes the next 9
+// calls return the previous list without a request (spec "Failure
 // modes": "unreachable or slow"). A ctx that ends first is neither: the call returns the previous list and changes nothing. A good list
 // replaces the previous one and clears the warning.
 func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) {
@@ -69,7 +70,7 @@ func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) 
 		case s.missing(err):
 			return s.absent()
 		default:
-			return s.fail()
+			return s.fail(err)
 		}
 	}
 	rctx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -83,7 +84,7 @@ func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) 
 	case s.missing(err):
 		return s.absent()
 	default:
-		return s.fail()
+		return s.fail(err)
 	}
 	return s.prev, s.warn
 }
@@ -104,9 +105,22 @@ func (s *Source) absent() ([]model.Container, *model.Warning) {
 }
 
 // fail records an endpoint that did not answer.
-func (s *Source) fail() ([]model.Container, *model.Warning) {
+func (s *Source) fail(err error) ([]model.Container, *model.Warning) {
 	s.needPing = true
 	s.skip = retryEvery - 1
-	s.warn = &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: not reachable at " + s.ep.String()}
+	s.warn = &model.Warning{Code: "docker_unreachable", Count: 1, Hint: s.hint(err)}
 	return s.prev, s.warn
+}
+
+// hint is the footer line for a failure with err. An endpoint that refuses this user access
+// (EACCES or EPERM on the dial: on Linux /var/run/docker.sock is root:docker 0660) is not
+// "not reachable", which reads as Docker being down.
+func (s *Source) hint(err error) string {
+	switch {
+	case errors.Is(err, fs.ErrPermission) && s.ep.Network == "unix":
+		return "docker: permission denied on " + s.ep.Address + " (add yourself to the docker group)"
+	case errors.Is(err, fs.ErrPermission):
+		return "docker: permission denied on " + s.ep.String()
+	}
+	return "docker: not reachable at " + s.ep.String()
 }
