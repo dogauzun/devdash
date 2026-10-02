@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "taken_at": "2026-10-02T12:00:00.2Z",
+  "host": {
+    "os": "darwin",
+    "arch": "arm64",
+    "hostname": "mbp",
+    "uid": 501
+  },
+  "projects": [
+    {
+      "id": "/TMP/shop",
+      "root": "/TMP/shop",
+      "name": "shop",
+      "branch": "main",
+      "short_sha": null,
+      "worktree": false,
+      "main_repo": null
+    },
+    {
+      "id": "/TMP/shop-cart",
+      "root": "/TMP/shop-cart",
+      "name": "shop",
+      "branch": null,
+      "short_sha": "0123456",
+      "worktree": true,
+      "main_repo": "/TMP/shop"
+    }
+  ],
+  "processes": [
+    {
+      "pid": 100,
+      "ppid": 1,
+      "start_time": "2026-10-02T07:12:44.12Z",
+      "uid": 0,
+      "user": "root",
+      "name": "node",
+      "argv": [
+        "node",
+        "node_modules/.bin/vite",
+        "--port",
+        "5173"
+      ],
+      "cwd": "/TMP/shop",
+      "cpu_percent": 25,
+      "rss_bytes": 187563008,
+      "listeners": [
+        {
+          "proto": "tcp6",
+          "addr": "::",
+          "port": 5173
+        }
+      ],
+      "kind": "server",
+      "project": "/TMP/shop",
+      "container": null,
+      "unknown": []
+    },
+    {
+      "pid": 101,
+      "ppid": 100,
+      "start_time": "2026-10-02T07:12:44.12Z",
+      "uid": 54321,
+      "user": "54321",
+      "name": "go",
+      "argv": [
+        "go",
+        "test",
+        "./..."
+      ],
+      "cwd": "/TMP/shop-cart",
+      "cpu_percent": 150,
+      "rss_bytes": 4096,
+      "listeners": [],
+      "kind": "test",
+      "project": "/TMP/shop-cart",
+      "container": null,
+      "unknown": []
+    },
+    {
+      "pid": 1,
+      "ppid": null,
+      "start_time": "2026-10-02T07:12:44.12Z",
+      "uid": 0,
+      "user": "root",
+      "name": "launchd",
+      "argv": null,
+      "cwd": null,
+      "cpu_percent": null,
+      "rss_bytes": null,
+      "listeners": [],
+      "kind": "other",
+      "project": null,
+      "container": null,
+      "unknown": [
+        "argv",
+        "cwd",
+        "cpu",
+        "mem"
+      ]
+    },
+    {
+      "pid": 103,
+      "ppid": 100,
+      "start_time": "2026-10-02T12:00:00Z",
+      "uid": 54321,
+      "user": "54321",
+      "name": "blank",
+      "argv": [],
+      "cwd": "/TMP/shop",
+      "cpu_percent": null,
+      "rss_bytes": 0,
+      "listeners": [],
+      "kind": "other",
+      "project": "/TMP/shop",
+      "container": null,
+      "unknown": [
+        "cpu"
+      ]
+    },
+    {
+      "pid": 0,
+      "ppid": null,
+      "start_time": null,
+      "uid": null,
+      "user": null,
+      "name": "unknown",
+      "argv": null,
+      "cwd": null,
+      "cpu_percent": null,
+      "rss_bytes": null,
+      "listeners": [
+        {
+          "proto": "tcp4",
+          "addr": "0.0.0.0",
+          "port": 631
+        }
+      ],
+      "kind": "other",
+      "project": null,
+      "container": null,
+      "unknown": [
+        "owner",
+        "argv",
+        "cwd",
+        "cpu",
+        "mem"
+      ]
+    }
+  ],
+  "containers": [
+    {
+      "id": "9f1c2a7b0d3e",
+      "name": "shop-db-1",
+      "image": "postgres:16",
+      "state": "running",
+      "compose_project": "shop",
+      "compose_service": "db",
+      "ports": [
+        {
+          "host_ip": "0.0.0.0",
+          "host_port": 5432,
+          "container_port": 5432,
+          "proto": "tcp"
+        }
+      ]
+    },
+    {
+      "id": "77aa",
+      "name": "scratch",
+      "image": "alpine",
+      "state": "paused",
+      "compose_project": null,
+      "compose_service": null,
+      "ports": [
+        {
+          "host_ip": null,
+          "host_port": null,
+          "container_port": 80,
+          "proto": "tcp"
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    {
+      "code": "process_fields_unreadable",
+      "count": 1,
+      "hint": "run with sudo"
+    },
+    {
+      "code": "listener_owner_unreadable",
+      "count": 1,
+      "hint": "run with sudo to see owners"
+    }
+  ],
+  "timing_ms": {
+    "argv_cwd": 2.25,
+    "listeners": 0.75,
+    "proctable": 1.5,
+    "projects": 0.125,
+    "total": 3.456
+  }
+}

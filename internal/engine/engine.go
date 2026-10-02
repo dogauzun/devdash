@@ -151,7 +151,14 @@ func (e *Engine) Run(ctx context.Context) {
 // Snapshot collects and builds one snapshot without starting the loop, for the CLI. CPU
 // percent is NaN everywhere, as on any first sample.
 func Snapshot(ctx context.Context, o Options) (model.Snapshot, error) {
+	return SnapshotAfter(ctx, o, model.Snapshot{})
+}
+
+// SnapshotAfter is Snapshot with prev as the previous sample, so CPU percent is a number for
+// every process also in prev (`devdash --json` samples twice, 200 ms apart).
+func SnapshotAfter(ctx context.Context, o Options, prev model.Snapshot) (model.Snapshot, error) {
 	e := New(o)
+	e.prev = prev
 	raw, err := e.collect(ctx)
 	if err != nil {
 		return model.Snapshot{}, err
