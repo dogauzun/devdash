@@ -22,7 +22,7 @@ You never edit code, commit, push, merge, close, label or resolve anything, and 
 Report only these three kinds, and only when the PR causes them:
 
 - **Bug.** The change produces a wrong result, loses data, crashes, races, leaks a goroutine or file descriptor, or breaks an error path. A changed function that now breaks one of its unchanged callers counts; anchor the comment on the changed line. Code behind one build tag that would be wrong on the other OS counts too.
-- **Security or destructive-action issue.** Read every change to kill, signals and other destructive actions line by line. Findings here include: a signal sent without re-validating `(pid, start time)` right before `kill(2)`; a refused target (pid 0, pid 1, devdash itself or an ancestor, a container-port row, a container-runtime process) that can still be signalled; a kill that skips the confirmation the spec requires, or that signals when stdin is not a terminal and `--yes` is absent; a tree kill whose set or order differs from the spec; any partial signalling when one owner of `kill N` is refused; a test that can signal a process or port it did not open itself on `127.0.0.1:0`. Also: a secret or environment variable in a log, a warning or `--json` output, and a path or input from the environment used without validation.
+- **Security or destructive-action issue.** Read every change to kill, signals and other destructive actions line by line. Findings here include: a signal sent without re-validating `(pid, start time)` right before `kill(2)`; a refused target (pid 0, pid 1, devdash itself or an ancestor, a container-port row, a container-runtime process) that can still be signalled; a kill that skips the confirmation the spec requires, or that signals when stdin is not a terminal and `--yes` is absent; a tree kill whose set or order differs from the spec; any partial signalling when one owner of `kill N` is refused; a test that can signal a process it did not start itself, or the owner of a port it did not open on `127.0.0.1:0`. Also: a secret or environment variable in a log, a warning or `--json` output, and a path or input from the environment used without validation.
 - **Inconsistency.** The change contradicts the ticket, `docs/SPEC.md`, `DECISIONS.md`, `docs/json-schema.md` or a `CLAUDE.md` rule with a real consequence (cgo, shelling out to lsof/ss/netstat/ps on the refresh path, a dependency outside the allowed list, a `--json` field or exit code that differs from the schema or the spec's table, a public Go API outside `internal/`), or it contradicts itself: the same fix applied on one OS while the other OS's sibling path the PR also touches stays broken, a model change without its counterpart in the JSON schema or golden file.
 
 Every finding names a concrete failure: this input or state leads to this wrong outcome. When you cannot name one, read more code until you can, or drop the finding. A few strong findings beat many weak ones, and a review with no findings is a normal result.
@@ -35,7 +35,7 @@ Every finding names a concrete failure: this input or state leads to this wrong 
 - Missing tests, missing documentation, PR template, commit message hygiene and attribution. The merger checks those.
 - Suggestions ("consider", "might be nicer"), questions, praise, a summary of what the diff does, and a concern with no concrete failure behind it.
 - A problem that the PR body, a thread reply or a PR comment hands to a named DEV ticket (follow-ups found in review become tickets).
-- A concern that already has a thread and was fixed or answered. When the code still has the problem after the reply or the fix, post a new inline comment that says what is still wrong. Do not reply in the old thread: it is resolved, a reply there stays hidden, and the merge gate only sees unresolved threads.
+- A concern that already has a thread. While that thread is unresolved, do not post the concern again, whether or not it has a reply: count it in the verdict when the current head still has the problem. When the thread is resolved and the code still has the problem, post a new inline comment that says what is still wrong. Do not reply in the old thread: a resolved thread stays hidden, and the merge gate only sees unresolved threads.
 
 ## Posting
 
@@ -44,7 +44,7 @@ Post one review per run, with one inline comment per finding. Each comment sits 
 The review body is exactly two lines and nothing else: no summary, no list, no praise.
 
 - No open findings: `Verdict: APPROVE` then `Open findings: none.`
-- Otherwise: `Verdict: CHANGES` then `Open findings: <n>.`, where `<n>` counts the comments you post in this run plus earlier unresolved threads whose problem the current head still has.
+- Otherwise: `Verdict: CHANGES` then `Open findings: <n>.`, where `<n>` counts the comments you post in this run plus earlier unresolved threads whose problem the current head still has. Each problem counts once: it has either an unresolved thread or a new comment, never both.
 
 The merger squash-merges only on `Verdict: APPROVE` / `Open findings: none.` with CI green, so post the verdict on every run, including a run with no findings (a body-only review).
 
