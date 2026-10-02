@@ -271,6 +271,26 @@ func TestKillStdoutFails(t *testing.T) {
 	}
 }
 
+// TestKillRefusesRuntime: Docker Desktop's backend holds a published port and Docker gave no
+// container list (unreachable, or --no-docker), so nothing marks the port as a container's. The
+// kill is still refused, nothing is signalled, and the exit code is 6 (DEV-51).
+func TestKillRefusesRuntime(t *testing.T) {
+	for _, args := range [][]string{{"kill", "5432", "--yes"}, {"kill", "5432", "--yes", "--tree", "--force"}, {"kill", "5432", "--yes", "--no-docker"}} {
+		plans := stubKill(t, false, "", exited)
+		backend := fproc(fakePID+1, 1, "/")
+		backend.Name, backend.Argv = "com.docker.backend", []string{"/Applications/Docker.app/Contents/MacOS/com.docker.backend"}
+		f := &collector.Fake{Steps: []collector.Step{fstep([]collector.Process{backend}, flisten(fakePID+1, 5432))}}
+		var stdout, stderr bytes.Buffer
+		code := run(args, &stdout, &stderr, f)
+		if code != 6 || len(*plans) != 0 {
+			t.Errorf("%v: exit %d, %d plans; want 6 and none", args, code, len(*plans))
+		}
+		if !strings.Contains(stderr.String(), "com.docker.backend) is part of the container runtime") || !strings.Contains(stderr.String(), "docker ps --filter publish=5432") {
+			t.Errorf("%v: stderr %q", args, stderr.String())
+		}
+	}
+}
+
 func TestTargetsContainer(t *testing.T) {
 	s := model.Snapshot{Containers: []model.Container{
 		{ID: "abc", Name: "shop-db-1", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},

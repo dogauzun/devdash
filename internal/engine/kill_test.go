@@ -121,6 +121,15 @@ func TestNewPlan(t *testing.T) {
 	unknownCtr.ContainerID = "c0ffee"
 	outside := proc(T, 7)
 	outside.ProjectID = ""
+	backend := proc(C2, T)
+	backend.Name = "com.docker.backend"
+	backend.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432}, {Proto: "tcp4", Port: 5432}}
+	backendMany := backend
+	backendMany.Listeners = []model.Listener{{Proto: "tcp6", Port: 5432}, {Proto: "tcp6", Port: 6443}}
+	dproxy := proc(C1, T)
+	dproxy.Name, dproxy.Argv = "docker-proxy", []string{"/usr/bin/docker-proxy", "-proto", "tcp"}
+	cli := proc(C1, T)
+	cli.Name, cli.Argv = "docker", []string{"docker", "compose", "up"}
 	moved := proc(T, 7)
 	moved.StartTime = moved.StartTime.Add(time.Second)
 
@@ -170,6 +179,14 @@ func TestNewPlan(t *testing.T) {
 		{name: "container port", procs: []model.Process{proxy}, key: proxy.Key(), refusedAs: "docker stop shop-db-1"},
 		{name: "unknown owner of a container port", procs: []model.Process{unknownCtr}, key: unknownCtr.Key(), refusedAs: "docker stop shop-db-1"},
 		{name: "tree containing a container port", procs: []model.Process{proc(T, 7), proxy}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true}, refusedAs: "docker stop shop-db-1"},
+		{name: "runtime holding one port", procs: []model.Process{backend}, key: backend.Key(), refusedAs: "pid 5000012 (com.docker.backend) is part of the container runtime, not your service: find its container with docker ps --filter publish=5432"},
+		{name: "runtime holding one port, force", procs: []model.Process{backend}, key: backend.Key(), opt: KillOptions{Force: true}, refusedAs: "container runtime"},
+		{name: "runtime holding one port, tree force", procs: []model.Process{backend}, key: backend.Key(), opt: KillOptions{Tree: true, Force: true}, refusedAs: "container runtime"},
+		{name: "runtime holding many ports", procs: []model.Process{backendMany}, key: backendMany.Key(), refusedAs: "find the container with docker ps"},
+		{name: "tree containing docker-proxy", procs: []model.Process{proc(T, 7), dproxy}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true}, refusedAs: "pid 5000011 (docker-proxy) is part of the container runtime"},
+		{name: "group containing docker-proxy", procs: []model.Process{proc(T, 7), proc(X, 7), func() model.Process { p := dproxy; p.PPID = 7; return p }()}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true},
+			pgids: map[int]int{T: T, C1: T}, refusedAs: "docker-proxy"},
+		{name: "docker compose cli is yours", procs: []model.Process{proc(T, 7), cli}, key: proc(T, 7).Key(), opt: KillOptions{Tree: true}, want: []int{T, C1}, sig: syscall.SIGTERM},
 		{name: "container row", key: model.RowKey{ContainerID: "c0ffee"}, refusedAs: "docker stop shop-db-1"},
 		{name: "header row", procs: family(), key: model.RowKey{Header: model.GroupOther}, refusedAs: "not a process"},
 		{name: "start time changed", procs: []model.Process{moved}, key: proc(T, 7).Key(), refusedAs: "reused"},
