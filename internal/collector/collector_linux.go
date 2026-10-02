@@ -119,7 +119,7 @@ func (c *linuxCollector) hints(fdDenied bool) (fields, owner string) {
 		fields, owner = why+" to see them", why+" to see owners"
 	default:
 		const why = "denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"
-		fields, owner = "some processes have unreadable fields: "+why, why
+		fields, owner = "some processes have unreadable fields: "+why, "listener owners unreadable: "+why
 	}
 	if !fdDenied {
 		owner = "owner not visible from this pid namespace, or the socket is held by the kernel"

@@ -6,6 +6,7 @@ GO            ?= go
 # CI pins golangci-lint v2.13.2 and goreleaser v2.18.2.
 GOLANGCI_LINT ?= golangci-lint
 GORELEASER    ?= goreleaser
+VHS           ?= vhs
 
 # The release targets; the darwin files are build-tagged, so vet and lint run once per OS.
 TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
@@ -13,7 +14,7 @@ OSES    := darwin linux
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check build install cross vet lint fmt test bench snapshot docker-gate clean
+.PHONY: help check build install cross vet lint fmt test bench snapshot docker-gate demo clean
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -59,6 +60,10 @@ snapshot: ## goreleaser check, then a snapshot release into dist/ (nothing is pu
 
 docker-gate: ## Phase 3 Docker gate (needs docker with compose v2, jq, curl)
 	sh scripts/docker-gate.sh
+
+# vhs drives Chromium, which refuses to start sandboxed as root, and scripts/demo.sh needs root.
+demo: ## Re-record docs/demo.gif from demo.tape (Linux, as root; needs vhs, ttyd, ffmpeg, Chromium)
+	VHS_NO_SANDBOX=true $(VHS) demo.tape
 
 clean: ## Remove ./devdash and dist/
 	rm -rf devdash dist
