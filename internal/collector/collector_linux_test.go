@@ -3,6 +3,7 @@
 package collector
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
@@ -53,12 +54,29 @@ func TestCollectFindsSelf(t *testing.T) {
 	if err := os.Mkdir(gone, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command("sleep", "30")
+	child := exec.Command("cat")
 	child.Dir, child.ExtraFiles = gone, []*os.File{sharedFile}
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	// Start returns when exec closes the CLOEXEC status pipe, before the kernel publishes
+	// the new argv (create_elf_tables), so /proc/<pid>/cmdline can still be empty (DEV-47).
+	// An echoed line proves cat runs its own code, so its argv is visible.
+	if _, err := stdin.Write([]byte("ready\n")); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatalf("child echo: %q, %v", line, err)
+	}
 	if err := os.Remove(gone); err != nil {
 		t.Fatal(err)
 	}
@@ -90,10 +108,11 @@ func TestCollectFindsSelf(t *testing.T) {
 		t.Errorf("self start time %v is %v ago", self.StartTime, d)
 	}
 
-	if !slices.ContainsFunc(res.Processes, func(p Process) bool {
-		return p.PID == child.Process.Pid && p.PPID == pid && slices.Equal(p.Argv, []string{"sleep", "30"}) && p.Cwd == gone
-	}) {
-		t.Errorf("child %d with cwd %q (deleted, DEV-44) not found under pid %d", child.Process.Pid, gone, pid)
+	j := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == child.Process.Pid })
+	if j < 0 {
+		t.Errorf("child %d not in %d processes", child.Process.Pid, len(res.Processes))
+	} else if c := res.Processes[j]; c.PPID != pid || !slices.Equal(c.Argv, []string{"cat"}) || c.Cwd != gone {
+		t.Errorf("child = %+v; want ppid %d argv [cat] cwd %q (deleted, DEV-44)", c, pid, gone)
 	}
 
 	lo := netip.MustParseAddr("127.0.0.1")
