@@ -1,0 +1,8 @@
+# The Phase 3 gate's compose project (scripts/docker-gate.sh): one service publishing one
+# fixed host port, so its container is named devdash-gate-web-1 (compose v2 naming).
+name: devdash-gate
+services:
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "${DEVDASH_GATE_PORT:-18080}:80"
