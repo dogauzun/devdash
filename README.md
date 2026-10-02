@@ -254,6 +254,11 @@ make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI
 `make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
 `go test -race ./...`.
 
+`make demo` re-records the GIF above from [demo.tape](demo.tape) with
+[vhs](https://github.com/charmbracelet/vhs). It runs on Linux only, as root, with vhs, ttyd,
+ffmpeg and Chromium installed. [scripts/demo.sh](scripts/demo.sh) sets up the repositories it
+shows.
+
 ## Contributing
 
 The spec in [docs/SPEC.md](docs/SPEC.md) is the authority. [CLAUDE.md](CLAUDE.md) has the
