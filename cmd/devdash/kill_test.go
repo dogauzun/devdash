@@ -96,6 +96,8 @@ func TestKill(t *testing.T) {
 	outside := []collector.Process{fproc(a, 1, "/"), fproc(b, a, "/")}
 	held := fstep(inRepo, flisten(a, 3000))
 	free := fstep(inRepo)
+	reused := fproc(a, 1, repo) // pid a again, but a new process: it started after the signal
+	reused.StartTime = t0.Add(time.Second)
 
 	tests := []struct {
 		name      string
@@ -109,6 +111,7 @@ func TestKill(t *testing.T) {
 		wantPlans [][]int // pids of each Plan passed to killFn
 		stdout    []string
 		stderr    []string
+		notStdout []string
 	}{
 		{name: "nothing listens", args: []string{"--yes"}, steps: []collector.Step{free}, res: exited, want: 0,
 			stdout: []string{"nothing listens on port 3000\n"}},
@@ -120,10 +123,14 @@ func TestKill(t *testing.T) {
 		{name: "permission denied", args: []string{"--yes"}, steps: []collector.Step{held}, res: denied, want: 3, wantPlans: [][]int{{a}},
 			stdout: []string{"not signalled: permission denied, run with sudo"}},
 		{name: "survivors", args: []string{"--yes", "--timeout", "1s"}, steps: []collector.Step{held}, res: survives, want: 4, wantPlans: [][]int{{a}},
-			stdout: []string{"signalled, still running", "survivors: 5000001 node1 (try --force)\n", "port 3000 is still held by 5000001 node1\n"}},
+			stdout:    []string{"signalled, still running", "survivors: 5000001 node1 (try --force)\n", "port 3000 is still held by 5000001 node1\n"},
+			notStdout: []string{"try --tree"}},
 		{name: "forked child still holds the port", args: []string{"--yes"}, steps: []collector.Step{held, fstep(inRepo[1:], flisten(b, 3000))},
 			res: exited, want: 0, wantPlans: [][]int{{a}},
 			stdout: []string{"port 3000 is still held by 5000002 node2; a forked child can hold it after its parent exits: try --tree\n"}},
+		{name: "reused pid holds the port", args: []string{"--yes"}, steps: []collector.Step{held, fstep([]collector.Process{reused}, flisten(a, 3000))},
+			res: exited, want: 0, wantPlans: [][]int{{a}},
+			stdout: []string{"port 3000 is still held by 5000001 node1; a forked child can hold it after its parent exits: try --tree\n"}},
 		{name: "two owners, one confirmation", args: nil, tty: true, input: "y\n", steps: []collector.Step{fstep(inRepo, flisten(a, 3000), flisten(b, 3000))},
 			res: exited, want: 0, wantPlans: [][]int{{a}, {b}}, stdout: []string{"SIGTERM to 2 processes:\n"}, stderr: []string{"Send SIGTERM to 2 processes? [y/N] "}},
 		{name: "owner inside another owner's tree", args: []string{"--yes", "--tree"}, steps: []collector.Step{fstep(inRepo, flisten(a, 3000), flisten(b, 3000))},
@@ -172,6 +179,11 @@ func TestKill(t *testing.T) {
 			for _, s := range tt.stdout {
 				if !strings.Contains(stdout.String(), s) {
 					t.Errorf("stdout lacks %q:\n%s", s, stdout.String())
+				}
+			}
+			for _, s := range tt.notStdout {
+				if strings.Contains(stdout.String(), s) {
+					t.Errorf("stdout has %q:\n%s", s, stdout.String())
 				}
 			}
 			for _, s := range tt.stderr {
