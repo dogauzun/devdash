@@ -106,13 +106,8 @@ func (m *Model) tableView(w, h int) string {
 	m.scroll(rh)
 
 	name := m.nameTitle()
-	longest := ansi.StringWidth(name)
-	for i, r := range m.rows {
-		if r.Key.Header == model.GroupNone {
-			longest = max(longest, ansi.StringWidth(m.nameCell(i)))
-		}
-	}
-	cols, widths := layout(w, longest)
+	c := m.cache()
+	cols, widths := layout(w, max(ansi.StringWidth(name), c.longest))
 	var lines []string
 	if titled {
 		cells := make([]string, len(cols))
@@ -129,15 +124,11 @@ func (m *Model) tableView(w, h int) string {
 		return strings.Join(append(lines, "  nothing to show"), "\n")
 	}
 
-	var counts map[model.RowKey]groupCount
 	for i := m.top; i < min(len(m.rows), m.top+rh); i++ {
 		r := m.rows[i]
 		var l string
 		if r.Key.Header != model.GroupNone {
-			if counts == nil {
-				counts = m.groupCounts()
-			}
-			l = pad(m.nameCell(i)+counts[r.Key].text(r.Key.Header), w, false)
+			l = pad(m.nameCell(i)+c.counts[r.Key].text(r.Key.Header), w, false)
 		} else {
 			cells := make([]string, len(cols))
 			for j, c := range cols {
@@ -208,13 +199,18 @@ const (
 )
 
 // nameCell is row i's name: indented by depth, a marker when it has children, and its label.
-// A row has children when it is collapsed (only rows with children are) or the next row is
-// deeper.
+// A row has children when the next row is deeper, or when it is collapsed and had children
+// in the expanded rows (its children may have exited since it was collapsed).
 func (m *Model) nameCell(i int) string {
+	return m.nameCellWith(i, m.cache().kids)
+}
+
+// nameCellWith is nameCell with the rows that have children when expanded given.
+func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool) string {
 	r := m.rows[i]
 	mark := markNone
 	switch {
-	case m.view.Collapsed[r.Key]:
+	case m.view.Collapsed[r.Key] && kids[r.Key]:
 		mark = markClosed
 	case i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth:
 		mark = markOpen
@@ -338,10 +334,13 @@ func uptime(d time.Duration) string {
 	return fmt.Sprintf("%dd", d/(24*time.Hour))
 }
 
-// cpu formats a CPU percent with one decimal, or an en dash when it is not known (first sample).
+// cpu formats a CPU percent with one decimal below 100 and none from there, or an en dash when it is not known (first sample).
 func cpu(p *model.Process) string {
 	if p.Unknown&model.FieldCPU != 0 || math.IsNaN(p.CPUPercent) {
 		return "–"
+	}
+	if p.CPUPercent >= 99.95 { // from 100 the decimal goes, so up to 99999 fits the column
+		return strconv.FormatFloat(p.CPUPercent, 'f', 0, 64)
 	}
 	return strconv.FormatFloat(p.CPUPercent, 'f', 1, 64)
 }
@@ -409,7 +408,7 @@ func portsText(ps []port) string {
 	return strings.Join(s, ",")
 }
 
-// groupCount is what a header counts: its rows and their distinct ports.
+// groupCount is what a header counts: its rows (or containers) and their distinct ports.
 type groupCount struct{ rows, ports int }
 
 // text is a header's counts: containers for compose and containers groups, processes for the
@@ -430,21 +429,62 @@ func count(n int, one, many string) string {
 	return strconv.Itoa(n) + " " + many
 }
 
+// tableCache holds what the table derives from all the rows, not just the visible ones, so a
+// key press or a tick redraws without walking every row. It belongs to one m.rows: every
+// rebuild flattens into a new slice, which makes the cache stale.
+type tableCache struct {
+	rows    []model.Row                 // the m.rows it was computed for
+	counts  map[model.RowKey]groupCount // header counts
+	kids    map[model.RowKey]bool       // rows with children when expanded and unfiltered
+	longest int                         // widest name cell among the process and container rows
+}
+
+// cache returns the table cache for the current rows, computing it when they changed.
+func (m *Model) cache() *tableCache {
+	c := &m.tcache
+	if c.counts != nil && len(c.rows) == len(m.rows) && (len(m.rows) == 0 || &c.rows[0] == &m.rows[0]) {
+		return c
+	}
+	c.rows = m.rows
+	c.counts, c.kids = m.groupCounts()
+	c.longest = 0
+	for i, r := range m.rows {
+		if r.Key.Header == model.GroupNone {
+			c.longest = max(c.longest, ansi.StringWidth(m.nameCellWith(i, c.kids)))
+		}
+	}
+	return c
+}
+
 // groupCounts counts the rows and distinct ports of each group as the a and d toggles show
 // them, expanded and unfiltered, so a header's counts stay put when it is collapsed or
-// filtered. Dimmed rows count, since they are drawn.
-func (m *Model) groupCounts() map[model.RowKey]groupCount {
+// filtered. Dimmed rows count, since they are drawn. Compose and containers groups count
+// distinct containers, since Linux runs a docker-proxy per published port and address
+// family. It also reports which rows have children in those rows.
+func (m *Model) groupCounts() (map[model.RowKey]groupCount, map[model.RowKey]bool) {
 	counts := map[model.RowKey]groupCount{}
+	kids := map[model.RowKey]bool{}
 	var header model.RowKey
 	var seen map[uint16]bool
+	var ids map[string]bool
 	view := model.ViewOptions{ShowAll: m.view.ShowAll, HideContainers: m.view.HideContainers}
-	for _, r := range model.Flatten(m.upd.Snapshot, view) {
+	all := model.Flatten(m.upd.Snapshot, view)
+	for i, r := range all {
+		if i+1 < len(all) && all[i+1].Depth > r.Depth {
+			kids[r.Key] = true
+		}
 		if r.Key.Header != model.GroupNone {
-			header, seen = r.Key, map[uint16]bool{}
+			header, seen, ids = r.Key, map[uint16]bool{}, map[string]bool{}
 			continue
 		}
 		c := counts[header]
-		c.rows++
+		switch id := containerID(r); {
+		case header.Header != model.GroupCompose && header.Header != model.GroupContainers:
+			c.rows++
+		case id != "" && !ids[id]:
+			ids[id] = true
+			c.rows++
+		}
 		for _, p := range ports(r) {
 			if !seen[p.n] {
 				seen[p.n] = true
@@ -453,7 +493,19 @@ func (m *Model) groupCounts() map[model.RowKey]groupCount {
 		}
 		counts[header] = c
 	}
-	return counts
+	return counts, kids
+}
+
+// containerID is the container a row stands for: its container, or the one its process holds
+// ports for.
+func containerID(r model.Row) string {
+	switch {
+	case r.Container != nil:
+		return r.Container.ID
+	case r.Process != nil:
+		return r.Process.ContainerID
+	}
+	return ""
 }
 
 // tableKey handles the keys the global switch in key does not.

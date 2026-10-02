@@ -216,6 +216,16 @@ func TestTableHeaders(t *testing.T) {
 		}
 	}
 
+	// Linux runs one docker-proxy per port and address family: two rows, one container.
+	s = fixture()
+	proxy6 := s.Processes[7]
+	proxy6.PID, proxy6.Listeners = 301, []model.Listener{lis("tcp6", "::", 5432)}
+	s.Processes = append(s.Processes, proxy6)
+	feed(m, s)
+	if line(m, "▾ shop (compose) · 2 containers · 2 ports") == "" {
+		t.Errorf("two proxies for one container count once:\n%s", screen(m))
+	}
+
 	// Detached HEAD shows the short SHA in place of the branch.
 	s = fixture()
 	s.Projects[1].Branch, s.Projects[1].ShortSHA = "", "1a2b3c4"
@@ -325,10 +335,19 @@ func TestTableScroll(t *testing.T) {
 	if line(m, "api @ main") == "" || line(m, "NAME") == "" {
 		t.Errorf("back at the top:\n%s", screen(m))
 	}
+	// A page is the table's visible rows: four here.
+	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if screen(m); m.selIdx != 4 || m.top != 1 {
+		t.Errorf("pgdown from the top: index %d, top %d, want 4 and 1", m.selIdx, m.top)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if m.selIdx != 0 {
+		t.Errorf("pgup back: index %d", m.selIdx)
+	}
 	// The screen grows taller than the rows: the table scrolls back to the first row.
 	press(m, "G")
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
-	if m.top != 0 || line(m, "api @ main") == "" {
+	if line(m, "api @ main") == "" || m.top != 0 { // render first: View scrolls
 		t.Errorf("top %d on a screen that fits every row:\n%s", m.top, screen(m))
 	}
 }
@@ -384,6 +403,21 @@ func TestTableCollapse(t *testing.T) {
 	if m.sel != shopHeader {
 		t.Errorf("left on a root goes to its header: %+v", m.sel)
 	}
+
+	// A collapsed node whose children exited shows no marker.
+	selectKey(t, m, vite)
+	press(m, "h")
+	gone := fixture()
+	gone.Processes = slices.DeleteFunc(gone.Processes, func(p model.Process) bool { return p.PID == 102 })
+	feed(m, gone)
+	if l := line(m, "node node_modules"); strings.Contains(l, "▸") || strings.Contains(l, "▾") {
+		t.Errorf("childless collapsed node keeps a marker: %q", l)
+	}
+	feed(m, s)
+	if line(m, "▸ node") == "" {
+		t.Errorf("children back: node is collapsed again:\n%s", screen(m))
+	}
+	press(m, "l")
 
 	// The unknown-owner row's parent is the other header.
 	selectKey(t, m, keyOf(s, 0))
@@ -512,6 +546,12 @@ func TestFormat(t *testing.T) {
 	p := model.Process{PID: 1, CPUPercent: 12.345}
 	if got := cpu(&p); got != "12.3" {
 		t.Errorf("cpu = %q", got)
+	}
+	for v, want := range map[float64]string{99.94: "99.9", 99.96: "100", 1234.5: "1234", 99999: "99999"} {
+		p.CPUPercent = v
+		if got := cpu(&p); got != want {
+			t.Errorf("cpu(%v) = %q, want %q", v, got, want)
+		}
 	}
 	p.CPUPercent = math.NaN()
 	if got := cpu(&p); got != "–" {
