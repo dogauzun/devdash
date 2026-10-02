@@ -225,23 +225,25 @@ func (m *Model) killDone(r engine.Result, err error) tea.Cmd {
 
 // killView draws the modal in w by h: a title line, the processes indented below it, then
 // notes and the key hints. No borders (spec: no box drawing beyond table borders); a list
-// longer than the room scrolls. Lines wider than w are cut by render.
+// longer than the room scrolls. Lines wider than w are cut by render. Names, refusals and
+// errors are snapshot text, cleaned here.
 func (m *Model) killView(w, h int) string {
 	k := &m.kill
-	title := "kill " + k.name
+	name := clean(k.name)
+	title := "kill " + name
 	if k.key.PID > 0 {
 		title += fmt.Sprintf(" (pid %d)", k.key.PID)
 	}
 	var list, tail []string
 	switch k.stage {
 	case killRefused:
-		title = "cannot kill " + k.name
-		tail = append(killReason(k.refusal), "", "esc close")
+		title = "cannot kill " + name
+		tail = append(killReason(clean(k.refusal)), "", "esc close")
 	case killConfirm, killOutside, killRunning:
 		switch {
 		case k.refusal != "":
 			title += ": " + killMode(k.opts)
-			tail = killReason(k.refusal)
+			tail = killReason(clean(k.refusal))
 			tail[0] = "refused: " + tail[0]
 			tail = append(tail, "", "p process  t tree  f force  esc cancel")
 			return m.killLayout(w, h, styleBold.Render(title), nil, tail)
@@ -255,7 +257,7 @@ func (m *Model) killView(w, h int) string {
 			tail = append(tail, fmt.Sprintf("pid %d leads its process group: the signal goes to the whole group", k.plan.Group))
 		}
 		if k.stage == killOutside {
-			tail = append(tail, styleWarn.Render(k.name+" is outside every project, usually a system service."))
+			tail = append(tail, styleWarn.Render(name+" is outside every project, usually a system service."))
 		}
 		hint := ""
 		switch k.stage {
@@ -276,7 +278,7 @@ func (m *Model) killView(w, h int) string {
 	case killReport:
 		if k.err != nil {
 			title += ": nothing was signalled"
-			tail = []string{k.err.Error(), "", "esc close"}
+			tail = []string{clean(k.err.Error()), "", "esc close"}
 			break
 		}
 		exited := 0
@@ -286,7 +288,7 @@ func (m *Model) killView(w, h int) string {
 				exited++
 				continue
 			}
-			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, o.Process.Name, killOutcome(o)))
+			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, clean(o.Process.Name), clean(killOutcome(o))))
 		}
 		title += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
 		list = killTable(rows)
@@ -315,7 +317,7 @@ func (m *Model) killPlanLines(p engine.Plan) []string {
 		if project == "" {
 			project = "-"
 		}
-		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, proc.Name, project, killPorts(proc)))
+		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, clean(proc.Name), clean(project), killPorts(proc)))
 	}
 	return killTable(rows)
 }

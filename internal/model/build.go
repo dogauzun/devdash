@@ -63,7 +63,8 @@ const unknownOwner = FieldOwner | FieldArgv | FieldCwd | FieldCPU | FieldMem
 //
 // Steps: copy processes; attach each listener to its owner, once per (proto, addr, port); give every distinct listener with
 // no owner in raw.Processes its own PID 0 "unknown" process; compute CPUPercent; merge
-// warnings by Code; then call r.Resolve, Classify and Reconcile, in that order.
+// warnings by Code; call r.Resolve, Classify and Reconcile, in that order; then add one
+// listener_owner_unreadable warning counting the PID 0 rows no container explains.
 func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot {
 	procs := make([]Process, len(raw.Processes), len(raw.Processes)+len(raw.Listeners))
 	byPID := make(map[int]int, len(raw.Processes))
@@ -122,11 +123,6 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 		at[w.Code] = len(warnings)
 		warnings = append(warnings, w)
 	}
-	if n := len(seen); n > 0 {
-		hint := cmp.Or(raw.OwnerHint, "run with sudo to see owners")
-		warnings = append(warnings, Warning{Code: "listener_owner_unreadable", Count: n, Hint: hint})
-	}
-
 	timing := Timing{}
 	maps.Copy(timing, raw.Timings)
 	t := time.Now()
@@ -136,6 +132,19 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 		procs[i].Kind = Classify(procs[i])
 	}
 	procs = Reconcile(procs, containers)
+	// The PID 0 rows are the ones appended above, one listener each. A row Reconcile matched to
+	// a container (root's docker-proxy seen by a user) is explained, and sudo would only show
+	// the proxy, so only the others count (DEV-77).
+	unowned := 0
+	for _, p := range procs[len(raw.Processes):] {
+		if p.Listeners[0].ContainerID == "" {
+			unowned++
+		}
+	}
+	if unowned > 0 {
+		hint := cmp.Or(raw.OwnerHint, "run with sudo to see owners")
+		warnings = append(warnings, Warning{Code: "listener_owner_unreadable", Count: unowned, Hint: hint})
+	}
 
 	return Snapshot{
 		SchemaVersion: 1,

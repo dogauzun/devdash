@@ -230,6 +230,13 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   `com.docker.backend` on Docker Desktop for Mac, another forwarder on OrbStack, Colima or
   Podman), or with an unknown owner when root holds it. `port N` only reports ports listening
   on the host, not unpublished ports inside a Docker network.
+- **Container processes on Linux.** Processes running inside containers are also host
+  processes on Linux, so devdash lists them in the `other` group as ordinary processes (with
+  host user names for the container's uids), not under their container. A container on
+  `--network host` publishes no port, so its listener belongs to a plain process: `port N`
+  shows that process, and `kill N` signals it instead of refusing with `docker stop <name>`,
+  which stops the container (or restarts it under a restart policy). macOS is unaffected,
+  because container processes run inside the VM.
 - **UDP and unix sockets** are not shown in v1 (planned for v1.1).
 - **Windows** is not supported. Neither are remote hosts, a config file or a background
   daemon: devdash runs only while its terminal is open.
