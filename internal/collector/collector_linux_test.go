@@ -26,14 +26,22 @@ func TestCollectFindsSelf(t *testing.T) {
 	}
 	defer func() { _ = ln.Close() }()
 	port := uint16(ln.Addr().(*net.TCPAddr).Port)
-	ln6, err := net.Listen("tcp6", "[::1]:0")
-	if err != nil {
+	lo := netip.MustParseAddr("127.0.0.1")
+	wantListeners := []Listener{{Proto: "tcp4", Addr: lo, Port: port, PID: os.Getpid()}}
+	// A host without IPv6 skips only the IPv6 assertions (DEV-58).
+	if ln6, err := net.Listen("tcp6", "[::1]:0"); noIPv6(err) {
+		t.Logf("no IPv6, tcp6 listener not checked: %v", err)
+	} else if err != nil {
 		t.Fatal(err)
+	} else {
+		defer func() { _ = ln6.Close() }()
+		port6 := uint16(ln6.Addr().(*net.TCPAddr).Port)
+		wantListeners = append(wantListeners, Listener{Proto: "tcp6", Addr: netip.IPv6Loopback(), Port: port6, PID: os.Getpid()})
 	}
-	defer func() { _ = ln6.Close() }()
-	port6 := uint16(ln6.Addr().(*net.TCPAddr).Port)
-
-	mappedPort := listenV4Mapped(t)
+	if mappedPort, ok := listenV4Mapped(t); ok {
+		// ::ffff:127.0.0.1 (DEV-43)
+		wantListeners = append(wantListeners, Listener{Proto: "tcp4", Addr: lo, Port: mappedPort, PID: os.Getpid()})
+	}
 
 	// The child inherits a dup of a listening socket (fd 3) and runs in a directory
 	// that is removed while it runs.
@@ -117,12 +125,7 @@ func TestCollectFindsSelf(t *testing.T) {
 		t.Errorf("child = %+v; want ppid %d argv [cat] cwd %q (deleted, DEV-44)", c, pid, gone)
 	}
 
-	lo := netip.MustParseAddr("127.0.0.1")
-	for _, want := range []Listener{
-		{Proto: "tcp4", Addr: lo, Port: port, PID: pid},
-		{Proto: "tcp6", Addr: netip.IPv6Loopback(), Port: port6, PID: pid},
-		{Proto: "tcp4", Addr: lo, Port: mappedPort, PID: pid}, // ::ffff:127.0.0.1 (DEV-43)
-	} {
+	for _, want := range wantListeners {
 		if !slices.Contains(res.Listeners, want) {
 			t.Errorf("listener %+v not in %+v", want, res.Listeners)
 		}
@@ -142,26 +145,41 @@ func TestCollectFindsSelf(t *testing.T) {
 
 // listenV4Mapped opens an AF_INET6 dual-stack socket bound to ::ffff:127.0.0.1, as the JVM
 // does for a loopback bind; net.Listen cannot, it turns that address into AF_INET.
-func listenV4Mapped(t *testing.T) uint16 {
+// It reports false, after a t.Log, when the host has no IPv6 (DEV-58).
+func listenV4Mapped(t *testing.T) (uint16, bool) {
 	t.Helper()
 	fd, err := syscall.Socket(syscall.AF_INET6, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
-	if err != nil {
+	if noIPv6(err) {
+		t.Logf("no IPv6, v4-mapped listener not checked: %v", err)
+		return 0, false
+	} else if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = syscall.Close(fd) })
+	if err := syscall.SetsockoptInt(fd, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 0); err != nil {
+		t.Fatal(err)
+	}
 	sa := &syscall.SockaddrInet6{Addr: netip.MustParseAddr("::ffff:127.0.0.1").As16()}
-	if err := errors.Join(
-		syscall.SetsockoptInt(fd, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 0),
-		syscall.Bind(fd, sa),
-		syscall.Listen(fd, 1),
-	); err != nil {
+	if err := syscall.Bind(fd, sa); noIPv6(err) {
+		t.Logf("no IPv6, v4-mapped listener not checked: %v", err)
+		return 0, false
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Listen(fd, 1); err != nil {
 		t.Fatal(err)
 	}
 	got, err := syscall.Getsockname(fd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return uint16(got.(*syscall.SockaddrInet6).Port)
+	return uint16(got.(*syscall.SockaddrInet6).Port), true
+}
+
+// noIPv6 reports whether err says the host has no IPv6: the family is not built in or is
+// disabled (EAFNOSUPPORT), or the loopback has no IPv6 address (EADDRNOTAVAIL).
+func noIPv6(err error) bool {
+	return errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EADDRNOTAVAIL)
 }
 
 // TestHasPtrace: capget agrees with bit 19 of CapEff in /proc/self/status.
