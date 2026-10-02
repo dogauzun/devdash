@@ -110,6 +110,15 @@ func TestFlattenTree(t *testing.T) {
 			want: []string{"[project /src/shop]", "  zsh", "    vite", "  nvim", "    gopls"},
 		},
 		{
+			name: "shells and editors with a listener are never hidden",
+			procs: []Process{
+				fp(10, 1, 0, "nvim", s, KindEditor, 6666),
+				fp(11, 1, 1, "zsh", s, KindShell, 7000),
+				fp(12, 1, 2, "gopls", s, KindEditor), // no listener: hidden
+			},
+			want: []string{"[project /src/shop]", "  nvim", "  zsh"},
+		},
+		{
 			name: "group with only hidden processes is omitted",
 			procs: []Process{
 				fp(10, 1, 0, "zsh", s, KindShell),
@@ -155,6 +164,33 @@ func TestFlattenTree(t *testing.T) {
 				t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
 		})
+	}
+}
+
+// TestListeningEditorShown: real Classify output for editors that listen; their ports must
+// stay visible and findable in the default view.
+func TestListeningEditorShown(t *testing.T) {
+	var procs []Process
+	for i, c := range []struct {
+		argv string
+		port uint16
+	}{
+		{"nvim --listen 127.0.0.1:6666", 6666},
+		{"gopls serve -listen=:37374", 37374},
+		{"/usr/share/code/code --type=utility --utility-sub-type=node.mojom.NodeService", 5500},
+	} {
+		p := Process{PID: 10 + i, PPID: 1, StartTime: start, Argv: strings.Fields(c.argv), Listeners: []Listener{{"tcp4", lo, c.port}}}
+		if p.Kind = Classify(p); p.Kind != KindEditor {
+			t.Fatalf("%q classified %v, want editor", c.argv, p.Kind)
+		}
+		procs = append(procs, p)
+	}
+	rows := Flatten(Snapshot{Processes: procs}, ViewOptions{})
+	for _, port := range []string{"6666", "37374", "5500"} {
+		got := Filter(rows, port)
+		if len(got) != 2 || got[1].Dimmed {
+			t.Errorf("Filter(%q) = %q, want the other header and one undimmed editor row", port, render(got))
+		}
 	}
 }
 

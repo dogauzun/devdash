@@ -123,7 +123,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 			continue
 		}
 		n := &node{row: Row{Key: p.Key(), Process: p}, start: p.StartTime, cpu: p.CPUPercent, port: noPort,
-			hidden: !opts.ShowAll && (p.Kind == KindShell || p.Kind == KindEditor)}
+			hidden: !opts.ShowAll && len(p.Listeners) == 0 && (p.Kind == KindShell || p.Kind == KindEditor)} // a listener is never hidden
 		for _, l := range p.Listeners {
 			n.port = min(n.port, int(l.Port))
 		}
