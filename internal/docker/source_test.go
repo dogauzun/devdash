@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -803,8 +804,30 @@ func TestFetchTCPEndpoint(t *testing.T) {
 	}
 }
 
+// denied is the warning for a unix socket ep this user may not open, in this OS's wording.
 func denied(ep Endpoint) *model.Warning {
-	return &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: permission denied on " + ep.Address + " (add yourself to the docker group)"}
+	advice := " (add yourself to the docker group)"
+	if runtime.GOOS == "darwin" {
+		advice = " (owned by another user?)"
+	}
+	return &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: permission denied on " + ep.Address + advice}
+}
+
+// TestDeniedHint: the docker group is Linux's convention (root:docker 0660). On macOS, Docker
+// Desktop's and OrbStack's sockets live in the user's home and belong to the user, so a denied
+// one is most likely another user's (devdash run under another account, a socket created under
+// sudo) and the hint says so instead of the group advice (DEV-93).
+func TestDeniedHint(t *testing.T) {
+	tests := []struct{ goos, path, want string }{
+		{"linux", "/var/run/docker.sock", "docker: permission denied on /var/run/docker.sock (add yourself to the docker group)"},
+		{"darwin", "/tmp/x/dead.sock", "docker: permission denied on /tmp/x/dead.sock (owned by another user?)"},
+		{"darwin", "/Users/me/.orbstack/run/docker.sock", "docker: permission denied on /Users/me/.orbstack/run/docker.sock (owned by another user?)"},
+	}
+	for _, tt := range tests {
+		if got := deniedHint(tt.goos, tt.path); got != tt.want {
+			t.Errorf("deniedHint(%q, %q) = %q, want %q", tt.goos, tt.path, got, tt.want)
+		}
+	}
 }
 
 // dialing replaces s's transport with one whose every dial returns err, and counts the dials.
@@ -818,7 +841,7 @@ func dialing(s *Source, err error) *int {
 }
 
 // TestFetchPermissionDenied: a socket the user may not open (Linux's root:docker 0660 for a
-// user outside the docker group) says so instead of "not reachable", which reads as Docker
+// user outside the docker group, another user's socket on macOS) says so instead of "not reachable", which reads as Docker
 // being down. It is still a failure, with the failure holdoff: at the 5 s beat and the
 // default 2 s tick it is dialled at 0, 20 and 40 s. The dial error is injected, so this runs
 // as root too (DEV-76).
