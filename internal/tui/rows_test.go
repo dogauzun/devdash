@@ -119,19 +119,24 @@ func TestSelectionHoldsAcrossRefresh(t *testing.T) {
 	wantSel(t, m, goTest, 7)
 }
 
+// When the selected row is gone the selection moves to the nearest row above it (in the rows
+// before the refresh) that is still shown, wherever that row now is; the first row when none is.
 func TestSelectedProcessExits(t *testing.T) {
 	s := fixture()
 	for _, tc := range []struct {
-		name string
-		sel  model.RowKey
-		next model.Snapshot
-		idx  int          // the selection's index before the refresh
-		want model.RowKey // the row now at that index, clamped
+		name    string
+		sel     model.RowKey
+		next    model.Snapshot
+		idx     int          // the selection's index before the refresh
+		want    model.RowKey // the nearest row above it that is still shown
+		wantIdx int          // where that row is now
 	}{
-		{"middle row: the row that took its index", keyOf(s, 200), drop(fixture(), 200), 1, keyOf(s, 201)},
-		{"last row: clamped to the new last row", keyOf(s, 1), drop(fixture(), 1), 13, keyOf(s, 0)},
-		{"its whole group exits", keyOf(s, 103), dropShop(fixture()), 7, keyOf(s, 0)},
-		{"a header whose group exits", rowsAPIHeader, withoutAPI(fixture()), 0, rowsShopHeader},
+		{"middle row: its parent", keyOf(s, 200), drop(fixture(), 200), 1, rowsAPIHeader, 0},
+		{"last row: the row above it", keyOf(s, 1), drop(fixture(), 1), 13, keyOf(s, 0), 12},
+		{"its whole group exits: the last row of the group above", keyOf(s, 103), dropShop(fixture()), 7, keyOf(s, 201), 2},
+		{"a header whose group exits: nothing above, the first row", rowsAPIHeader, withoutAPI(fixture()), 0, rowsShopHeader, 0},
+		// api loses its newest process and shop sorts first: the selection stays in api.
+		{"the group order changes: its sibling, now further down", keyOf(s, 201), drop(fixture(), 201), 2, keyOf(s, 200), 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
@@ -141,13 +146,24 @@ func TestSelectedProcessExits(t *testing.T) {
 				t.Fatalf("fixture changed: %+v at %d, want %d", tc.sel, m.selIdx, tc.idx)
 			}
 			feed(m, tc.next)
-			want := min(tc.idx, len(m.rows)-1)
-			wantSel(t, m, tc.want, want)
+			wantSel(t, m, tc.want, tc.wantIdx)
 			// The new selection is a key like any other: the next refresh keeps it.
 			feed(m, tc.next)
-			wantSel(t, m, tc.want, want)
+			wantSel(t, m, tc.want, tc.wantIdx)
 		})
 	}
+}
+
+// A view change that hides the selected row and the row above it: the selection moves to the
+// nearest row above that is still shown, not into the other group.
+func TestSelectionHiddenByView(t *testing.T) {
+	m, _ := newTest(t, 80, 24)
+	s := fixture()
+	feed(m, s)
+	rowsSelect(t, m, webKey) // index 9, under the shop compose header
+	m.view.HideContainers = true
+	m.rebuild()
+	wantSel(t, m, keyOf(s, 103), 7) // claude
 }
 
 // dropShop returns s without the shop project and its processes.
@@ -187,7 +203,7 @@ func TestSelectionPIDReuse(t *testing.T) {
 	if m.sel == old || m.sel == reused.Key() {
 		t.Errorf("selection followed the pid: %+v", m.sel)
 	}
-	wantSel(t, m, keyOf(s, 101), 2) // the row now at the old index
+	wantSel(t, m, keyOf(s, 200), slices.Index(rowsKeys(m), keyOf(s, 200))) // the row that was above it
 	if m.view.Collapsed[old] {
 		t.Error("the exited process's collapsed key was not pruned")
 	}
@@ -391,12 +407,63 @@ func TestFilterSelection(t *testing.T) {
 	press(m, "esc")
 	wantSel(t, m, vite, 5)
 
-	// The filter hides the selected row: the row now at its index, clamped, is selected
-	// and stays selected when the filter is cleared.
-	rowsSelect(t, m, keyOf(s, 103)) // claude, index 7
+	// The filter hides the selected row: the nearest row above it that matches is selected
+	// while the filter is set, and the row comes back when the filter is cleared.
+	claude := keyOf(s, 103) // index 7
+	rowsSelect(t, m, claude)
 	press(m, "/")
 	typeText(m, "api")
 	wantSel(t, m, keyOf(s, 201), 2)
 	press(m, "enter", "esc")
+	wantSel(t, m, claude, 7)
+
+	// Typed, narrowed to nothing, then cancelled in the prompt.
+	press(m, "/")
+	typeText(m, "apz")
+	press(m, "esc")
+	wantSel(t, m, claude, 7)
+
+	// Backspace back past the queries that hid it, and ctrl+u.
+	press(m, "/")
+	typeText(m, "api")
+	press(m, "backspace", "backspace", "backspace")
+	wantSel(t, m, claude, 7)
+	typeText(m, "api")
+	m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	wantSel(t, m, claude, 7)
+	press(m, "esc")
+
+	// A selection made while the filter is set is the one kept when it is cleared.
+	press(m, "/")
+	typeText(m, "api")
+	press(m, "enter", "up")
+	wantSel(t, m, keyOf(s, 200), 1)
+	press(m, "esc")
+	wantSel(t, m, keyOf(s, 200), 1)
+
+	// The chosen row exits while the filter hides it: clearing the filter keeps the row shown.
+	rowsSelect(t, m, claude)
+	press(m, "/")
+	typeText(m, "api")
+	press(m, "enter")
+	feed(m, drop(fixture(), 103))
+	press(m, "esc")
 	wantSel(t, m, keyOf(s, 201), 2)
+}
+
+// Pasted text goes into the filter query, without its newlines; outside the prompt it is
+// ignored.
+func TestFilterPaste(t *testing.T) {
+	m, _ := newTest(t, 80, 24)
+	feed(m, fixture())
+	m.Update(tea.PasteMsg{Content: "vite"})
+	if m.filter != "" {
+		t.Fatalf("paste outside the prompt set the filter to %q", m.filter)
+	}
+	press(m, "/")
+	typeText(m, "v")
+	m.Update(tea.PasteMsg{Content: "it\r\ne\n"})
+	if m.filter != "vite" || line(m, "· /vite_") == "" {
+		t.Errorf("filter %q after paste, want %q:\n%s", m.filter, "vite", screen(m))
+	}
 }

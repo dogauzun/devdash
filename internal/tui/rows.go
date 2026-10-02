@@ -2,6 +2,8 @@ package tui
 
 import (
 	"maps"
+	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -15,25 +17,37 @@ import (
 // the selected row again by its key. It runs after every snapshot, view change and filter
 // change.
 //
-// When the key is gone the selection moves to the row now at the index it had, clamped to
-// the last row; the very first rows select the first one. With no rows at all nothing is
-// selected (selIdx -1) but the key is kept, so the row is selected again when it comes back
-// (a filter that matched nothing is relaxed, an empty snapshot is followed by a full one).
+// When the key is gone the selection moves to the nearest row above it, in the rows as they
+// were, that is still shown (spec: "the nearest previous index"), wherever that row now is: a
+// process that exits leaves the selection on its sibling or parent, even when its group moves.
+// When no row above it is left, the first row is selected. With no rows at all nothing is
+// selected (selIdx -1) but the key is kept, so the row is selected again when it comes back (a
+// filter that matched nothing is relaxed, an empty snapshot is followed by a full one).
 func (m *Model) rebuild() {
+	prev, prevIdx := m.rows, m.selIdx
 	m.pruneCollapsed()
 	m.all = model.Flatten(m.upd.Snapshot, m.view)
 	m.rows = model.Filter(m.all, m.filter)
-	for i, r := range m.rows {
-		if r.Key == m.sel {
-			m.selIdx = i
-			return
-		}
-	}
 	if len(m.rows) == 0 {
 		m.selIdx = -1
 		return
 	}
-	m.moveTo(m.selIdx) // also replaces the stale key; -1 (no rows before) clamps to the first row
+	at := make(map[model.RowKey]int, len(m.rows))
+	for i, r := range m.rows {
+		at[r.Key] = i
+	}
+	if i, ok := at[m.sel]; ok {
+		m.selIdx = i
+		return
+	}
+	// prev[prevIdx] is the selected row, or the stand-in for it a filter change starts from.
+	for j := min(prevIdx, len(prev)-1); j >= 0; j-- {
+		if i, ok := at[prev[j].Key]; ok {
+			m.moveTo(i)
+			return
+		}
+	}
+	m.moveTo(0) // also replaces the stale key
 }
 
 // pruneCollapsed drops the collapsed keys of rows that are no longer in the snapshot, so the
@@ -64,10 +78,38 @@ func (m *Model) pruneCollapsed() {
 	})
 }
 
-// setFilter sets the filter query and rebuilds the rows.
+// filterSel keeps the row the user chose while filter changes hide it.
+type filterSel struct {
+	chosen model.RowKey // the selection the user (or a refresh) made
+	shown  model.RowKey // the selection the last filter change left: chosen, or a stand-in
+}
+
+// setFilter sets the filter query and rebuilds the rows. The selection goes back to the row
+// chosen before the filter hid it as soon as that row is shown again, whether the query is
+// cleared, shortened or retyped; a selection moved since the last filter change (by a key or
+// a refresh) is the new choice.
 func (m *Model) setFilter(q string) {
+	if m.sel != m.fsel.shown {
+		m.fsel.chosen = m.sel
+	}
 	m.filter = q
+	m.sel = m.fsel.chosen
 	m.rebuild()
+	m.fsel.shown = m.sel
+}
+
+// paste appends pasted text to the filter query while the prompt is open, without its
+// newlines and other control characters; it is ignored otherwise.
+func (m *Model) paste(text string) {
+	text = strings.Map(func(r rune) rune {
+		if !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, text)
+	if m.filtering && text != "" {
+		m.setFilter(m.filter + text)
+	}
 }
 
 // filterKey handles keys while the filter prompt is open; the rows are filtered as the query
