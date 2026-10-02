@@ -101,6 +101,7 @@ func TestWritePortContainers(t *testing.T) {
 	db := model.Container{ID: "db0123456789", Name: "shop-db-1", Image: "postgres:16", State: "running", ComposeProject: "shop", ComposeService: "db",
 		Ports: []model.PortMapping{pm(any4, 5432), pm(any6, 5432)}}
 	cache := model.Container{ID: "cache0123456", Name: "cache", Image: "redis:7", State: "running", Ports: []model.PortMapping{pm(any4, 6379)}}
+	loner := model.Container{ID: "10ae0123456", Name: "loner", Image: "nginx:alpine", State: "running", Ports: []model.PortMapping{pm(any4, 18100)}}
 	unnamed := model.Container{ID: "77aa", State: "running", Ports: []model.PortMapping{{HostPort: 8000, ContainerPort: 80, Proto: "tcp"}}}
 	proc := func(pid int, name string) model.Process {
 		return model.Process{PID: pid, PPID: 1, Name: name, Argv: []string{"/usr/bin/" + name}, StartTime: time.Unix(1, 0)}
@@ -118,6 +119,10 @@ func TestWritePortContainers(t *testing.T) {
 		{"docker-proxy", []model.RawListener{l("tcp4", any4, 5432, 20), l("tcp6", any6, 5432, 21)}, []model.Container{db}, 5432,
 			"20  shop-db-1  shop  0.0.0.0:5432  container (postgres:16) via docker-proxy\n" +
 				"21  shop-db-1  shop  [::]:5432     container (postgres:16) via docker-proxy\n"},
+		{"dockerd with userland-proxy off, under sudo (DEV-74)", []model.RawListener{l("tcp4", any4, 18100, 40)}, []model.Container{loner}, 18100,
+			"40  loner  -  0.0.0.0:18100  container (nginx:alpine) via dockerd\n"},
+		{"dockerd holding several containers' ports", []model.RawListener{l("tcp4", any4, 18100, 40), l("tcp4", any4, 6379, 40)}, []model.Container{loner, cache}, 6379,
+			"40  cache  -  0.0.0.0:6379  container (redis:7) via dockerd\n"},
 		{"unknown owner (root's docker-proxy, seen as a user)", []model.RawListener{l("tcp4", any4, 5432, 0)}, []model.Container{db}, 5432,
 			"-  shop-db-1  shop  0.0.0.0:5432  container (postgres:16)\n"},
 		{"shared com.docker.backend", []model.RawListener{l("tcp6", any6, 5432, 30), l("tcp6", any6, 6379, 30)}, []model.Container{db, cache}, 6379,
@@ -135,7 +140,7 @@ func TestWritePortContainers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(20, "docker-proxy"), proc(21, "docker-proxy"), proc(30, "com.docker.backend")},
+			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(20, "docker-proxy"), proc(21, "docker-proxy"), proc(30, "com.docker.backend"), proc(40, "dockerd")},
 				Listeners: tt.listeners}
 			s := model.Build(raw, model.Snapshot{}, tt.containers, model.NewResolver("", nil))
 			var b bytes.Buffer

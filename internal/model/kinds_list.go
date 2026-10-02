@@ -150,6 +150,7 @@ const runtimePrefix = "containerd-shim"
 // listener they own can be a container's (Reconcile). A subset of runtimeNames.
 var proxyNames = map[string]bool{
 	"docker-proxy":       true, // Docker Engine userland proxy, one process per published port and family
+	"dockerd":            true, // Docker Engine 28+ with --userland-proxy=false holds each published port itself
 	"com.docker.backend": true, // Docker Desktop on macOS: one process holds every published port
 	"com.docker.vpnkit":  true, // older Docker Desktop for Mac
 	"vpnkit":             true, // older Docker Desktop, Linux and Windows builds
