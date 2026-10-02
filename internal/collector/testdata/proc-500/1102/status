@@ -1,0 +1,8 @@
+Name:	java
+Umask:	0022
+State:	S
+Tgid:	1102
+Pid:	1102
+PPid:	1001
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

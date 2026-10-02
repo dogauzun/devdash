@@ -1,0 +1,8 @@
+Name:	postgres
+Umask:	0022
+State:	S
+Tgid:	310
+Pid:	310
+PPid:	1
+Uid:	1001	1001	1001	1001
+Gid:	1001	1001	1001	1001

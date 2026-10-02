@@ -1,0 +1,8 @@
+Name:	docker-proxy
+Umask:	0022
+State:	S
+Tgid:	335
+Pid:	335
+PPid:	1
+Uid:	0	0	0	0
+Gid:	0	0	0	0

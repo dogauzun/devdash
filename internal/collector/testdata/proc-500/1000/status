@@ -1,0 +1,8 @@
+Name:	tmux: server
+Umask:	0022
+State:	S
+Tgid:	1000
+Pid:	1000
+PPid:	1
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

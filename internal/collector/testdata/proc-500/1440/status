@@ -1,0 +1,8 @@
+Name:	-zsh
+Umask:	0022
+State:	S
+Tgid:	1440
+Pid:	1440
+PPid:	1000
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

@@ -55,15 +55,16 @@ func parseStat(b []byte) (procStat, error) {
 	return s, nil
 }
 
-// parseStatusUID returns the real uid from the "Uid:" line of /proc/[pid]/status.
+// parseStatusUID returns the effective uid, the second field of the "Uid:" line of
+// /proc/[pid]/status (real, effective, saved, filesystem), as macOS reports cr_uid.
 func parseStatusUID(b []byte) (int, error) {
 	for line := range bytes.Lines(b) {
 		if rest, ok := bytes.CutPrefix(line, []byte("Uid:")); ok {
 			f := strings.Fields(string(rest))
-			if len(f) == 0 {
+			if len(f) < 2 {
 				break
 			}
-			return strconv.Atoi(f[0])
+			return strconv.Atoi(f[1])
 		}
 	}
 	return 0, errMalformed
@@ -100,11 +101,14 @@ func parseBtime(b []byte) (int64, error) {
 
 type tcpListen struct {
 	Listener
+	uid   int // the socket's uid, column 8
 	inode uint64
 }
 
 // parseNetTCP returns the listening sockets (state 0A) of /proc/net/tcp or tcp6.
-// proto is "tcp4" or "tcp6" and is copied into each Listener. Malformed rows are skipped.
+// proto is "tcp4" or "tcp6" and is copied into each Listener, except that a v4-mapped
+// address (::ffff:a.b.c.d) is unmapped and reported as tcp4, as macOS reports it.
+// Malformed rows are skipped.
 func parseNetTCP(b []byte, proto string) []tcpListen {
 	var out []tcpListen
 	for line := range bytes.Lines(b) {
@@ -125,11 +129,19 @@ func parseNetTCP(b []byte, proto string) []tcpListen {
 		if err != nil {
 			continue
 		}
+		uid, err := strconv.Atoi(f[7])
+		if err != nil {
+			continue
+		}
 		inode, err := strconv.ParseUint(f[9], 10, 64)
 		if err != nil {
 			continue
 		}
-		out = append(out, tcpListen{Listener{Proto: proto, Addr: addr, Port: uint16(p)}, inode})
+		l := Listener{Proto: proto, Addr: addr, Port: uint16(p)}
+		if addr.Is4In6() {
+			l.Proto, l.Addr = "tcp4", addr.Unmap()
+		}
+		out = append(out, tcpListen{l, uid, inode})
 	}
 	return out
 }

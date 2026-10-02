@@ -1,0 +1,8 @@
+Name:	kworker/0:0
+Umask:	0022
+State:	S
+Tgid:	56
+Pid:	56
+PPid:	2
+Uid:	0	0	0	0
+Gid:	0	0	0	0
