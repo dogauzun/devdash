@@ -108,6 +108,57 @@ func TestBuildOwnerHint(t *testing.T) {
 	}
 }
 
+// TestBuildOwnerWarningContainers: an unknown owner that Reconcile matches to a container
+// (root's docker-proxy seen by a user on Linux) is explained, so it does not count towards
+// listener_owner_unreadable; the PID 0 row itself stays (DEV-77).
+func TestBuildOwnerWarningContainers(t *testing.T) {
+	l := func(port uint16, pid int) RawListener { return RawListener{"tcp4", any4, port, pid} }
+	db := Container{ID: "db", Ports: []PortMapping{{HostIP: any4, HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}}
+	var five []Container
+	for i := range uint16(5) {
+		five = append(five, Container{ID: string(rune('a' + i)), Ports: []PortMapping{{HostIP: any4, HostPort: 8000 + i, ContainerPort: 80, Proto: "tcp"}}})
+	}
+	tests := []struct {
+		name       string
+		listeners  []RawListener
+		containers []Container
+		wantCount  int // 0 for no warning
+		wantPID0   int // PID 0 rows, matched or not
+	}{
+		{"matched to a container", []RawListener{l(5432, 0)}, []Container{db}, 0, 1},
+		{"owner hidden, matched", []RawListener{l(5432, 99)}, []Container{db}, 0, 1},
+		{"not matched: other port", []RawListener{l(5433, 0)}, []Container{db}, 1, 1},
+		{"no Docker", []RawListener{l(5432, 0)}, nil, 1, 1},
+		{"matched and unmatched", []RawListener{l(5432, 0), l(22, 0)}, []Container{db}, 1, 2},
+		{"five published, five others", []RawListener{
+			l(8000, 0), l(8001, 0), l(8002, 0), l(8003, 0), l(8004, 0),
+			l(22, 0), l(25, 0), l(53, 0), l(631, 0), l(5353, 0),
+		}, five, 5, 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := Raw{TakenAt: t0, Processes: []Process{proc(10, 0)}, Listeners: tt.listeners}
+			s := Build(raw, Snapshot{}, tt.containers, NewResolver("", nil))
+			var want []Warning
+			if tt.wantCount > 0 {
+				want = []Warning{{"listener_owner_unreadable", tt.wantCount, "run with sudo to see owners"}}
+			}
+			if !reflect.DeepEqual(s.Warnings, want) {
+				t.Errorf("warnings %+v, want %+v", s.Warnings, want)
+			}
+			n := 0
+			for _, p := range s.Processes {
+				if p.PID == 0 {
+					n++
+				}
+			}
+			if n != tt.wantPID0 {
+				t.Errorf("%d PID 0 rows, want %d", n, tt.wantPID0)
+			}
+		})
+	}
+}
+
 func TestBuildCPUPercent(t *testing.T) {
 	reused := proc(10, 0)
 	reused.StartTime = start.Add(time.Minute)
