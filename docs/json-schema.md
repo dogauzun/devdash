@@ -128,7 +128,7 @@ The top-level object.
 
 | Code | OS | Meaning |
 | --- | --- | --- |
-| `listener_owner_unreadable` | both | Listeners whose owner could not be read; `count` is the number of `pid: 0` entries. |
+| `listener_owner_unreadable` | both | Listeners whose owner could not be read; `count` is the number of `pid: 0` entries whose listener has `container` `null`. An entry matched to a container (root's `docker-proxy` seen by a normal user) is explained and not counted, and the warning is absent when no entry is left. |
 | `process_fields_unreadable` | both | Processes of other users with fields in `unknown`; `count` is the number of processes. |
 | `pcblist_unavailable` | macOS | The kernel withheld other processes' sockets from the PCB list; other users' listeners may be missing. |
 | `proc_hidepid` | Linux | `/proc` is mounted with `hidepid`; other users' processes are invisible. |
