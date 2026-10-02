@@ -13,6 +13,7 @@ make check      # the pre-push gate: lint + vet (darwin and linux), the four cro
 make fmt        # gofmt + goimports rewrite (golangci-lint fmt)
 make build      # ./devdash for this machine
 make snapshot   # goreleaser check + release --snapshot --clean into dist/ (goreleaser v2.18.2)
+make demo       # re-record docs/demo.gif from demo.tape (Linux as root; vhs, ttyd, ffmpeg, Chromium)
 ```
 
 Single steps: `make lint`, `make vet`, `make cross`, `make test`, `make bench`, `make docker-gate`. golangci-lint is
