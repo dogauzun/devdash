@@ -235,7 +235,7 @@ func TestKillPlanErrors(t *testing.T) {
 		res  func(model.Process) engine.Outcome
 		want int
 	}{
-		{"second plan refused after the first exited", []int{2}, exited, 0},
+		{"second plan refused after the first exited", []int{2}, exited, 4},
 		{"second plan refused after the first was denied", []int{2}, denied, 3},
 		{"first plan refused, second survives", []int{1}, survives, 4},
 		{"every plan refused", []int{1, 2}, exited, 6},

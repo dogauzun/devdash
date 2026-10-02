@@ -118,6 +118,7 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 		r, err := killFn(p, o.Timeout)
 		if err != nil { // a plan NewPlan could not have made, or devdash's ancestry changed since; nothing in it was signalled
 			fmt.Fprintln(stderr, "devdash: not signalled:", err)
+			code = rank(code, 4) // its processes are still there, as Result.ExitCode counts an unsignalled pid
 			continue
 		}
 		ran = true
