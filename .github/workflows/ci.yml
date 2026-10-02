@@ -132,6 +132,21 @@ jobs:
             dist/homebrew/Casks/devdash.rb
           retention-days: 7
 
+  # Phase 3 gate (DEV-53): a compose service's published port shows its container name.
+  # Its own job so a Docker hiccup hides no other result. ubuntu-latest has Docker and compose
+  # v2; GitHub's macOS runners have no Docker, so macOS is run by hand (docs/gate-phase3.md).
+  docker-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: scripts/docker-gate.sh
+        run: sh scripts/docker-gate.sh
+
   macos:
     runs-on: macos-latest
     timeout-minutes: 15
