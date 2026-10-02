@@ -134,7 +134,8 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Writer) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := engine.New(o.engine(c))
+	eo := o.engine(c)
+	e := engine.New(eo)
 	done := make(chan struct{})
 	go func() { defer close(done); e.Run(ctx) }()
 	defer func() { cancel(); <-done }()
@@ -143,11 +144,37 @@ func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Wri
 	if o.NoColor {
 		opts = append(opts, tea.WithColorProfile(colorprofile.Ascii)) // keeps reverse and faint, drops colour
 	}
-	if err := tui.Run(ctx, tui.Options{Source: e, Kill: e.Kill, ShowAll: o.All}, opts...); err != nil {
+	if err := tui.Run(ctx, tuiOptions(o, e, eo.Docker), opts...); err != nil {
 		fmt.Fprintln(stderr, "devdash:", err)
 		return exitFailed
 	}
 	return 0
+}
+
+// tuiOptions is the dashboard's options for these flags on engine e, whose container source is
+// src (the engine options' Docker). The detail pane names src's endpoint, so it shows the
+// endpoint discovered once for the engine; nothing without one (--no-docker, none found, or
+// endpointError, whose warning already says why).
+func tuiOptions(o options, e *engine.Engine, src engine.ContainerSource) tui.Options {
+	to := tui.Options{Source: e, Kill: e.Kill, ShowAll: o.All}
+	if s, ok := src.(*docker.Source); ok {
+		label := dockerLabel(s.Endpoint())
+		to.DockerSocket = func() string { return label }
+	}
+	return to
+}
+
+// dockerLabel names endpoint ep as a user would recognise it: the socket path for unix, the
+// tcp://host:port URL for tcp, then how it was found in parentheses unless it is a default path.
+func dockerLabel(ep docker.Endpoint) string {
+	s := ep.Address
+	if ep.Network != "unix" {
+		s = ep.String()
+	}
+	if ep.Source != "" && ep.Source != "default" {
+		s += " (" + ep.Source + ")"
+	}
+	return s
 }
 
 // parse reads flags anywhere on the command line, then checks the subcommand and its
