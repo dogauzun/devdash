@@ -120,17 +120,17 @@ Everything is read from kernel interfaces directly; lsof, ss, netstat and ps nev
 | Facet | Linux, own uid | Linux, other uid | macOS, own uid | macOS, other uid |
 | --- | --- | --- | --- | --- |
 | pid, ppid, uid, name, start time | yes | yes | yes | yes |
-| argv | yes | yes (world-readable unless `hidepid`) | yes | no (root only), verify |
-| cwd | yes | no | yes | no |
-| which TCP ports are listening | yes (world-readable) | yes | yes | from the PCB list when it is served, verify on macOS 27 |
-| owning pid of a listener | yes | no | yes | `so_last_pid` from the PCB list when served |
-| CPU time, RSS | yes | yes | yes | no, verify |
+| argv | yes | yes (world-readable unless `hidepid`) | yes | no (root only; `kern.procargs2` fails with EINVAL) |
+| cwd | yes | no | yes | no (EPERM) |
+| which TCP ports are listening | yes (world-readable) | yes | yes | from the PCB list, which macOS 27 withholds (empty, no error) when any ancestor of devdash is ad-hoc signed |
+| owning pid of a listener | yes | no | yes | `so_last_pid` from the PCB list when served (matched lsof on every listener) |
+| CPU time, RSS | yes | yes | yes | no (`PROC_PIDTASKINFO` fails with EPERM) |
 
 **Linux.** The process list is the numeric entries of `/proc`. Per process: `/proc/[pid]/stat` gives ppid, state, utime, stime and starttime (clock ticks since boot at USER_HZ = 100, added to `btime` from `/proc/stat`); `/proc/[pid]/status` gives the real uid; `/proc/[pid]/cmdline` is NUL-separated argv (empty for kernel threads, which are skipped); `/proc/[pid]/statm` gives resident pages; `readlink /proc/[pid]/cwd` fails with EACCES for other users' processes. Listeners come from `/proc/net/tcp` and `/proc/net/tcp6`: rows with state `0A`, local address and port in hex, the socket inode in the last numeric column. Ownership is the inode: `readlink /proc/[pid]/fd/*` yields `socket:[inode]`, which is scanned only for pids of our own uid (others fail anyway) and only while unmatched listener inodes remain. `/proc/net/*` is per network namespace, so sockets inside containers are not visible; their published ports appear as docker-proxy and are reconciled through the Docker API instead.
 
 **macOS.** The process list and its basic facets come from one `sysctl kern.proc.all` call (`unix.SysctlKinfoProcSlice` in `golang.org/x/sys/unix`): pid, ppid, uid, start time and the 16-character `p_comm`. Everything else comes from libproc, loaded with purego so the build stays `CGO_ENABLED=0`, which is how [gopsutil v4](https://github.com/shirou/gopsutil/blob/master/process/process_darwin.go) does it and where the struct layouts can be checked: `proc_pidinfo(PROC_PIDVNODEPATHINFO)` for cwd, `proc_pidinfo(PROC_PIDTASKINFO)` for CPU time and resident size, `proc_pidinfo(PROC_PIDLISTFDS)` then `proc_pidfdinfo(PROC_PIDFDSOCKETINFO)` per socket fd for listeners (kind `SOCKINFO_TCP`, state `TSI_S_LISTEN`, local port and family). argv comes from `sysctl kern.procargs2`. All of these work for our own uid without root.
 
-For other users' listeners on macOS the only host-wide source is `sysctl net.inet.tcp.pcblist_n`, whose records carry a bind address, port, state and `so_last_pid`. One tool's README reports that on macOS 27 an ad-hoc-signed binary receives an empty PCB list while Apple-signed netstat still sees the listeners ([osfacts](https://github.com/juspay/osfacts)); this is a single report and is verified in the spike. The design does not depend on it: the per-uid fd walk is the primary source, an empty PCB list is treated as unknown rather than as no listeners, and `netstat -anv` (Apple-signed, has a pid column) is an opt-in fallback that runs at most every 30 s for that one purpose.
+For other users' listeners on macOS the only host-wide source is `sysctl net.inet.tcp.pcblist_n`, whose records carry a bind address, port, state and `so_last_pid`. One tool's README reports that on macOS 27 an ad-hoc-signed binary receives an empty PCB list while Apple-signed netstat still sees the listeners ([osfacts](https://github.com/juspay/osfacts)). The spike (macOS 27.0.1) found the gate follows process ancestry, not the caller's own signature: an ad-hoc-signed devdash started from a shell gets the full list, while any process with an ad-hoc-signed ancestor (`go run`, `go test`, and every child of an ad-hoc devdash, Apple-signed netstat and sysctl included) gets only the headers, with no error. The design does not depend on it: the per-uid fd walk is the primary source and an empty PCB list is treated as unknown rather than as no listeners. A `netstat -anv` fallback spawned by an ad-hoc-signed devdash inherits the restriction and sees nothing, so it only helps if the release binary is signed differently (Developer ID, not verified).
 
 Why not gopsutil for sockets: its darwin and FreeBSD connection lookups shell out to lsof ([gopsutil PR 1551](https://github.com/shirou/gopsutil/pull/1551)), which is slow on a busy machine and has broken on warnings written to stderr. gopsutil remains a reference for the darwin struct layouts and may be used for CPU and memory facets if that saves real time.
 
@@ -350,7 +350,7 @@ The two risks that could change the design are both about macOS, and both are se
 
 | # | Risk or assumption | If wrong | Mitigation |
 | --- | --- | --- | --- |
-| 1 | macOS 27 serves an empty PCB list to binaries without Apple platform signing (one report, unverified) | other users' listeners are invisible without sudo | per-uid fd walk is primary; empty list treated as unknown; opt-in `netstat -anv` fallback; sudo documented |
+| 1 | macOS 27 serves an empty PCB list to processes with an ad-hoc-signed ancestor (verified on 27.0.1; ad-hoc devdash launched from a shell is served) | other users' listeners are invisible without sudo | per-uid fd walk is primary; empty list treated as unknown; opt-in `netstat -anv` fallback; sudo documented |
 | 2 | purego can load libproc without cgo and the `proc_*` struct layouts are stable from macOS 13 to 27 | darwin collector breaks on some version | layouts taken from gopsutil v4 and XNU headers; recorded fixtures per OS version; cgo build behind a tag as last resort |
 | 3 | `kern.procargs2` refuses other users' processes without root | argv unknown on those rows | show the 16-character `p_comm`, mark argv unknown |
 | 4 | the 100 ms budget with per-pid fd walks | refresh feels sluggish on busy machines | walk own-uid pids only, cache misses on Linux, adaptive interval |
