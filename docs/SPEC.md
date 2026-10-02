@@ -232,12 +232,12 @@ The JSON document carries `schema_version`, and any field removal or rename bump
      "uid": 501, "user": "me", "name": "node",
      "argv": ["node", "node_modules/.bin/vite", "--port", "5173"],
      "cwd": "/Users/me/code/shop", "cpu_percent": 0.4, "rss_bytes": 187563008,
-     "listeners": [{"proto": "tcp6", "addr": "::", "port": 5173}],
+     "listeners": [{"proto": "tcp6", "addr": "::", "port": 5173, "container": null}],
      "kind": "server", "project": "/Users/me/code/shop", "container": null,
      "unknown": []},
     {"pid": 0, "ppid": null, "start_time": null, "uid": null, "user": null, "name": "unknown",
      "argv": null, "cwd": null, "cpu_percent": null, "rss_bytes": null,
-     "listeners": [{"proto": "tcp4", "addr": "0.0.0.0", "port": 631}],
+     "listeners": [{"proto": "tcp4", "addr": "0.0.0.0", "port": 631, "container": null}],
      "kind": "other", "project": null, "container": null, "unknown": ["owner", "argv", "cwd", "cpu", "mem"]}
   ],
   "containers": [

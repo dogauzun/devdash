@@ -80,6 +80,7 @@ func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) mod
 				{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: 5173, PID: 100},
 				{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 631, PID: 0},
 				{Proto: "tcp6", Addr: netip.MustParseAddr("fe80::1%lo0"), Port: 8081, PID: 101}, // a scoped address keeps its zone
+				{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 5432, PID: 0},              // root's docker-proxy
 			},
 			Warnings: []model.Warning{{Code: "process_fields_unreadable", Count: 1, Hint: "run with sudo"}},
 			Timings:  model.Timing{"proctable": 1500 * time.Microsecond, "argv_cwd": 2250 * time.Microsecond, "listeners": 750 * time.Microsecond},
@@ -110,7 +111,10 @@ func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) mod
 	}
 	s.Timing["projects"] = 125 * time.Microsecond // measured by Build
 	if docker == nil {
+		// Build reconciles with the engine's containers; these are set afterwards, so Reconcile
+		// marks the unknown owner of 5432 as shop-db-1's here, as Build does with Docker.
 		s.Containers = goldenContainers
+		s.Processes = model.Reconcile(s.Processes, s.Containers)
 	}
 	return s
 }

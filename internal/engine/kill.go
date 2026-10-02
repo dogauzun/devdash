@@ -220,10 +220,14 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 
 	// One refused process refuses the whole action; nothing is skipped silently.
 	for _, p := range plan.Procs {
+		// The container is named only when it accounts for every port p holds. Reconcile gives a
+		// proxy the ContainerID of the one container its matched sockets belong to, even when it
+		// also holds a socket that matched nothing (Docker Desktop's Kubernetes on 6443 next to a
+		// database's 5432): docker stop would then stop the database and leave that port held.
+		whole := p.ContainerID != "" && !slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.ContainerID == "" })
 		switch {
-		case p.ContainerID != "":
-			name := container(p.ContainerID)
-			return Plan{}, refuse("pid %d (%s) holds a port of container %s: use docker stop %s", p.PID, p.Name, name, name)
+		case whole:
+			return Plan{}, refuseContainer(p, container(p.ContainerID))
 		case model.IsContainerRuntime(p):
 			return Plan{}, refuse("pid %d (%s) is part of the container runtime, not your service: %s", p.PID, p.Name, runtimeHint(p))
 		case p.PID == 0:
@@ -232,9 +236,15 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 			return Plan{}, refuse("pid 1 (%s) is init", p.Name)
 		case refused[p.PID] != "":
 			return Plan{}, refuse("pid %d (%s) %s", p.PID, p.Name, refused[p.PID])
+		case p.ContainerID != "": // Reconcile marks only runtime processes and PID 0, refused above; kept refused all the same
+			return Plan{}, refuseContainer(p, container(p.ContainerID))
 		}
 	}
 	return plan, nil
+}
+
+func refuseContainer(p model.Process, name string) error {
+	return refuse("pid %d (%s) holds a port of container %s: use docker stop %s", p.PID, p.Name, name, name)
 }
 
 // runtimeHint is how to find the container behind a runtime process's ports: docker ps

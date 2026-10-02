@@ -69,9 +69,9 @@ The top-level object.
 | `cpu_percent` | number or null | always | See Conventions, CPU. `null` when unreadable or when the process was not in the first sample (`cpu` in `unknown`). |
 | `rss_bytes` | integer or null | always | Resident memory in bytes; `null` when unreadable (`mem` in `unknown`). |
 | `listeners` | listener array | always | Listening TCP sockets this process owns; `[]` for none. |
-| `kind` | string | always | One of `other`, `server`, `container`, `agent`, `test`, `watcher`, `shell`, `editor`. `other` for `pid: 0`. |
+| `kind` | string | always | One of `other`, `server`, `container`, `agent`, `test`, `watcher`, `shell`, `editor`. `other` for `pid: 0`, or `container` when its socket matched a container's published port. |
 | `project` | string or null | always | `id` of the project the process belongs to, `null` for none. |
-| `container` | string or null | always | Id of the container whose published port this process holds; `null` otherwise. |
+| `container` | string or null | always | Id of the container whose published ports this process holds, when every socket matched to a container is that one container's; `null` otherwise, including for a proxy holding several containers' ports (see the listener's `container`). |
 | `unknown` | string array | always | Fields that could not be read, in this order: `owner`, `argv`, `cwd`, `cpu`, `mem`. `[]` when everything was read. `pid: 0` entries have all five. |
 
 ## listener
@@ -81,6 +81,7 @@ The top-level object.
 | `proto` | string | always | `tcp4` or `tcp6`. A dual-stack socket is one `tcp6` listener on `::`; a v4-mapped bind is `tcp4`. |
 | `addr` | string | always | Bind address; `0.0.0.0` or `::` means every interface. A scoped IPv6 address (link-local) carries its zone on macOS: `fe80::1%lo0`. |
 | `port` | integer | always | TCP port, 1 to 65535. |
+| `container` | string or null | always | Id of the container whose published port this socket is (matched against Docker's port list); `null` otherwise. Set on each socket of a proxy that holds several containers' ports (Docker Desktop's `com.docker.backend`), whose process `container` is `null`. |
 
 ## container
 
