@@ -3,6 +3,7 @@ package tui
 import (
 	"math"
 	"net/netip"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,24 @@ import (
 
 // now is the fixed clock of every test; fixture snapshots are taken 2 s before it.
 var now = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
+// TestMain pins the local zone to UTC: the detail pane shows start times in local time, and
+// the goldens and expected lines must not depend on the TZ of the machine running them (DEV-90).
+func TestMain(m *testing.M) {
+	local := time.Local
+	time.Local = time.UTC
+	code := m.Run()
+	time.Local = local
+	os.Exit(code)
+}
+
+// pinLocal sets the local zone to loc for the rest of the test.
+func pinLocal(t *testing.T, loc *time.Location) {
+	t.Helper()
+	prev := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = prev })
+}
 
 // fakeSource is a Source whose updates the test sends directly through Update, so the
 // channel is only there to satisfy Init.
