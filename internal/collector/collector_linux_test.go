@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -160,6 +162,27 @@ func listenV4Mapped(t *testing.T) uint16 {
 		t.Fatal(err)
 	}
 	return uint16(got.(*syscall.SockaddrInet6).Port)
+}
+
+// TestHasPtrace: capget agrees with bit 19 of CapEff in /proc/self/status.
+func TestHasPtrace(t *testing.T) {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.Lines(string(b)) {
+		if hex, ok := strings.CutPrefix(line, "CapEff:"); ok {
+			eff, err := strconv.ParseUint(strings.TrimSpace(hex), 16, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := eff&(1<<19) != 0; hasPtrace() != want {
+				t.Errorf("hasPtrace() = %v, CapEff %s", !want, strings.TrimSpace(hex))
+			}
+			return
+		}
+	}
+	t.Fatal("no CapEff line")
 }
 
 // BenchmarkCollect runs against the live /proc and reports the p50 of each source.

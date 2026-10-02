@@ -295,7 +295,7 @@ Rules for the loop: collection runs with a context timeout of 1.5 s; a timed-out
 
 | Condition | Behaviour |
 | --- | --- |
-| cwd, argv, fd or task info unreadable (other uid) | row shown, fields marked unknown, one warning with a count, footer hint `run with sudo` |
+| cwd, argv, fd or task info unreadable (other uid) | row shown, fields marked unknown, one warning with a count, footer hint `run with sudo` (as Linux root, which sudo cannot help: names the missing CAP_SYS_PTRACE, `--cap-add SYS_PTRACE`) |
 | macOS PCB list empty or denied | other users' listeners treated as unknown (own-uid listeners still come from the fd walk); one warning; hint in footer; no netstat fallback |
 | Docker socket absent | no Docker rows, no warning |
 | Docker socket present but unreachable or slow | previous container list kept, one footer hint, retry every 10th tick |
