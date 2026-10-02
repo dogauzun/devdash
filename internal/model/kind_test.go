@@ -6,7 +6,7 @@ import (
 )
 
 func TestClassify(t *testing.T) {
-	listen := []Listener{{"tcp4", lo, 3000}}
+	listen := []Listener{{Proto: "tcp4", Addr: lo, Port: 3000}}
 	tests := []struct {
 		argv      string // space-separated; "" for no argv
 		name      string // Name, used when argv is empty
@@ -77,7 +77,7 @@ func TestClassify(t *testing.T) {
 }
 
 func TestClassifyUnknownOwner(t *testing.T) {
-	p := Process{Name: "unknown", Listeners: []Listener{{"tcp4", any4, 22}}, Unknown: unknownOwner}
+	p := Process{Name: "unknown", Listeners: []Listener{{Proto: "tcp4", Addr: any4, Port: 22}}, Unknown: unknownOwner}
 	if got := Classify(p); got != KindOther {
 		t.Errorf("PID 0 pseudo-process: %v, want other", got)
 	}

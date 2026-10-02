@@ -143,3 +143,18 @@ var runtimeNames = map[string]string{
 
 // runtimePrefix: any basename starting with it is a containerd shim (containerd-shim-runc-v2).
 const runtimePrefix = "containerd-shim"
+
+// proxyNames: the runtime processes that hold a container's published port on the host, so a
+// listener they own can be a container's (Reconcile). A subset of runtimeNames.
+var proxyNames = map[string]bool{
+	"docker-proxy":       true, // Docker Engine userland proxy, one process per published port and family
+	"com.docker.backend": true, // Docker Desktop on macOS: one process holds every published port
+	"com.docker.vpnkit":  true, // older Docker Desktop for Mac
+	"vpnkit":             true, // older Docker Desktop, Linux and Windows builds
+	"limactl":            true, // Lima host agent: Lima, Colima and Rancher Desktop on macOS
+	"gvproxy":            true, // Podman machine, newer Docker Desktop networking
+	"rootlesskit":        true, // rootless Docker, builtin port driver
+	"rootlessport":       true, // rootless Docker and Podman port forwarder
+	"slirp4netns":        true, // rootless, slirp4netns port driver
+	"pasta":              true, // rootless Podman 5
+}
