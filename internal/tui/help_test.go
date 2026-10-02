@@ -187,3 +187,56 @@ func TestHelpScroll(t *testing.T) {
 		t.Errorf("at 80x5 down did not scroll:\n%s", screen(m))
 	}
 }
+
+// TestHelpNarrow: below 80 columns an action wraps under its own column instead of being cut
+// at the screen edge, and the scrolling and the position line count the wrapped lines (DEV-94).
+func TestHelpNarrow(t *testing.T) {
+	m, _ := newTest(t, 60, 15)
+	feed(m, fixture())
+	lines := m.helpLines(60)
+	for _, l := range lines {
+		if n := ansi.StringWidth(l); n > 60 {
+			t.Errorf("help line is %d cells at 60 columns: %q", n, ansi.Strip(l))
+		}
+	}
+	total := len(lines)
+	if total <= len(helpKeys)+3 { // blank, Warnings, one warning
+		t.Fatalf("no action wraps at 60 columns: %d lines", total)
+	}
+	seen := helpSeen(t, m)
+	indent := strings.Repeat(" ", helpKeyWidth)
+	for _, want := range []string{
+		"pgup pgdown page the table or the open detail pane; g/home",
+		indent + "first, G/end last row",
+		"x           kill modal: p process, t tree, f force, Y second",
+		indent + "confirm, esc cancel",
+		"enter       open or close the detail pane (esc closes it",
+		indent + "too)",
+		"q ctrl-c    quit",
+		"run with sudo to see owners",
+	} {
+		if !slices.Contains(seen, want) {
+			t.Errorf("help never shows %q; seen:\n%s", want, strings.Join(seen, "\n"))
+		}
+	}
+	words := map[string]bool{}
+	for _, l := range seen {
+		for _, f := range strings.Fields(l) {
+			words[f] = true
+		}
+	}
+	for _, k := range helpKeys {
+		for _, f := range strings.Fields(k[1]) {
+			if !words[f] {
+				t.Errorf("help never shows %q of the %q row", f, k[0])
+			}
+		}
+	}
+	body := bodyLines(m) // scrolled to the end by helpSeen
+	if got, want := body[len(body)-1], fmt.Sprintf("lines %d-%d of %d, ↑↓ to scroll", total-len(body)+3, total, total); got != want {
+		t.Errorf("position line at the end %q, want %q", got, want)
+	}
+	if body[len(body)-2] != "run with sudo to see owners" {
+		t.Errorf("the last overlay line is not shown at the end:\n%s", strings.Join(body, "\n"))
+	}
+}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -343,6 +344,67 @@ func TestDetailWrapWideAtWidthOne(t *testing.T) {
 	press(m, "enter")
 	if line(m, "command") == "" {
 		t.Errorf("the 11-column overlay does not show the command field:\n%s", screen(m))
+	}
+}
+
+// hiddenProxy is the fixture as a non-root user in the docker group sees it: docker-proxy is
+// root's, so shop-db-1's published port 5432 has a PID 0 owner that Reconcile gave the
+// container's ID (DEV-89).
+func hiddenProxy() model.Snapshot {
+	s := fixture()
+	s.Processes = slices.DeleteFunc(s.Processes, func(p model.Process) bool { return p.PID == 300 })
+	l := lis("tcp4", "0.0.0.0", 5432)
+	l.ContainerID = "9f1c2a7b0d3e"
+	s.Processes = append(s.Processes, model.Process{Name: "unknown", Kind: model.KindContainer,
+		ContainerID: "9f1c2a7b0d3e", Listeners: []model.Listener{l}, CPUPercent: math.NaN(),
+		Unknown: model.FieldOwner | model.FieldArgv | model.FieldCwd | model.FieldCPU | model.FieldMem})
+	return s
+}
+
+func TestDetailUnknownOwnerContainer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		socket func() string
+		want   string // "" for no socket line
+	}{
+		{"socket known", func() string { return "/var/run/docker.sock" }, "docker socket: /var/run/docker.sock"},
+		{"no socket", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newTest(t, 100, 40, func(o *Options) { o.DockerSocket = tc.socket })
+			s := hiddenProxy()
+			feed(m, s)
+			press(m, "enter")
+			detailSelect(t, m, s.Processes[len(s.Processes)-1].Key())
+			for _, want := range []string{
+				"shop-db-1 · container",
+				"listeners tcp4 0.0.0.0:5432 (every interface)",
+				"container shop-db-1",
+				"image     postgres:16",
+				"state     running",
+				"compose   shop / db",
+				"ports     0.0.0.0:5432 -> 5432/tcp",
+			} {
+				hasLine(t, m, want)
+			}
+			if tc.want != "" {
+				hasLine(t, m, tc.want)
+			}
+			for _, not := range []string{"unknown owner", "sudo", "no process holds the port"} {
+				if strings.Contains(strings.Join(bodyLines(m), "\n"), not) {
+					t.Errorf("container's port shows %q:\n%s", not, screen(m))
+				}
+			}
+
+			// Docker's list no longer has the container: its ID stands in for the name.
+			s.Containers = s.Containers[1:]
+			feed(m, s)
+			detailSelect(t, m, s.Processes[len(s.Processes)-1].Key())
+			hasLine(t, m, "container 9f1c2a7b0d3e")
+			if strings.Contains(strings.Join(bodyLines(m), "\n"), "sudo") {
+				t.Errorf("container's port shows the sudo hint:\n%s", screen(m))
+			}
+		})
 	}
 }
 
