@@ -43,7 +43,7 @@ type Process struct {
 	Listeners   []Listener
 	Kind        Kind
 	ProjectID   string   // Project.ID or ""
-	ContainerID string   // set when every published port this process holds is one container's (Reconcile)
+	ContainerID string   // set when every listener this process holds is the same container's (Reconcile)
 	Unknown     FieldSet // fields that could not be read
 }
 
