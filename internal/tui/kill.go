@@ -76,9 +76,9 @@ func (m *Model) startKill() tea.Cmd {
 	}
 	name := ""
 	switch {
-	case r.Process != nil:
+	case r.Process != nil && (r.Process.PID != 0 || r.Container == nil):
 		name = r.Process.Name
-	case r.Container != nil:
+	case r.Container != nil: // a container row, or its port's unreadable PID 0 owner
 		name = r.Container.Name
 	}
 	s := m.upd.Snapshot

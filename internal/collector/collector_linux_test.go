@@ -107,7 +107,7 @@ func TestCollectFindsSelf(t *testing.T) {
 		t.Fatalf("own pid %d not in %d processes", pid, len(res.Processes))
 	}
 	self := res.Processes[i]
-	wd, _ := os.Getwd()
+	wd := kernelWd(t)
 	if self.PPID != os.Getppid() || self.UID != os.Geteuid() || self.Cwd != wd || !slices.Equal(self.Argv, os.Args) {
 		t.Errorf("self = %+v; want ppid %d uid %d cwd %q argv %q", self, os.Getppid(), os.Geteuid(), wd, os.Args)
 	}
