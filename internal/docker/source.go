@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"sync"
 	"time"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -13,14 +14,20 @@ import (
 const requestTimeout = 500 * time.Millisecond
 
 // Source lists the containers at one endpoint with the spec's failure policy, and satisfies
-// engine.ContainerSource. Fetch is called by one goroutine at a time.
+// engine.ContainerSource. Fetch is called by one goroutine at a time; Endpoint may be called
+// alongside it.
 type Source struct {
 	ep      Endpoint
 	c       *client
 	timeout time.Duration // per request; requestTimeout except in tests
 
+	// A NewDiscoverySource has a zero ep and a nil c until discover finds an endpoint. mu
+	// guards that one write of ep against Endpoint; Fetch, the only writer, reads ep unlocked.
+	discover func() (Endpoint, bool, error) // nil for NewSource
+	mu       sync.Mutex
+
 	prev     []model.Container // last good list, returned when a call cannot get a new one
-	warn     *model.Warning    // docker_unreachable while the endpoint is failing, else nil
+	warn     *model.Warning    // docker_unreachable while the endpoint is failing (or find's docker_endpoint_invalid), else nil
 	needPing bool              // ping before the next list: at start, after each failure or missing socket
 	retry    holdoff           // after a failure or a missing socket, no request until it is due
 	now      func() time.Time  // time.Now except in tests
@@ -38,8 +45,13 @@ func NewSource(ep Endpoint, tick, beat time.Duration) *Source {
 // 10 refresh ticks, rounded up to a whole number of beats.
 func (s *Source) RetryAfter() time.Duration { return s.retry.after }
 
-// Endpoint is the endpoint this Source asks, for the detail pane's footer.
-func (s *Source) Endpoint() Endpoint { return s.ep }
+// Endpoint is the endpoint this Source asks, for the detail pane's footer; the zero Endpoint
+// while a NewDiscoverySource has found none.
+func (s *Source) Endpoint() Endpoint {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ep
+}
 
 // Fetch returns the containers to use now and a warning when Docker is present but not
 // answering (nil otherwise). It pings once at start and after each failure; after a failure
@@ -63,6 +75,9 @@ func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) 
 		return s.prev, s.warn
 	}
 	if ctx.Err() != nil {
+		return s.prev, s.warn
+	}
+	if s.c == nil && !s.find(start) {
 		return s.prev, s.warn
 	}
 	if s.needPing {

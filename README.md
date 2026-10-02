@@ -222,11 +222,13 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   Signing notes in [docs/SPEC.md](docs/SPEC.md#build-release-and-distribution) and [DECISIONS.md](DECISIONS.md) (DEV-10).
 - **Docker** is optional. devdash uses `DOCKER_HOST`, then the current docker context, then
   the first socket it finds among Docker Desktop's, OrbStack's, Colima's, `/var/run/docker.sock`
-  and Podman's. With no socket there are no container rows and no warning; an unreachable or
-  slow engine gives a warning and the last container list. Only plain `unix://` and `tcp://`
-  endpoints are supported, not TLS. A published port with no userland proxy behind it
-  (iptables only) shows as a container with no process. With `--no-docker`, or when Docker is
-  not found, a published port shows as the process that forwards it (`docker-proxy` on Linux,
+  and Podman's. With no socket there are no container rows and no warning, and the dashboard
+  looks again every 10 ticks (20 s by default), so Docker started after devdash shows up within
+  that time; `port`, `kill` and `--json` look once. An unreachable or slow engine gives a
+  warning and the last container list. Only plain `unix://` and `tcp://` endpoints are
+  supported, not TLS. A published port with no userland proxy behind it (iptables only) shows
+  as a container with no process. With `--no-docker`, or while Docker is not found, a
+  published port shows as the process that forwards it (`docker-proxy` on Linux,
   `com.docker.backend` on Docker Desktop for Mac, another forwarder on OrbStack, Colima or
   Podman), or with an unknown owner when root holds it. `port N` only reports ports listening
   on the host, not unpublished ports inside a Docker network.

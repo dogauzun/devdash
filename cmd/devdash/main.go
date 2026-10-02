@@ -135,7 +135,7 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Writer) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	eo := o.engine(c)
+	eo := o.dashboard(c)
 	e := engine.New(eo)
 	done := make(chan struct{})
 	go func() { defer close(done); e.Run(ctx) }()
@@ -153,21 +153,24 @@ func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Wri
 }
 
 // tuiOptions is the dashboard's options for these flags on engine e, whose container source is
-// src (the engine options' Docker). The detail pane names src's endpoint, so it shows the
-// endpoint discovered once for the engine; nothing without one (--no-docker, none found, or
-// endpointError, whose warning already says why).
+// src (the engine options' Docker). The detail pane names the endpoint src asks at the time it
+// is drawn, so it follows a rediscovering Source; nothing without one (--no-docker, none found
+// yet, or endpointError, whose warning already says why).
 func tuiOptions(o options, e *engine.Engine, src engine.ContainerSource) tui.Options {
 	to := tui.Options{Source: e, Kill: e.Kill, ShowAll: o.All}
 	if s, ok := src.(*docker.Source); ok {
-		label := dockerLabel(s.Endpoint())
-		to.DockerSocket = func() string { return label }
+		to.DockerSocket = func() string { return dockerLabel(s.Endpoint()) }
 	}
 	return to
 }
 
 // dockerLabel names endpoint ep as a user would recognise it: the socket path for unix, the
-// tcp://host:port URL for tcp, then how it was found in parentheses unless it is a default path.
+// tcp://host:port URL for tcp, then how it was found in parentheses unless it is a default
+// path; "" for the zero Endpoint (none found yet).
 func dockerLabel(ep docker.Endpoint) string {
+	if ep == (docker.Endpoint{}) {
+		return ""
+	}
 	s := ep.Address
 	if ep.Network != "unix" {
 		s = ep.String()
@@ -310,15 +313,21 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
-// engine returns the engine options for these flags. Unless --no-docker, it looks for a
-// Docker endpoint, retried after a failure on the first 5 s Docker beat once 10 ticks of
-// --tick have passed (a zero Tick, as in tests, is the default tick); the colour setting is
-// not an engine option, its readers take it from o.
-func (o options) engine(c collector.Collector) engine.Options {
+// engine returns the engine options for these flags, for the one-shot commands (port, kill,
+// --json). Unless --no-docker, it looks for a Docker endpoint once, retried after a failure
+// on the first 5 s Docker beat once 10 ticks of --tick have passed (a zero Tick, as in tests,
+// is the default tick); the colour setting is not an engine option, its readers take it from o.
+func (o options) engine(c collector.Collector) engine.Options { return o.engineOptions(c, false) }
+
+// dashboard is engine for the dashboard, which runs until the user quits: when no endpoint is
+// found at start, its source looks again on the same cadence, so Docker started later shows up.
+func (o options) dashboard(c collector.Collector) engine.Options { return o.engineOptions(c, true) }
+
+func (o options) engineOptions(c collector.Collector, rediscover bool) engine.Options {
 	home, _ := os.UserHomeDir()
 	eo := engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
 	if !o.NoDocker {
-		eo.Docker = dockerSource(home, cmp.Or(o.Tick, engine.DefaultTick))
+		eo.Docker = dockerSource(home, cmp.Or(o.Tick, engine.DefaultTick), rediscover)
 	}
 	return eo
 }
@@ -326,15 +335,19 @@ func (o options) engine(c collector.Collector) engine.Options {
 // discover finds the Docker endpoint; tests replace it.
 var discover = docker.Discover
 
-// dockerSource is the container source for this machine: nil when no endpoint is found (no
-// containers, no warning), a docker.Source when one is, and endpointError when DOCKER_HOST or
-// the docker context names an endpoint devdash cannot use. tick is the refresh interval,
-// which with engine.DockerTick sets the Source's retry cadence.
-func dockerSource(home string, tick time.Duration) engine.ContainerSource {
-	ep, ok, err := discover(docker.Env{Getenv: os.Getenv, Home: home})
+// dockerSource is the container source for this machine: a docker.Source when an endpoint is
+// found, and endpointError when DOCKER_HOST or the docker context names one devdash cannot
+// use. When none is found (no containers, no warning) it is nil, or with rediscover a
+// docker.NewDiscoverySource that runs discovery again until it finds one. tick is the refresh
+// interval, which with engine.DockerTick sets the Source's retry cadence.
+func dockerSource(home string, tick time.Duration, rediscover bool) engine.ContainerSource {
+	env := docker.Env{Getenv: os.Getenv, Home: home}
+	ep, ok, err := discover(env)
 	switch {
 	case err != nil:
 		return endpointError{err}
+	case !ok && rediscover:
+		return docker.NewDiscoverySource(func() (docker.Endpoint, bool, error) { return discover(env) }, tick, engine.DockerTick)
 	case !ok:
 		return nil // not a typed nil: Options.Docker must compare equal to nil
 	}
@@ -346,5 +359,5 @@ func dockerSource(home string, tick time.Duration) engine.ContainerSource {
 type endpointError struct{ err error }
 
 func (e endpointError) Fetch(context.Context) ([]model.Container, *model.Warning) {
-	return nil, &model.Warning{Code: "docker_endpoint_invalid", Count: 1, Hint: "docker: " + e.err.Error()}
+	return nil, docker.InvalidEndpoint(e.err)
 }
