@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"runtime"
 	"sync"
 	"time"
 
@@ -141,9 +142,19 @@ func (s *Source) fail(start time.Time, err error) ([]model.Container, *model.War
 func (s *Source) hint(err error) string {
 	switch {
 	case errors.Is(err, fs.ErrPermission) && s.ep.Network == "unix":
-		return "docker: permission denied on " + s.ep.Address + " (add yourself to the docker group)"
+		return deniedHint(runtime.GOOS, s.ep.Address)
 	case errors.Is(err, fs.ErrPermission):
 		return "docker: permission denied on " + s.ep.String()
 	}
 	return "docker: not reachable at " + s.ep.String()
+}
+
+// deniedHint is the hint for a unix socket at path that refuses this user on goos. Joining the
+// docker group is Linux's remedy; on macOS the Docker Desktop and OrbStack sockets live in the
+// user's home and belong to the user, so a denied one is most likely another user's (DEV-93).
+func deniedHint(goos, path string) string {
+	if goos == "darwin" {
+		return "docker: permission denied on " + path + " (owned by another user?)"
+	}
+	return "docker: permission denied on " + path + " (add yourself to the docker group)"
 }
