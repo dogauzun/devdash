@@ -43,7 +43,8 @@ func (s stubDocker) Fetch(context.Context) ([]model.Container, *model.Warning) {
 
 // goldenSnapshot builds a snapshot through the engine from a scripted collector: two samples
 // 200 ms apart, two repositories (one a linked worktree on a detached HEAD) under dir. With
-// docker nil it sets goldenContainers itself, so the golden file has no "docker" timing.
+// docker nil it fetches goldenContainers from a stub and drops the measured "docker" timing,
+// so the golden file has none.
 func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) model.Snapshot {
 	t.Helper()
 	write := func(path, content string) {
@@ -89,6 +90,12 @@ func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) mod
 	// A fixed table instead of the OS lookup, so the output does not depend on this machine's
 	// accounts: uid 54321 has none, so it is named by its number, as the OS lookup would.
 	users := map[int]string{0: "root", 54321: "54321"}
+	golden := docker == nil
+	if golden {
+		// Build reconciles, so the unknown owner of 5432 (root's docker-proxy) is shop-db-1's
+		// and the listener_owner_unreadable count leaves it out (DEV-77).
+		docker = stubDocker{goldenContainers, nil}
+	}
 	o := engine.Options{
 		Collector: &collector.Fake{Steps: []collector.Step{sample(0, 0, false), sample(200*time.Millisecond, 300*time.Millisecond, true)}},
 		Resolver:  model.NewResolver("", nil),
@@ -110,11 +117,8 @@ func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) mod
 		t.Fatal(err)
 	}
 	s.Timing["projects"] = 125 * time.Microsecond // measured by Build
-	if docker == nil {
-		// Build reconciles with the engine's containers; these are set afterwards, so Reconcile
-		// marks the unknown owner of 5432 as shop-db-1's here, as Build does with Docker.
-		s.Containers = goldenContainers
-		s.Processes = model.Reconcile(s.Processes, s.Containers)
+	if golden {
+		delete(s.Timing, "docker") // measured; the golden file pins the other timings
 	}
 	return s
 }

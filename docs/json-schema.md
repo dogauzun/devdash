@@ -71,7 +71,7 @@ The top-level object.
 | `listeners` | listener array | always | Listening TCP sockets this process owns; `[]` for none. |
 | `kind` | string | always | One of `other`, `server`, `container`, `agent`, `test`, `watcher`, `shell`, `editor`. `other` for `pid: 0`, or `container` when its socket matched a container's published port. |
 | `project` | string or null | always | `id` of the project the process belongs to, `null` for none. |
-| `container` | string or null | always | Id of the container whose published ports this process holds, when every socket matched to a container is that one container's; `null` otherwise, including for a proxy holding several containers' ports (see the listener's `container`). |
+| `container` | string or null | always | Id of the container whose published ports this process holds, when every one of its sockets is that one container's; `null` otherwise, including for a proxy holding several containers' ports or one container's next to a port of its own (`OrbStack Helper`, `com.docker.backend`; see the listener's `container`). |
 | `unknown` | string array | always | Fields that could not be read, in this order: `owner`, `argv`, `cwd`, `cpu`, `mem`. `[]` when everything was read. `pid: 0` entries have all five. |
 
 ## listener
@@ -128,7 +128,7 @@ The top-level object.
 
 | Code | OS | Meaning |
 | --- | --- | --- |
-| `listener_owner_unreadable` | both | Listeners whose owner could not be read; `count` is the number of `pid: 0` entries. |
+| `listener_owner_unreadable` | both | Listeners whose owner could not be read; `count` is the number of `pid: 0` entries whose listener has `container` `null`. An entry matched to a container (root's `docker-proxy` seen by a normal user) is explained and not counted, and the warning is absent when no entry is left. |
 | `process_fields_unreadable` | both | Processes of other users with fields in `unknown`; `count` is the number of processes. |
 | `pcblist_unavailable` | macOS | The kernel withheld other processes' sockets from the PCB list; other users' listeners may be missing. |
 | `proc_hidepid` | Linux | `/proc` is mounted with `hidepid`; other users' processes are invisible. |

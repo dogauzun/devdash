@@ -99,7 +99,8 @@ func (r Result) ExitCode() int {
 // osys is the OS seam: unit tests replace it, so they record signals instead of sending them.
 type osys struct {
 	// start returns a pid's start time read from the OS now, in the collector's terms, or
-	// errGone when the pid does not exist or is a zombie.
+	// errGone when the pid does not exist or is a zombie (on Linux, once every thread has
+	// exited, so its files are closed).
 	start   func(pid int) (time.Time, error)
 	ppid    func(pid int) (int, error) // read from the OS now, from the same source as start
 	getpgid func(pid int) (int, error)
@@ -222,10 +223,10 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 
 	// One refused process refuses the whole action; nothing is skipped silently.
 	for _, p := range plan.Procs {
-		// The container is named only when it accounts for every port p holds. Reconcile gives a
-		// proxy the ContainerID of the one container its matched sockets belong to, even when it
-		// also holds a socket that matched nothing (Docker Desktop's Kubernetes on 6443 next to a
-		// database's 5432): docker stop would then stop the database and leave that port held.
+		// The container is named only when it accounts for every port p holds: with a socket
+		// that matched nothing (Docker Desktop's Kubernetes on 6443 next to a database's 5432),
+		// docker stop would stop the database and leave that port held. Reconcile no longer gives
+		// such a process a ContainerID (PR #52 review); the check stays for any snapshot that does.
 		whole := p.ContainerID != "" && !slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.ContainerID == "" })
 		switch {
 		case whole:
