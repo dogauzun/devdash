@@ -6,15 +6,17 @@ Non-obvious choices go in `DECISIONS.md`, one dated line each.
 
 ## Commands
 
+The `Makefile` wraps what CI runs; `make` lists the targets.
+
 ```sh
-CGO_ENABLED=0 go build ./...
-go vet ./...
-go test -race ./...
-golangci-lint run
-goreleaser release --snapshot --clean   # release pipeline dry run into dist/ (goreleaser v2.18.2)
+make check      # the pre-push gate: lint + vet (darwin and linux), the four cross-builds, go test -race -count=1
+make fmt        # gofmt + goimports rewrite (golangci-lint fmt)
+make build      # ./devdash for this machine
+make snapshot   # goreleaser check + release --snapshot --clean into dist/ (goreleaser v2.18.2)
 ```
 
-Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linux go vet ./...` (or `GOOS=darwin`).
+Single steps: `make lint`, `make vet`, `make cross`, `make test`, `make bench`, `make docker-gate`. golangci-lint is
+pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'s.
 
 ## Layout
 
