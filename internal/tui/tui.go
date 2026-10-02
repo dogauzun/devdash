@@ -74,6 +74,7 @@ type Model struct {
 	detail bool // detail pane open (detail.go)
 	help   bool // help overlay open (help.go)
 	kill   killState
+	hpos   helpPos // help overlay scroll position (help.go)
 
 	status string // one-shot message in the footer (open failed, kill result); cleared by the next key
 }
