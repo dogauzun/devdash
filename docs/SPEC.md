@@ -195,7 +195,9 @@ After signalling, the engine polls every 100 ms for up to 3 s (`--timeout`), the
 
 **Refused targets.** pid 0, pid 1 (`init`, `launchd`), devdash's own pid, and every ancestor of devdash (the shell and terminal running it). A row that represents a container port is refused with the hint `docker stop <name>`. A process owned by another user is attempted, and the resulting `EPERM` is shown as "permission denied, run with sudo". Killing a process outside any project group asks for a second confirmation, because those are usually system services.
 
-**Confirmation.** The modal lists every pid that will receive the signal with its name, project and ports, and the mode. `--yes` skips it on the CLI only; the TUI always confirms.
+**Confirmation.** The modal lists every pid that will receive the signal with its name, project and ports, and the mode. `--yes` skips it on the CLI only, together with the second confirmation for a target outside every project; the TUI always confirms. Without `--yes` the CLI asks on the terminal and, when stdin is not a terminal, exits 2 without signalling.
+
+**`kill N` on the CLI.** N is a TCP port. Every distinct owner of a listener on it gets its own plan; the plans are shown together and confirmed once, and if any owner is refused (including an unknown PID 0 owner), nothing is signalled. After the wait the port is checked again in a fresh snapshot: a forked child can still hold a socket credited only to its parent, so the CLI names the holder and suggests `--tree`; the exit code still describes only the processes that were signalled.
 
 **Open in browser.** `o` runs `open` on macOS or `xdg-open` on Linux with `http://localhost:<port>`, using the lowest port when the process has several. No HTTPS detection in v1; a wrong scheme costs the user one click.
 
@@ -208,7 +210,7 @@ The CLI exposes the same snapshot the TUI shows, and its exit codes are the cont
 | `devdash` | the TUI | 0 |
 | `devdash --json` | one snapshot as a JSON document on stdout | 0; 5 devdash failed |
 | `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free, 5 devdash failed |
-| `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | what was signalled, then survivors | 0 all exited, 3 permission denied, 4 survivors remain, 5 devdash failed |
+| `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | the plan (mode, signal, every pid with name, project and ports), then what was signalled, survivors, and whether the port is free | 0 all exited (or nothing listens on the port), 2 usage error or no terminal to confirm on without `--yes`, 3 permission denied (or the owner is unknown), 4 survivors remain, 5 devdash failed, 6 nothing signalled: a refused target or a declined confirmation |
 | `devdash version` | version, commit, build date | 0 |
 
 Global flags: `--roots <paths>` limits project scanning to repositories under those directories (comma-separated, and repeatable; a leading `~` is `$HOME`, `~user` is not supported, and a path that is not an existing directory is a usage error); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. Every command exits 5 when devdash itself fails (no snapshot could be taken, or the output could not be written), with the error on stderr and nothing on stdout; 1 is only ever "port free".
