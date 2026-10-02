@@ -46,6 +46,17 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -race ./...
 
+      # kill(2)'s EPERM path needs root to start a target and a helper as two other uids; the
+      # test skips without it. The binary is built as the runner, so root never writes to the
+      # Go cache, and the grep fails the step if the test skipped anyway.
+      - name: go test (kill permission, as root)
+        if: ${{ !cancelled() }}
+        working-directory: internal/engine
+        run: |
+          go test -c -o "$RUNNER_TEMP/engine.test" .
+          sudo "$RUNNER_TEMP/engine.test" -test.run '^TestKillLivePermission$' -test.count=1 -test.v | tee "$RUNNER_TEMP/perm.txt"
+          grep -q -- '--- PASS: TestKillLivePermission ' "$RUNNER_TEMP/perm.txt"
+
       - name: go build (4 targets)
         if: ${{ !cancelled() }}
         env:
