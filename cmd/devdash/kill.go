@@ -42,8 +42,9 @@ func isTerminal(f *os.File) bool {
 // target is one row holding port N: a process (or PID 0 pseudo-process), or a container
 // whose published port has no process behind it.
 type target struct {
-	key  model.RowKey
-	sudo bool // the owner is unknown (PID 0): it is another user's, so sudo might see it
+	key     model.RowKey
+	sudo    bool // the owner is unknown (PID 0): it is another user's, so sudo might see it
+	runtime bool // the owner is a container runtime process (model.IsContainerRuntime)
 }
 
 // runKill stops whatever listens on TCP port N, from one snapshot: one plan per owner, shown
@@ -72,7 +73,11 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 			fmt.Fprintf(stderr, "devdash: %v: %s\n", err, ownerHint(s))
 			code = max(code, 3)
 		} else {
-			fmt.Fprintln(stderr, "devdash:", err)
+			msg := err.Error()
+			if t.runtime { // most likely a container's port that Docker could not name
+				msg = withDocker(msg, s)
+			}
+			fmt.Fprintln(stderr, "devdash:", msg)
 			code = exitRefused
 		}
 	}
@@ -204,7 +209,7 @@ func targets(s model.Snapshot, port uint16) []target {
 				container(l.ContainerID)
 			case !own:
 				own = true
-				ts = append(ts, target{key: p.Key(), sudo: p.PID == 0})
+				ts = append(ts, target{key: p.Key(), sudo: p.PID == 0, runtime: model.IsContainerRuntime(p)})
 			}
 		}
 	}
@@ -323,14 +328,15 @@ func describe(s model.Snapshot, t target) string {
 	return "?"
 }
 
-// ownerHint is the listener_owner_unreadable warning's hint, as `port N` shows it.
+// ownerHint is the listener_owner_unreadable warning's hint followed by the Docker warning's,
+// when there is one, as `port N` shows them.
 func ownerHint(s model.Snapshot) string {
 	for _, w := range s.Warnings {
 		if w.Code == "listener_owner_unreadable" {
-			return w.Hint
+			return withDocker(w.Hint, s)
 		}
 	}
-	return "run with sudo to see owners"
+	return withDocker("run with sudo to see owners", s)
 }
 
 // confirm asks q on w and reads one line: only y or yes (any case) is a yes; EOF is a no.

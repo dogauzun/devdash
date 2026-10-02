@@ -151,3 +151,48 @@ func TestWritePortContainers(t *testing.T) {
 		})
 	}
 }
+
+// TestWritePortDockerHint: with no container list (a socket the user may not open, an engine
+// that does not answer, an endpoint devdash cannot use), a port held by an unknown owner or by
+// a runtime process is most likely a container's, so its line carries the Docker warning's
+// hint after the sudo one; a line of the user's own process does not (DEV-76).
+func TestWritePortDockerHint(t *testing.T) {
+	any4, lo4 := netip.IPv4Unspecified(), netip.MustParseAddr("127.0.0.1")
+	denied := model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: permission denied on /var/run/docker.sock (add yourself to the docker group)"}
+	invalid := model.Warning{Code: "docker_endpoint_invalid", Count: 1, Hint: `docker: DOCKER_HOST "ssh://box": scheme ssh is not supported`}
+	proc := func(pid int, name string) model.Process {
+		return model.Process{PID: pid, PPID: 1, Name: name, Argv: []string{"/usr/bin/" + name}, StartTime: time.Unix(1, 0)}
+	}
+	l := func(port uint16, pid int) model.RawListener {
+		return model.RawListener{Proto: "tcp4", Addr: any4, Port: port, PID: pid}
+	}
+	tests := []struct {
+		name     string
+		listener model.RawListener
+		warnings []model.Warning
+		want     string
+	}{
+		{"unknown owner, permission denied", l(18081, 0), []model.Warning{denied},
+			"0  unknown  -  0.0.0.0:18081  owner unknown: run with sudo to see owners; " + denied.Hint + "\n"},
+		{"unknown owner, endpoint invalid", l(18081, 0), []model.Warning{invalid},
+			"0  unknown  -  0.0.0.0:18081  owner unknown: run with sudo to see owners; " + invalid.Hint + "\n"},
+		{"docker-proxy as root, engine not answering", l(18081, 20), []model.Warning{{Code: "docker_unreachable", Count: 1, Hint: "docker: not reachable at unix:///var/run/docker.sock"}},
+			"20  docker-proxy  -  0.0.0.0:18081  docker: not reachable at unix:///var/run/docker.sock\n"},
+		{"docker-proxy without a Docker warning", l(18081, 20), nil, "20  docker-proxy  -  0.0.0.0:18081\n"},
+		{"the user's own process", model.RawListener{Proto: "tcp4", Addr: lo4, Port: 3000, PID: 10}, []model.Warning{denied},
+			"10  node  -  127.0.0.1:3000\n"},
+		{"another warning is not Docker's", l(18081, 0), []model.Warning{{Code: "proc_hidepid", Count: 1, Hint: "/proc is mounted with hidepid=2"}},
+			"0  unknown  -  0.0.0.0:18081  owner unknown: run with sudo to see owners\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(20, "docker-proxy")}, Listeners: []model.RawListener{tt.listener}}
+			s := model.Build(raw, model.Snapshot{}, nil, model.NewResolver("", nil))
+			s.Warnings = append(s.Warnings, tt.warnings...)
+			var b bytes.Buffer
+			if _, err := writePort(&b, s, tt.listener.Port); err != nil || b.String() != tt.want {
+				t.Errorf("err %v, output\n%q\nwant\n%q", err, b.String(), tt.want)
+			}
+		})
+	}
+}

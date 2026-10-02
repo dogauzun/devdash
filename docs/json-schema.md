@@ -133,4 +133,4 @@ The top-level object.
 | `pcblist_unavailable` | macOS | The kernel withheld other processes' sockets from the PCB list; other users' listeners may be missing. |
 | `proc_hidepid` | Linux | `/proc` is mounted with `hidepid`; other users' processes are invisible. |
 | `docker_endpoint_invalid` | both | `DOCKER_HOST` or the docker context names an endpoint devdash cannot use. |
-| `docker_unreachable` | both | A Docker socket exists but does not answer. |
+| `docker_unreachable` | both | A Docker socket exists but does not answer, or denies this user access (the hint then says `permission denied`). |
