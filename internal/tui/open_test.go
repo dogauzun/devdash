@@ -59,11 +59,12 @@ func TestOpenLowestPort(t *testing.T) {
 
 func TestOpenContainerPortsFallback(t *testing.T) {
 	// A process that reconciliation tied to a container but that has no listener of its own
-	// opens the container's lowest published port.
+	// opens the container's lowest published TCP port.
 	s := fixture()
 	s.Processes[7].Listeners = nil
 	s.Containers[0].Ports = append(s.Containers[0].Ports,
 		model.PortMapping{HostPort: 0, ContainerPort: 9999, Proto: "tcp"}, // exposed, not published
+		model.PortMapping{HostPort: 53, ContainerPort: 53, Proto: "udp"},  // published, but no browser speaks UDP
 		model.PortMapping{HostPort: 5433, ContainerPort: 5432, Proto: "tcp"})
 	rec := &openRecorder{}
 	m, _ := newTest(t, 80, 24, func(o *Options) { o.Open = rec.open })

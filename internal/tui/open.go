@@ -36,7 +36,7 @@ func (o openedMsg) apply(m *Model) tea.Cmd {
 }
 
 // openSelected opens http://localhost:<port> for the selected row's lowest port: its process's
-// listeners, else its container's published ports. A row without a port only gets a status
+// listeners, else its container's published TCP ports. A row without a port only gets a status
 // message. Options.Open runs in the returned command, off the UI goroutine.
 func (m *Model) openSelected() tea.Cmd {
 	r, ok := m.selected()
@@ -54,7 +54,8 @@ func (m *Model) openSelected() tea.Cmd {
 }
 
 // openPort returns the lowest port of r's process listeners, or when it has none, of its
-// container's published ports; 0 for a header or a row without a port.
+// container's published TCP ports (a browser cannot use a UDP one); 0 for a header or a row
+// without a port.
 func openPort(r model.Row) int {
 	low := 0
 	lower := func(p int) {
@@ -72,7 +73,9 @@ func openPort(r model.Row) int {
 	}
 	if low == 0 && r.Container != nil {
 		for _, pm := range r.Container.Ports {
-			lower(int(pm.HostPort))
+			if pm.Proto == "tcp" {
+				lower(int(pm.HostPort))
+			}
 		}
 	}
 	return low

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -73,7 +74,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 		return
 	case p != nil && p.PID == 0:
 		d.title("unknown owner")
-		d.add("the process holding this port could not be read")
+		d.wrap("the process holding this port could not be read")
 		detailListeners(d, p.Listeners)
 		for _, w := range s.Warnings {
 			if slices.Contains(detailOwnerWarnings, w.Code) && w.Hint != "" {
@@ -94,7 +95,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	d.blank()
 	detailContainer(d, r)
 	if p == nil {
-		d.add("no process holds the port (published by Docker)")
+		d.wrap("no process holds the port (published by Docker)")
 	}
 	if m.o.DockerSocket != nil {
 		if sock := m.o.DockerSocket(); sock != "" {
@@ -250,10 +251,10 @@ func detailHeader(d *detailDoc, s model.Snapshot, r model.Row) {
 		}
 	case model.GroupContainers:
 		d.title("containers")
-		d.add("containers without a compose project")
+		d.wrap("containers without a compose project")
 	default:
 		d.title("other")
-		d.add("processes outside every project")
+		d.wrap("processes outside every project")
 	}
 }
 
@@ -318,13 +319,15 @@ func detailStartedBefore(a, b *model.Process) bool {
 	return a.PID < b.PID
 }
 
-// detailArgv returns argv for display: an argument that is empty, holds a space or a
-// character that is not printable (a terminal escape in a process title) is Go-quoted, so
-// the pane shows where each argument ends and nothing in it reaches the terminal.
+// detailArgv returns argv for display: an argument that is empty, holds a space, a character
+// that is not printable (a terminal escape in a process title) or invalid UTF-8 (a lone 0x9b
+// is a C1 CSI, yet decodes to the printable U+FFFD) is Go-quoted, so the pane shows where each
+// argument ends and nothing in it reaches the terminal.
 func detailArgv(argv []string) []string {
 	out := make([]string, len(argv))
 	for i, a := range argv {
-		if a == "" || strings.ContainsFunc(a, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) {
+		if a == "" || !utf8.ValidString(a) ||
+			strings.ContainsFunc(a, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) {
 			a = strconv.Quote(a)
 		}
 		out[i] = a
@@ -332,10 +335,11 @@ func detailArgv(argv []string) []string {
 	return out
 }
 
-// detailClean returns s, Go-quoted when it holds a character that is not printable, so that no
-// name, path or label from the snapshot can send control sequences to the terminal.
+// detailClean returns s, Go-quoted when it holds a character that is not printable or is not
+// valid UTF-8, so that no name, path or label from the snapshot can send control sequences to
+// the terminal.
 func detailClean(s string) string {
-	if strings.ContainsFunc(s, func(r rune) bool { return r != ' ' && !unicode.IsPrint(r) }) {
+	if !utf8.ValidString(s) || strings.ContainsFunc(s, func(r rune) bool { return r != ' ' && !unicode.IsPrint(r) }) {
 		return strconv.Quote(s)
 	}
 	return s
@@ -392,8 +396,9 @@ func (d *detailDoc) wrap(s string) {
 
 // detailWrap joins words with sep into lines at most width cells wide. A word wider than the
 // width starts its own line and is cut into width-wide pieces, its last piece continuing the
-// line; at a break, sep's visible part stays at the end of the line. A width below 1 does not
-// wrap. It always returns at least one line.
+// line; at a break, sep's visible part stays at the end of the line. A grapheme wider than the
+// width (a double-width rune at width 1) is a piece of its own. A width below 1 does not wrap.
+// It always returns at least one line.
 func detailWrap(words []string, sep string, width int) []string {
 	if width < 1 {
 		return []string{strings.Join(words, sep)}
@@ -412,8 +417,15 @@ func detailWrap(words []string, sep string, width int) []string {
 		}
 		cur += w
 		for n := ansi.StringWidth(cur); n > width; n = ansi.StringWidth(cur) {
-			lines = append(lines, ansi.Cut(cur, 0, width))
-			cur = ansi.Cut(cur, width, n)
+			piece := ansi.Cut(cur, 0, width)
+			if piece == "" { // the first grapheme alone is too wide: it still has to make progress
+				piece, _ = ansi.FirstGraphemeCluster(cur, ansi.GraphemeWidth)
+				if piece == cur {
+					break // the last piece stays on the line, overflowing it
+				}
+			}
+			lines = append(lines, piece)
+			cur = strings.TrimPrefix(cur, piece)
 		}
 	}
 	return append(lines, cur)

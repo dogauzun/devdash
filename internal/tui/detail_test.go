@@ -284,11 +284,84 @@ func TestDetailWords(t *testing.T) {
 	}
 }
 
+func TestDetailWrapWideAtWidthOne(t *testing.T) {
+	// A grapheme wider than the width gets a line of its own instead of an empty cut. Each call
+	// runs in a goroutine: the bug this guards against was an endless loop.
+	for _, tc := range []struct {
+		words []string
+		want  []string
+	}{
+		{[]string{"ab漢字c"}, []string{"a", "b", "漢", "字", "c"}},
+		{[]string{"漢字", "x"}, []string{"漢", "字", "x"}},
+	} {
+		done := make(chan []string, 1)
+		go func() { done <- detailWrap(tc.words, " ", 1) }()
+		select {
+		case got := <-done:
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("detailWrap(%q, \" \", 1) = %q, want %q", tc.words, got, tc.want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("detailWrap(%q, \" \", 1) does not return", tc.words)
+		}
+	}
+	// The 11-column overlay leaves a 1-cell value column; the too-wide runes are cut by the
+	// overlay, but the pane renders.
+	m, _ := newTest(t, 11, 24)
+	s := fixture()
+	s.Processes[4].Argv = []string{"漢字"}
+	feed(m, s)
+	detailSelect(t, m, keyOf(s, 200))
+	press(m, "enter")
+	if line(m, "command") == "" {
+		t.Errorf("the 11-column overlay does not show the command field:\n%s", screen(m))
+	}
+}
+
 func TestDetailArgvQuoting(t *testing.T) {
-	got := detailArgv([]string{"sh", "-c", "echo hi", "", "\x1b[31mred"})
-	want := []string{"sh", "-c", `"echo hi"`, `""`, `"\x1b[31mred"`}
+	// 0x9b is a C1 CSI on its own; as invalid UTF-8 it decodes to the printable U+FFFD.
+	got := detailArgv([]string{"sh", "-c", "echo hi", "", "\x1b[31mred", "\x9b31mred", "café"})
+	want := []string{"sh", "-c", `"echo hi"`, `""`, `"\x1b[31mred"`, `"\x9b31mred"`, "café"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("detailArgv = %q, want %q", got, want)
+	}
+}
+
+func TestDetailClean(t *testing.T) {
+	for in, want := range map[string]string{
+		"/src/my app": "/src/my app",
+		"café":        "café",
+		"a\x1b[2Jb":   `"a\x1b[2Jb"`,
+		"a\x9b2Jb":    `"a\x9b2Jb"`,
+		"\xff":        `"\xff"`,
+		"tab\there":   `"tab\there"`,
+	} {
+		if got := detailClean(in); got != want {
+			t.Errorf("detailClean(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDetailSplitNotesWrap(t *testing.T) {
+	// At 120 columns the pane's content is 38 wide: free-text notes wrap at spaces.
+	m, _ := newTest(t, 120, 40)
+	s := fixture()
+	feed(m, s)
+	press(m, "enter")
+	for _, tc := range []struct {
+		key  model.RowKey
+		want []string
+	}{
+		{model.RowKey{ContainerID: "4e5d6c7b8a90"}, []string{"| no process holds the port (published", "|   by Docker)"}},
+		{keyOf(s, 0), []string{"| the process holding this port could", "|   not be read"}},
+		{model.RowKey{Header: model.GroupOther}, []string{"| processes outside every project"}},
+	} {
+		detailSelect(t, m, tc.key)
+		for _, want := range tc.want {
+			if got := ansi.Cut(line(m, want), 80, 120); got != want {
+				t.Errorf("row %+v: pane line %q, want %q\n%s", tc.key, got, want, screen(m))
+			}
+		}
 	}
 }
 
