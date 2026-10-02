@@ -21,11 +21,11 @@ import (
 //	6       esbuild 13   sshd 1
 
 var (
-	apiHeader     = model.RowKey{Header: model.GroupProject, Group: apiID}
-	shopHeader    = model.RowKey{Header: model.GroupProject, Group: shopID}
-	composeHeader = model.RowKey{Header: model.GroupCompose, Group: "shop"}
-	otherHeader   = model.RowKey{Header: model.GroupOther}
-	webKey        = model.RowKey{ContainerID: "4e5d6c7b8a90"}
+	rowsAPIHeader     = model.RowKey{Header: model.GroupProject, Group: apiID}
+	rowsShopHeader    = model.RowKey{Header: model.GroupProject, Group: shopID}
+	rowsComposeHeader = model.RowKey{Header: model.GroupCompose, Group: "shop"}
+	rowsOtherHeader   = model.RowKey{Header: model.GroupOther}
+	webKey            = model.RowKey{ContainerID: "4e5d6c7b8a90"}
 )
 
 // drop returns s without the processes with the given pids (0 drops the unknown owner).
@@ -43,8 +43,8 @@ func withoutAPI(s model.Snapshot) model.Snapshot {
 	return s
 }
 
-// rowKeys returns the keys of the rows the table shows.
-func rowKeys(m *Model) []model.RowKey {
+// rowsKeys returns the keys of the rows the table shows.
+func rowsKeys(m *Model) []model.RowKey {
 	ks := make([]model.RowKey, len(m.rows))
 	for i, r := range m.rows {
 		ks[i] = r.Key
@@ -52,12 +52,12 @@ func rowKeys(m *Model) []model.RowKey {
 	return ks
 }
 
-// selectKey moves the selection onto k with the arrow keys.
-func selectKey(t *testing.T, m *Model, k model.RowKey) {
+// rowsSelect moves the selection onto k with the arrow keys.
+func rowsSelect(t *testing.T, m *Model, k model.RowKey) {
 	t.Helper()
-	i := slices.Index(rowKeys(m), k)
+	i := slices.Index(rowsKeys(m), k)
 	if i < 0 {
-		t.Fatalf("selectKey: %+v is not a row", k)
+		t.Fatalf("rowsSelect: %+v is not a row", k)
 	}
 	for range m.rows {
 		press(m, "up")
@@ -66,7 +66,7 @@ func selectKey(t *testing.T, m *Model, k model.RowKey) {
 		press(m, "down")
 	}
 	if m.sel != k || m.selIdx != i {
-		t.Fatalf("selectKey: selected %+v at %d, want %+v at %d", m.sel, m.selIdx, k, i)
+		t.Fatalf("rowsSelect: selected %+v at %d, want %+v at %d", m.sel, m.selIdx, k, i)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestSelectionFirstSnapshot(t *testing.T) {
 		t.Fatalf("before the first snapshot: selIdx %d, want -1 and nothing selected", m.selIdx)
 	}
 	feed(m, fixture())
-	wantSel(t, m, apiHeader, 0)
+	wantSel(t, m, rowsAPIHeader, 0)
 }
 
 func TestSelectionHoldsAcrossRefresh(t *testing.T) {
@@ -95,7 +95,7 @@ func TestSelectionHoldsAcrossRefresh(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	goTest := keyOf(s, 201)
-	selectKey(t, m, goTest)
+	rowsSelect(t, m, goTest)
 
 	// The row above exits: the index changes, the selection does not.
 	feed(m, drop(fixture(), 200))
@@ -113,7 +113,7 @@ func TestSelectionHoldsAcrossRefresh(t *testing.T) {
 	s = fixture()
 	s.Processes[3].StartTime = at(time.Second) // claude
 	feed(m, s)
-	if m.rows[0].Key != shopHeader {
+	if m.rows[0].Key != rowsShopHeader {
 		t.Fatalf("shop is not first: %+v", m.rows[0].Key)
 	}
 	wantSel(t, m, goTest, 7)
@@ -131,12 +131,12 @@ func TestSelectedProcessExits(t *testing.T) {
 		{"middle row: the row that took its index", keyOf(s, 200), drop(fixture(), 200), 1, keyOf(s, 201)},
 		{"last row: clamped to the new last row", keyOf(s, 1), drop(fixture(), 1), 13, keyOf(s, 0)},
 		{"its whole group exits", keyOf(s, 103), dropShop(fixture()), 7, keyOf(s, 0)},
-		{"a header whose group exits", apiHeader, withoutAPI(fixture()), 0, shopHeader},
+		{"a header whose group exits", rowsAPIHeader, withoutAPI(fixture()), 0, rowsShopHeader},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
 			feed(m, fixture())
-			selectKey(t, m, tc.sel)
+			rowsSelect(t, m, tc.sel)
 			if m.selIdx != tc.idx {
 				t.Fatalf("fixture changed: %+v at %d, want %d", tc.sel, m.selIdx, tc.idx)
 			}
@@ -160,11 +160,11 @@ func dropShop(s model.Snapshot) model.Snapshot {
 func TestSelectionHeaderHolds(t *testing.T) {
 	m, _ := newTest(t, 80, 24)
 	feed(m, fixture())
-	selectKey(t, m, shopHeader)
+	rowsSelect(t, m, rowsShopHeader)
 	feed(m, withoutAPI(fixture()))
-	wantSel(t, m, shopHeader, 0)
+	wantSel(t, m, rowsShopHeader, 0)
 	feed(m, fixture())
-	wantSel(t, m, shopHeader, 3)
+	wantSel(t, m, rowsShopHeader, 3)
 }
 
 // A reused pid with a new start time is another process: it does not get the selection, even
@@ -174,14 +174,14 @@ func TestSelectionPIDReuse(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	old := keyOf(s, 201)
-	selectKey(t, m, old)
+	rowsSelect(t, m, old)
 	m.view.Collapsed[old] = true
 
 	s = fixture()
 	reused := &s.Processes[5] // go test 201
 	reused.StartTime, reused.ProjectID, reused.Cwd, reused.Argv = at(time.Second), shopID, shopID, []string{"go", "run", "."}
 	feed(m, s)
-	if m.rows[0].Key != shopHeader {
+	if m.rows[0].Key != rowsShopHeader {
 		t.Fatalf("shop is not first: %+v", m.rows[0].Key)
 	}
 	if m.sel == old || m.sel == reused.Key() {
@@ -198,7 +198,7 @@ func TestSelectionSurvivesEmptySnapshot(t *testing.T) {
 	m, _ := newTest(t, 80, 24)
 	s := fixture()
 	feed(m, s)
-	selectKey(t, m, keyOf(s, 201))
+	rowsSelect(t, m, keyOf(s, 201))
 	feed(m, model.Snapshot{SchemaVersion: 1, TakenAt: at(time.Second), Host: s.Host})
 	if _, ok := m.selected(); ok || m.selIdx != -1 {
 		t.Fatalf("empty snapshot: selIdx %d, want -1", m.selIdx)
@@ -212,25 +212,25 @@ func TestCollapseSurvivesRefresh(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	vite := keyOf(s, 101)
-	m.view.Collapsed[shopHeader] = true
+	m.view.Collapsed[rowsShopHeader] = true
 	m.view.Collapsed[vite] = true // absent from the rows while shop is collapsed, and kept
 	m.rebuild()
 
 	for i, next := range []model.Snapshot{fixture(), drop(fixture(), 200), fixture()} {
 		next.TakenAt = at(time.Duration(i) * time.Second)
 		feed(m, next)
-		if i := slices.Index(rowKeys(m), shopHeader); i < 0 || i+1 < len(m.rows) && m.rows[i+1].Depth != 0 {
-			t.Fatalf("snapshot %d: shop is not a collapsed header: %+v", i, rowKeys(m))
+		if i := slices.Index(rowsKeys(m), rowsShopHeader); i < 0 || i+1 < len(m.rows) && m.rows[i+1].Depth != 0 {
+			t.Fatalf("snapshot %d: shop is not a collapsed header: %+v", i, rowsKeys(m))
 		}
 		if line(m, "claude") != "" || line(m, "node") != "" {
 			t.Errorf("snapshot %d: a collapsed group's rows are on screen:\n%s", i, screen(m))
 		}
-		if !m.view.Collapsed[shopHeader] || !m.view.Collapsed[vite] {
+		if !m.view.Collapsed[rowsShopHeader] || !m.view.Collapsed[vite] {
 			t.Errorf("snapshot %d: collapsed keys lost: %v", i, m.view.Collapsed)
 		}
 	}
 
-	delete(m.view.Collapsed, shopHeader)
+	delete(m.view.Collapsed, rowsShopHeader)
 	m.rebuild()
 	if line(m, "node") == "" || line(m, "esbuild") != "" {
 		t.Errorf("shop expanded: node is collapsed, so esbuild is hidden and node shown:\n%s", screen(m))
@@ -249,7 +249,7 @@ func TestCollapsedPruned(t *testing.T) {
 	}
 
 	feed(m, s)
-	for _, k := range []model.RowKey{shopHeader, zsh, apiHeader, composeHeader, webKey, otherHeader, containersHeader} {
+	for _, k := range []model.RowKey{rowsShopHeader, zsh, rowsAPIHeader, rowsComposeHeader, webKey, rowsOtherHeader, containersHeader} {
 		m.view.Collapsed[k] = true
 	}
 	m.rebuild()
@@ -258,8 +258,8 @@ func TestCollapsedPruned(t *testing.T) {
 	next.Containers = nil
 	feed(m, next)
 	want := map[model.RowKey]bool{
-		shopHeader: true, zsh: true, // zsh is under a collapsed header: not a row, still in the snapshot
-		otherHeader: true, containersHeader: true, // fixed keys
+		rowsShopHeader: true, zsh: true, // zsh is under a collapsed header: not a row, still in the snapshot
+		rowsOtherHeader: true, containersHeader: true, // fixed keys
 	}
 	if len(m.view.Collapsed) != len(want) {
 		t.Errorf("collapsed after pruning: %v, want %v", m.view.Collapsed, want)
@@ -276,7 +276,7 @@ func TestFilterPrompt(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	all := len(m.rows)
-	vite := []model.RowKey{shopHeader, keyOf(s, 100), keyOf(s, 101)}
+	vite := []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101)}
 
 	press(m, "/")
 	if !m.filtering || line(m, "· /_") == "" {
@@ -286,12 +286,12 @@ func TestFilterPrompt(t *testing.T) {
 	if line(m, "· /vite_") == "" {
 		t.Errorf("header does not show the query being typed:\n%s", screen(m))
 	}
-	if got := rowKeys(m); !slices.Equal(got, vite) {
+	if got := rowsKeys(m); !slices.Equal(got, vite) {
 		t.Errorf("rows while typing %q: %+v, want %+v", m.filter, got, vite)
 	}
 	press(m, "backspace")
-	if m.filter != "vit" || !slices.Equal(rowKeys(m), vite) {
-		t.Errorf("backspace: filter %q, rows %+v", m.filter, rowKeys(m))
+	if m.filter != "vit" || !slices.Equal(rowsKeys(m), vite) {
+		t.Errorf("backspace: filter %q, rows %+v", m.filter, rowsKeys(m))
 	}
 	press(m, "enter")
 	if m.filtering || m.filter != "vit" || line(m, "· filter: vit") == "" {
@@ -299,8 +299,8 @@ func TestFilterPrompt(t *testing.T) {
 	}
 	// The filter applies to every new snapshot.
 	feed(m, fixture())
-	if !slices.Equal(rowKeys(m), vite) {
-		t.Errorf("filter lost on refresh: %+v", rowKeys(m))
+	if !slices.Equal(rowsKeys(m), vite) {
+		t.Errorf("filter lost on refresh: %+v", rowsKeys(m))
 	}
 	press(m, "esc")
 	if m.filter != "" || len(m.rows) != all || line(m, "filter:") != "" {
@@ -341,13 +341,13 @@ func TestFilterKeepsAncestors(t *testing.T) {
 		header string // the group header's name, on screen
 		want   []model.RowKey
 	}{
-		{"51", "shop", []model.RowKey{shopHeader, keyOf(s, 100), keyOf(s, 101)}}, // port prefix of 5173
-		{"808", "api", []model.RowKey{apiHeader, keyOf(s, 200)}},                 // 8080 and 8081
-		{"ESBUILD", "shop", []model.RowKey{shopHeader, keyOf(s, 100), keyOf(s, 101), keyOf(s, 102)}},
-		{"--service", "shop", []model.RowKey{shopHeader, keyOf(s, 100), keyOf(s, 101), keyOf(s, 102)}}, // argv
-		{"api", "api", []model.RowKey{apiHeader, keyOf(s, 200), keyOf(s, 201)}},                        // a project keeps its group
-		{"postgres", "shop", []model.RowKey{composeHeader, keyOf(s, 300)}},                             // container image
-		{"shop-web", "shop", []model.RowKey{composeHeader, webKey}},                                    // container name
+		{"51", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101)}}, // port prefix of 5173
+		{"808", "api", []model.RowKey{rowsAPIHeader, keyOf(s, 200)}},                 // 8080 and 8081
+		{"ESBUILD", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101), keyOf(s, 102)}},
+		{"--service", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101), keyOf(s, 102)}}, // argv
+		{"api", "api", []model.RowKey{rowsAPIHeader, keyOf(s, 200), keyOf(s, 201)}},                        // a project keeps its group
+		{"postgres", "shop", []model.RowKey{rowsComposeHeader, keyOf(s, 300)}},                             // container image
+		{"shop-web", "shop", []model.RowKey{rowsComposeHeader, webKey}},                                    // container name
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
@@ -355,7 +355,7 @@ func TestFilterKeepsAncestors(t *testing.T) {
 			press(m, "/")
 			typeText(m, tc.query)
 			press(m, "enter")
-			if got := rowKeys(m); !slices.Equal(got, tc.want) {
+			if got := rowsKeys(m); !slices.Equal(got, tc.want) {
 				t.Errorf("rows %+v, want %+v", got, tc.want)
 			}
 			for i, r := range m.rows {
@@ -375,7 +375,7 @@ func TestFilterSelection(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	vite := keyOf(s, 101)
-	selectKey(t, m, vite)
+	rowsSelect(t, m, vite)
 
 	// The selection stays on its row while it matches.
 	press(m, "/")
@@ -393,7 +393,7 @@ func TestFilterSelection(t *testing.T) {
 
 	// The filter hides the selected row: the row now at its index, clamped, is selected
 	// and stays selected when the filter is cleared.
-	selectKey(t, m, keyOf(s, 103)) // claude, index 7
+	rowsSelect(t, m, keyOf(s, 103)) // claude, index 7
 	press(m, "/")
 	typeText(m, "api")
 	wantSel(t, m, keyOf(s, 201), 2)
