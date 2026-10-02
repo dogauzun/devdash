@@ -3,9 +3,11 @@
 The Phase 3 gate (docs/SPEC.md, Milestones) is "a compose service's published port shows its container name on both OSes". `scripts/docker-gate.sh` checks it. The script builds devdash and starts a one-service compose project, `devdash-gate`, whose `nginx:1.27-alpine` container `devdash-gate-web-1` is published on port 18080. It then checks four things:
 
 - `devdash port 18080` names the container.
-- `devdash --json` lists the container, and a listener on 18080 has its id in `container`.
+- `devdash --json` lists the container, and a listener on 18080 has its id in the listener's `container`. The process-level `container` is not used: Docker Desktop's one `com.docker.backend` holds every container's ports, so it is `null` once another container publishes a port.
 - `devdash kill 18080 --yes`, plain and with `--tree --force`, refuses with `docker stop devdash-gate-web-1`, exits 6, and leaves the container running.
 - The same kills with `--no-docker` refuse too and leave the container running. They exit 3 when every owner of the port is unknown, as with root's `docker-proxy` seen by a normal user on Linux. They exit 6 when the owner is a container-runtime process refused by name.
+
+Each kill is first run without `--yes`, with stdin from `/dev/null`. devdash refuses before it asks for confirmation, so a refusal gives the same exit code and "nothing was signalled". A kill devdash would carry out prints its plan and exits 2 ("confirmation needs a terminal") without signalling. The `--yes` form runs only after that dry run refused as expected. A devdash whose refusal is broken therefore fails the gate without signalling the port's owner, which on a Mac would be Docker Desktop.
 
 The compose project is always taken down when the script exits. On Linux, CI runs the script in the `docker-gate` job.
 
