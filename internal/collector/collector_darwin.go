@@ -20,7 +20,7 @@ func New() Collector { return darwinCollector{} }
 
 type darwinCollector struct{}
 
-func (darwinCollector) Collect(ctx context.Context) (Result, error) {
+func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	lib, err := loadLibSystem()
 	if err != nil {
 		return Result{}, fmt.Errorf("collector: load libSystem: %w", err)
@@ -60,25 +60,16 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	pathBuf := make([]byte, sizeofVnodePathInfo)
 	taskBuf := make([]byte, sizeofProcTaskInfo)
 	uid := os.Geteuid()
-	denied := 0
+	limit := o.InProject != nil
+	denied := map[int]bool{} // processes with a field denied by EPERM
 	kept := res.Processes[:0]
 	for _, p := range res.Processes {
 		var argvErr, cwdErr, taskErr error
-		n, err := lib.procArgs2(p.PID, argBuf)
-		if err != nil && p.UID == uid {
-			continue // exiting, just forked or mid-exec: dropped, not shown half-filled (DEV-41)
-		}
-		switch argv, ok := decodeProcArgs2(argBuf[:n]); {
-		case err != nil:
-			argvErr = err // EINVAL for other users' processes
-		case n == len(argBuf):
-			// The strings area is larger than kern.argmax and the kernel returned its tail, so
-			// argc no longer lines up: unknown, but the process is alive and keeps its row.
-			argvErr = syscall.E2BIG
-		case ok:
-			p.Argv = argv
-		default:
-			argvErr = syscall.EINVAL
+		if !limit {
+			var drop bool
+			if drop, argvErr = readArgv(lib, argBuf, &p, uid); drop {
+				continue
+			}
 		}
 		if n, err := lib.pidinfo(p.PID, procPidVnodePathInfo, pathBuf); err != nil {
 			cwdErr = err
@@ -106,15 +97,11 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 			}
 		}
 		if errors.Is(argvErr, syscall.EPERM) || errors.Is(cwdErr, syscall.EPERM) || errors.Is(taskErr, syscall.EPERM) {
-			denied++
+			denied[p.PID] = true
 		}
 		kept = append(kept, p)
 	}
 	res.Processes = kept
-	if denied > 0 {
-		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: denied,
-			Hint: "other users' processes: argv, cwd, cpu and mem need root; run with sudo"})
-	}
 	res.Timings["argv_cwd"] = time.Since(t)
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -123,14 +110,80 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	t = time.Now()
 	fd := fdListeners(lib, res.Processes)
 	tp := time.Now()
-	pcb, warn := pcbListeners()
+	pcb, pcbWarn := pcbListeners()
 	res.Timings["pcblist"] = time.Since(tp)
-	if warn != "" {
-		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: warn})
-	}
 	res.Listeners = mergeListeners(fd, pcb)
 	res.Timings["listeners"] = time.Since(t)
+
+	if limit {
+		t = time.Now()
+		want := argvWanted(o, res.Processes, res.Listeners)
+		kept := res.Processes[:0]
+		for i, p := range res.Processes {
+			if !want[i] {
+				p.Unknown |= model.FieldArgv // not read, so not counted as denied
+				kept = append(kept, p)
+				continue
+			}
+			drop, argvErr := readArgv(lib, argBuf, &p, uid)
+			if drop {
+				continue
+			}
+			if argvErr != nil {
+				p.Unknown |= model.FieldArgv
+				denied[p.PID] = denied[p.PID] || errors.Is(argvErr, syscall.EPERM)
+			}
+			kept = append(kept, p)
+		}
+		res.Processes = kept
+		res.Timings["argv_cwd"] += time.Since(t)
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+	}
+	if n := countDenied(res.Processes, denied); n > 0 {
+		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: n,
+			Hint: "other users' processes: argv, cwd, cpu and mem need root; run with sudo"})
+	}
+	if pcbWarn != "" {
+		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: pcbWarn})
+	}
 	return res, nil
+}
+
+// countDenied counts the processes of procs that denied has, so one dropped after it was
+// marked does not count.
+func countDenied(procs []Process, denied map[int]bool) int {
+	n := 0
+	for _, p := range procs {
+		if denied[p.PID] {
+			n++
+		}
+	}
+	return n
+}
+
+// readArgv fills p.Argv from kern.procargs2 using buf (kern.argmax bytes) and returns why it
+// could not, or drop for a process of uid whose read failed: it is exiting, just forked or
+// mid-exec, and is dropped rather than shown half-filled (DEV-41).
+func readArgv(lib *libSystem, buf []byte, p *Process, uid int) (drop bool, _ error) {
+	n, err := lib.procArgs2(p.PID, buf)
+	if err != nil && p.UID == uid {
+		return true, nil
+	}
+	switch argv, ok := decodeProcArgs2(buf[:n]); {
+	case err != nil:
+		return false, err // EINVAL for other users' processes
+	case n == len(buf):
+		// The strings area is larger than kern.argmax and the kernel returned its tail, so
+		// argc no longer lines up: unknown, but the process is alive and keeps its row.
+		return false, syscall.E2BIG
+	case ok:
+		p.Argv = argv
+		return false, nil
+	default:
+		return false, syscall.EINVAL
+	}
 }
 
 // fdListeners walks the socket fds of own-uid processes (the only ones libproc lets us read)

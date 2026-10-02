@@ -91,7 +91,7 @@ func TestCollectFindsSelf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func BenchmarkCollect(b *testing.B) {
 	samples := map[string][]time.Duration{}
 	for b.Loop() {
 		start := time.Now()
-		res, err := c.Collect(context.Background())
+		res, err := c.Collect(context.Background(), Options{})
 		if err != nil {
 			b.Fatal(err)
 		}

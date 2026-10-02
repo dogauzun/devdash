@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"os/user"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -20,7 +22,9 @@ import (
 // slow ones and ones stuck past their context.
 type collectFunc func(ctx context.Context) (collector.Result, error)
 
-func (f collectFunc) Collect(ctx context.Context) (collector.Result, error) { return f(ctx) }
+func (f collectFunc) Collect(ctx context.Context, _ collector.Options) (collector.Result, error) {
+	return f(ctx)
+}
 
 func step(pid int) collector.Step {
 	return collector.Step{Result: collector.Result{Processes: []collector.Process{{PID: pid, UID: os.Getuid()}}}}
@@ -284,6 +288,90 @@ func TestManyProcesses(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestManyProcessesLimitsArgv: after a good tick with more than 5000 processes the next
+// Collect limits argv (Options.InProject set); after one with 5000 or fewer it does not.
+// Snapshot, the one-shot of --json, port and kill, never limits it (DEV-92).
+func TestManyProcessesLimitsArgv(t *testing.T) {
+	procs := func(n int) collector.Step {
+		ps := make([]collector.Process, n)
+		for i := range ps {
+			ps[i] = collector.Process{PID: i + 1}
+		}
+		return collector.Step{Result: collector.Result{Processes: ps}}
+	}
+	synctest.Test(t, func(t *testing.T) {
+		f := &collector.Fake{Steps: []collector.Step{procs(5001), procs(5001), procs(5000), procs(5000)}}
+		e, stop := start(t, Options{Collector: f})
+		for range 4 {
+			<-e.Updates()
+		}
+		stop()
+		calls := f.Calls()
+		if len(calls) < 4 {
+			t.Fatalf("%d calls, want 4", len(calls))
+		}
+		for i, want := range []bool{false, true, true, false} {
+			if got := calls[i].InProject != nil; got != want {
+				t.Errorf("Collect %d: argv limited %v, want %v", i+1, got, want)
+			}
+		}
+	})
+
+	f := &collector.Fake{Steps: []collector.Step{procs(5001)}}
+	o := Options{Collector: f, Resolver: model.NewResolver("", nil)}
+	first, err := Snapshot(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SnapshotAfter(context.Background(), o, first); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range f.Calls() {
+		if c.InProject != nil {
+			t.Errorf("one-shot Collect %d limits argv", i+1)
+		}
+	}
+}
+
+// TestInProject: the engine answers InProject with its Resolver, by a process's own cwd or an
+// ancestor's (spec steps 1-5), without touching the processes it is given (DEV-92).
+func TestInProject(t *testing.T) {
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	procs := []model.Process{
+		{PID: 10, PPID: 1, Cwd: filepath.Join(repo, "src")},
+		{PID: 11, PPID: 1, Cwd: outside},
+		{PID: 12, PPID: 10, Cwd: "/"}, // its parent is in the repository
+	}
+	e := New(Options{Resolver: model.NewResolver("", nil)})
+	if got, want := e.inProject(procs), []bool{true, false, true}; !slices.Equal(got, want) {
+		t.Errorf("inProject = %v, want %v", got, want)
+	}
+	for _, p := range procs {
+		if p.ProjectID != "" {
+			t.Errorf("pid %d: ProjectID set to %q on the caller's slice", p.PID, p.ProjectID)
+		}
+	}
+	if got := New(Options{}).inProject(procs); !slices.Equal(got, make([]bool, len(procs))) {
+		t.Errorf("no Resolver: %v, want all false", got)
+	}
 }
 
 func TestShutdown(t *testing.T) {
