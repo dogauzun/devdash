@@ -42,7 +42,7 @@ type Options struct {
 	// user, then the user database, then the number itself. Tests set it so their output does
 	// not depend on the accounts of the machine they run on.
 	LookupUser func(uid int) string
-	Docker     ContainerSource // nil means no Docker; unused until DEV-61
+	Docker     ContainerSource // nil means no Docker: no containers, no "docker" timing
 }
 
 // ContainerSource is the Docker input, implemented by docker.Source. Fetch returns the
@@ -72,6 +72,7 @@ type Engine struct {
 	updates chan Update
 	refresh chan struct{}
 	users   userCache
+	docker  dockerLatest // the latest Fetch, shared by Run's Docker goroutine and its ticks
 
 	// Owned by the goroutine running Run (or Snapshot).
 	prev     model.Snapshot
@@ -123,10 +124,20 @@ func (e *Engine) Refresh() {
 // Run ticks immediately, then every interval, until ctx is done; then it closes Updates and
 // returns. A Collect stuck past its timeout is abandoned, not waited for.
 //
+// With Options.Docker, a second goroutine fetches containers at once and every 5 s, each Fetch
+// bounded by 1 s; every tick builds with the latest list it stored (none until the first
+// Fetch returns) and never waits for a Fetch. Run returns after that goroutine has stopped.
+//
 // ponytail: with more than 5000 processes the spec also reads argv only for processes in a
 // project or with a listener; that needs a collector option that does not exist yet.
 func (e *Engine) Run(ctx context.Context) {
 	defer close(e.updates)
+	if e.o.Docker != nil {
+		ctx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); e.watchDocker(ctx) }()
+		defer func() { cancel(); <-done }() // before close(e.updates)
+	}
 	t := time.NewTimer(0)
 	defer t.Stop()
 	for {
@@ -144,7 +155,7 @@ func (e *Engine) Run(ctx context.Context) {
 		}
 		var snap model.Snapshot
 		if err == nil {
-			snap = e.build(raw)
+			snap = e.build(raw, e.docker.load())
 			e.procs = len(raw.Processes)
 		}
 		e.adapt(time.Since(start) > slowTick || errors.Is(err, context.DeadlineExceeded))
@@ -171,14 +182,28 @@ func Snapshot(ctx context.Context, o Options) (model.Snapshot, error) {
 
 // SnapshotAfter is Snapshot with prev as the previous sample, so CPU percent is a number for
 // every process also in prev (`devdash --json` samples twice, 200 ms apart).
+//
+// With Options.Docker, both make one Fetch, bounded by 1 s and run alongside Collect; its
+// duration is Timing["docker"] and its warning joins Warnings.
 func SnapshotAfter(ctx context.Context, o Options, prev model.Snapshot) (model.Snapshot, error) {
 	e := New(o)
 	e.prev = prev
+	var docker chan dockerResult
+	if o.Docker != nil {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel() // a failed Collect stops the Fetch too
+		docker = make(chan dockerResult, 1)
+		go func() { docker <- fetch(ctx, o.Docker) }()
+	}
 	raw, err := e.collect(ctx)
 	if err != nil {
 		return model.Snapshot{}, err
 	}
-	return e.build(raw), nil
+	var d dockerResult
+	if docker != nil {
+		d = <-docker
+	}
+	return e.build(raw, d), nil
 }
 
 // collect runs Collect in its own goroutine and stops waiting after collectTimeout, because
@@ -209,10 +234,14 @@ func (e *Engine) collect(ctx context.Context) (model.Raw, error) {
 	}
 }
 
-// build turns a sample into a snapshot, using the previous good one for CPU percent, and
-// fills User on every real process (the PID 0 pseudo-process has no owner to name).
-func (e *Engine) build(raw model.Raw) model.Snapshot {
-	s := model.Build(raw, e.prev, nil, e.o.Resolver)
+// build turns a sample and the latest Docker result into a snapshot, using the previous good
+// one for CPU percent, and fills User on every real process (the PID 0 pseudo-process has no
+// owner to name).
+func (e *Engine) build(raw model.Raw, d dockerResult) model.Snapshot {
+	s := model.Build(withDocker(raw, d), e.prev, d.containers, e.o.Resolver)
+	if d.done {
+		s.Timing["docker"] = d.took
+	}
 	for i := range s.Processes {
 		if p := &s.Processes[i]; p.PID != 0 {
 			p.User = e.users.name(p.UID)
