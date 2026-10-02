@@ -69,7 +69,8 @@ func parseStatusUID(b []byte) (int, error) {
 	return 0, errMalformed
 }
 
-// parseCmdline splits NUL-separated argv. nil means empty (kernel thread or zombie).
+// parseCmdline splits NUL-separated argv. nil means empty (kernel thread,
+// zombie, or a process that blanked its argv).
 func parseCmdline(b []byte) []string {
 	b = bytes.TrimRight(b, "\x00")
 	if len(b) == 0 {
