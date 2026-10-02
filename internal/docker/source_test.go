@@ -480,28 +480,54 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 	}
 	e.take()
 
+	// Spec "Failure modes": slow is handled like unreachable, so an engine that answers the
+	// ping and then hangs shows the previous list with the hint, not the list alone.
 	e.set(func(e *engine) { e.delay = 5 * time.Second; e.body = podmanBody })
 	start := time.Now()
 	got, w := fetch(t, s)
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("slow call took %v, want about the 50ms timeout", d)
 	}
-	if w != nil || !reflect.DeepEqual(got, wantDocker) {
-		t.Fatalf("slow call = %+v, %+v; want previous list, no warning", got, w)
+	if !reflect.DeepEqual(got, wantDocker) || !reflect.DeepEqual(w, unreachable(e.ep)) {
+		t.Fatalf("slow call = %+v, %+v; want previous list and warning", got, w)
 	}
 	if r := e.take(); !reflect.DeepEqual(r, []string{list}) {
 		t.Fatalf("requests = %q", r)
 	}
 
-	// A slow list is not a failure: the next call lists again without a ping, since the
-	// spec pings only at start and after failures.
 	e.set(func(e *engine) { e.delay = 0 })
-	got, w = fetch(t, s)
-	if w != nil || !reflect.DeepEqual(got, wantPodman) {
-		t.Fatalf("after slow = %+v, %+v; want new list, no warning", got, w)
+	for call := 2; call <= retryEvery; call++ {
+		got, w := fetch(t, s)
+		if !reflect.DeepEqual(got, wantDocker) || !reflect.DeepEqual(w, unreachable(e.ep)) {
+			t.Fatalf("call %d = %+v, %+v; want previous list and warning", call, got, w)
+		}
 	}
-	if r := e.take(); !reflect.DeepEqual(r, []string{list}) {
-		t.Fatalf("requests = %q, want list only", r)
+	if r := e.take(); len(r) != 0 {
+		t.Fatalf("requests between retries = %q, want none", r)
+	}
+
+	got, w = fetch(t, s) // 11th call: ping again, list, warning cleared
+	if w != nil || !reflect.DeepEqual(got, wantPodman) {
+		t.Fatalf("recovered call = %+v, %+v; want new list, no warning", got, w)
+	}
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+		t.Fatalf("requests = %q, want ping then list", r)
+	}
+}
+
+// TestFetchSlowFirstList: a one-shot CLI call whose first list is slow says so, rather
+// than looking like no Docker.
+func TestFetchSlowFirstList(t *testing.T) {
+	e := newEngine(t, dockerBody)
+	s := NewSource(e.ep)
+	s.timeout = 50 * time.Millisecond
+	e.set(func(e *engine) { e.delay = 5 * time.Second })
+	got, w := fetch(t, s)
+	if got != nil || !reflect.DeepEqual(w, unreachable(e.ep)) {
+		t.Fatalf("Fetch = %+v, %+v; want nil list and warning", got, w)
+	}
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+		t.Fatalf("requests = %q, want ping then list", r)
 	}
 }
 

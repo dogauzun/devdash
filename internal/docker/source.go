@@ -39,17 +39,15 @@ func NewSource(ep Endpoint) *Source {
 func (s *Source) Endpoint() Endpoint { return s.ep }
 
 // Fetch returns the containers to use now and a warning when Docker is present but not
-// answering (nil otherwise). It pings once at start and after each failure, retries only
-// every 10th call after a failure or a missing socket, and keeps the previous list when a
-// request takes longer than 500 ms; ctx bounds the whole call.
+// answering (nil otherwise). It pings once at start and after each failure, and retries
+// only every 10th call after a failure or a missing socket; ctx bounds the whole call.
 //
 // A unix socket that does not exist (ENOENT on the dial, at the ping or the list) is no
 // Docker at all: it clears the list, returns no warning, and makes the next 9 calls return
 // nothing without a request. An endpoint that exists but does not answer (refused dial,
-// failed or slow ping, non-2xx, bad JSON) sets the docker_unreachable warning and makes the
-// next 9 calls return the previous list without a request. A list slower than the timeout
-// keeps the previous list and the current warning and changes nothing else. A ctx that ends
-// first is neither: the call returns the previous list and changes nothing. A good list
+// ping or list slower than 500 ms, non-2xx, bad JSON) sets the docker_unreachable warning
+// and makes the next 9 calls return the previous list without a request (spec "Failure
+// modes": "unreachable or slow"). A ctx that ends first is neither: the call returns the previous list and changes nothing. A good list
 // replaces the previous one and clears the warning.
 func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) {
 	if s.skip > 0 {
@@ -82,9 +80,6 @@ func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) 
 		s.prev, s.warn = list, nil
 	case ctx.Err() != nil:
 		// The caller gave up; that says nothing about the endpoint.
-	case errors.Is(err, context.DeadlineExceeded):
-		// Slow, not failed: keep the previous list and the current warning. The spec pings
-		// only at start and after failures, so the next call lists again directly.
 	case s.missing(err):
 		return s.absent()
 	default:
