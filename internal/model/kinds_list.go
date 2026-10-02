@@ -139,6 +139,8 @@ var runtimeNames = map[string]string{
 	"limactl":            "",       // Lima host agent: forwards ports for Lima, Colima and Rancher Desktop
 	"pasta":              "podman", // rootless Podman 5 network stack and port forwarder
 	"conmon":             "podman", // Podman container monitor
+	"orbstack helper":    "docker", // OrbStack's VM manager, holds every published port (macOS); the space is part of the name
+	"orbstack":           "docker", // OrbStack's app: quitting it stops the VM and every container
 }
 
 // runtimePrefix: any basename starting with it is a containerd shim (containerd-shim-runc-v2).
@@ -157,4 +159,5 @@ var proxyNames = map[string]bool{
 	"rootlessport":       true, // rootless Docker and Podman port forwarder
 	"slirp4netns":        true, // rootless, slirp4netns port driver
 	"pasta":              true, // rootless Podman 5
+	"orbstack helper":    true, // OrbStack on macOS: one process holds every published port
 }

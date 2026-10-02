@@ -71,7 +71,7 @@ The top-level object.
 | `listeners` | listener array | always | Listening TCP sockets this process owns; `[]` for none. |
 | `kind` | string | always | One of `other`, `server`, `container`, `agent`, `test`, `watcher`, `shell`, `editor`. `other` for `pid: 0`, or `container` when its socket matched a container's published port. |
 | `project` | string or null | always | `id` of the project the process belongs to, `null` for none. |
-| `container` | string or null | always | Id of the container whose published ports this process holds, when every socket matched to a container is that one container's; `null` otherwise, including for a proxy holding several containers' ports (see the listener's `container`). |
+| `container` | string or null | always | Id of the container whose published ports this process holds, when every one of its sockets is that one container's; `null` otherwise, including for a proxy holding several containers' ports or one container's next to a port of its own (`OrbStack Helper`, `com.docker.backend`; see the listener's `container`). |
 | `unknown` | string array | always | Fields that could not be read, in this order: `owner`, `argv`, `cwd`, `cpu`, `mem`. `[]` when everything was read. `pid: 0` entries have all five. |
 
 ## listener
