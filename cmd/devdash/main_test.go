@@ -19,7 +19,7 @@ import (
 func TestParse(t *testing.T) {
 	home := testHome(t)
 	j := func(d string) string { return filepath.Join(home, d) }
-	def := options{Tick: 2 * time.Second}
+	def := options{Tick: 2 * time.Second, Timeout: 3 * time.Second}
 	with := func(f func(*options)) options { o := def; f(&o); return o }
 	tests := []struct {
 		args []string
@@ -38,7 +38,9 @@ func TestParse(t *testing.T) {
 		{[]string{"--all", "port", "3000", "--tick", "1s", "--roots", "code"}, with(func(o *options) {
 			o.All, o.Tick, o.Roots, o.Cmd, o.Args = true, time.Second, []string{j("code")}, "port", []string{"3000"}
 		})},
-		{[]string{"kill", "3000", "4000"}, with(func(o *options) { o.Cmd, o.Args = "kill", []string{"3000", "4000"} })},
+		{[]string{"kill", "3000", "--tree", "--force", "--yes", "--timeout", "1s"}, with(func(o *options) {
+			o.Cmd, o.Args, o.Tree, o.Force, o.Yes, o.Timeout = "kill", []string{"3000"}, true, true, true, time.Second
+		})},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
@@ -124,7 +126,6 @@ func TestRunExitCodes(t *testing.T) {
 		{[]string{"port", "3000"}, 0, "42  node  -  127.0.0.1:3000\n"},
 		{[]string{"port", "3001"}, 1, "free\n"},
 		{[]string{"port", "3000", "--no-docker"}, 0, "*"},
-		{[]string{"kill", "3000"}, 2, ""}, // reserved
 		{[]string{"-h"}, 0, usage},
 		{[]string{"--help"}, 0, usage},
 		{[]string{"port", "-h"}, 0, usage},
@@ -147,6 +148,16 @@ func TestRunExitCodes(t *testing.T) {
 		{[]string{"port", "-1"}, 2, ""},
 		{[]string{"port", "3.5"}, 2, ""},
 		{[]string{"kill"}, 2, ""},
+		{[]string{"kill", "3000", "4000"}, 2, ""},
+		{[]string{"kill", "http"}, 2, ""},
+		{[]string{"kill", "0"}, 2, ""},
+		{[]string{"kill", "3000", "--timeout", "0"}, 2, ""},
+		{[]string{"--timeout", "-1s", "kill", "3000"}, 2, ""},
+		{[]string{"kill", "3000", "--timeout", "soon"}, 2, ""},
+		{[]string{"port", "3000", "--tree"}, 2, ""},
+		{[]string{"--yes", "--json"}, 2, ""},
+		{[]string{"--force"}, 2, ""},
+		{[]string{"version", "--timeout", "1s"}, 2, ""},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {

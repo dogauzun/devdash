@@ -28,7 +28,7 @@ var (
 const usage = `usage: devdash [flags]              the dashboard (not implemented yet)
        devdash [flags] --json       print one snapshot as JSON (docs/json-schema.md)
        devdash [flags] port N       who listens on TCP port N: exit 0 found, 1 free
-       devdash [flags] kill N ...   not implemented yet
+       devdash [flags] kill N       stop the process(es) listening on TCP port N
        devdash version              print version, commit and build date
 
 Flags may come before or after the subcommand and its arguments.
@@ -43,13 +43,25 @@ Flags may come before or after the subcommand and its arguments.
   --json           print one snapshot as JSON on stdout
   -h, --help       print this help
 
-Exit codes: 0 ok (port: found), 1 port free, 2 usage error,
-5 devdash failed (no snapshot could be taken, or output could not be written).
+kill prints every pid it will signal, then asks for confirmation on the terminal:
+  --tree           also the owner's descendants, parent first, and its process group
+                   when it leads one
+  --force          SIGKILL instead of SIGTERM
+  --yes            do not ask (also skips the second question for a process outside
+                   every project); without a terminal, kill needs --yes
+  --timeout d      how long to wait for the signalled processes to exit (default 3s)
+
+Exit codes: 0 ok (port: found; kill: every signalled process exited, or nothing
+listens on N), 1 port free, 2 usage error (kill: also no terminal to confirm on),
+3 kill: permission denied (also an owner devdash cannot see; try sudo),
+4 kill: survivors remain, 5 devdash failed (no snapshot could be taken, or output
+could not be written; kill: only before anything was signalled), 6 kill: nothing
+signalled (devdash refuses the target, or the confirmation was declined).
 `
 
 // exitFailed is the exit code of every command when devdash itself fails: the snapshot could
-// not be taken or the output could not be written. 1 is "port free", 2 a usage error, and 3
-// and 4 belong to kill.
+// not be taken or the output could not be written. 1 is "port free", 2 a usage error, and 3,
+// 4 and 6 belong to kill.
 const exitFailed = 5
 
 // options is the parsed command line. The dashboard (DEV-26 and later) and `kill N` (DEV-25)
@@ -61,6 +73,10 @@ type options struct {
 	All      bool          // --all: show shells and editors in human views; --json and port ignore it
 	NoDocker bool          // --no-docker
 	NoColor  bool          // --no-color, or NO_COLOR set and not empty
+	Tree     bool          // kill --tree
+	Force    bool          // kill --force
+	Yes      bool          // kill --yes
+	Timeout  time.Duration // kill --timeout, positive
 	Cmd      string        // "", "port", "kill" or "version"
 	Args     []string      // the subcommand's arguments, flags removed
 }
@@ -97,8 +113,8 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 		port, _ := parsePort(o.Args[0]) // checked by parse
 		return runPort(ctx, o.engine(c), port, stdout, stderr)
 	case "kill":
-		fmt.Fprintln(stderr, "devdash kill: not implemented yet")
-		return 2
+		port, _ := parsePort(o.Args[0]) // checked by parse
+		return runKill(ctx, o, o.engine(c), port, stdout, stderr)
 	}
 	if o.JSON {
 		return runJSON(ctx, o.engine(c), stdout, stderr)
@@ -111,7 +127,7 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 // arguments. Flag errors are printed by the flag package and returned as errUsage; other
 // usage errors are returned for the caller to print.
 func parse(args []string, stderr io.Writer) (options, error) {
-	o := options{Tick: engine.DefaultTick}
+	o := options{Tick: engine.DefaultTick, Timeout: engine.DefaultKillTimeout}
 	fs := flag.NewFlagSet("devdash", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {} // run prints the usage once, to the right stream
@@ -133,6 +149,10 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.All, "all", false, "")
 	fs.BoolVar(&o.NoDocker, "no-docker", false, "")
 	fs.BoolVar(&o.NoColor, "no-color", false, "")
+	fs.BoolVar(&o.Tree, "tree", false, "")
+	fs.BoolVar(&o.Force, "force", false, "")
+	fs.BoolVar(&o.Yes, "yes", false, "")
+	fs.DurationVar(&o.Timeout, "timeout", engine.DefaultKillTimeout, "")
 
 	// The flag package stops at the first non-flag argument; resume after each one so flags
 	// may follow the subcommand. No subcommand takes an argument starting with "-".
@@ -172,8 +192,14 @@ func parse(args []string, stderr io.Writer) (options, error) {
 			return o, err
 		}
 	case "kill":
-		if len(o.Args) == 0 {
-			return o, fmt.Errorf("kill takes at least one port or pid")
+		if len(o.Args) != 1 {
+			return o, fmt.Errorf("kill takes one port number")
+		}
+		if _, err := parsePort(o.Args[0]); err != nil {
+			return o, err
+		}
+		if o.Timeout <= 0 {
+			return o, fmt.Errorf("--timeout %v is not positive", o.Timeout)
 		}
 	default:
 		return o, fmt.Errorf("unknown command %q", o.Cmd)
@@ -181,7 +207,16 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	if o.JSON && o.Cmd != "" {
 		return o, fmt.Errorf("--json takes no command, got %q", o.Cmd)
 	}
-	return o, nil
+	var killOnly error
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "tree", "force", "yes", "timeout":
+			if o.Cmd != "kill" && killOnly == nil {
+				killOnly = fmt.Errorf("--%s only applies to kill", f.Name)
+			}
+		}
+	})
+	return o, killOnly
 }
 
 // rootDir turns one --roots entry into an absolute directory. A leading "~" or "~/" is $HOME,
