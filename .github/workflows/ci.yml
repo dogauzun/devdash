@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, dev-19-ci]  # TEMP: remove dev-19-ci
+    branches: [main]
 
 permissions:
   contents: read
