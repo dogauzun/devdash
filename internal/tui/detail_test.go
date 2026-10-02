@@ -112,6 +112,32 @@ func TestDetailOverlay(t *testing.T) {
 	}
 }
 
+// TestDetailStartedLocalZone: the start time is shown in the machine's zone, and the tests'
+// pinned zone (TestMain) is what keeps the detail goldens the same on every machine (DEV-90).
+func TestDetailStartedLocalZone(t *testing.T) {
+	if time.Local != time.UTC {
+		t.Fatalf("time.Local is %v, want UTC pinned by TestMain so the goldens do not depend on TZ", time.Local)
+	}
+	for _, c := range []struct {
+		zone *time.Location
+		want string
+	}{
+		{time.UTC, "started   2026-10-02 09:00:00 (3 h ago)"},
+		{time.FixedZone("UTC+3", 3*60*60), "started   2026-10-02 12:00:00 (3 h ago)"},
+		{time.FixedZone("UTC-7", -7*60*60), "started   2026-10-02 02:00:00 (3 h ago)"},
+	} {
+		t.Run(c.zone.String(), func(t *testing.T) {
+			pinLocal(t, c.zone)
+			m, _ := newTest(t, 100, 40)
+			s := fixture()
+			feed(m, s)
+			detailSelect(t, m, keyOf(s, 101))
+			press(m, "enter")
+			hasLine(t, m, c.want)
+		})
+	}
+}
+
 func TestDetailProcess(t *testing.T) {
 	m, _ := newTest(t, 100, 40)
 	s := fixture()
