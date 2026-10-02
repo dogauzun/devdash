@@ -39,7 +39,7 @@ func TestCollectFindsSelf(t *testing.T) {
 		t.Fatalf("own pid %d not in %d processes", os.Getpid(), len(res.Processes))
 	}
 	p := res.Processes[i]
-	wd, _ := os.Getwd()
+	wd := kernelWd(t)
 	if p.PPID != os.Getppid() || p.UID != os.Geteuid() || p.Cwd != wd || !slices.Equal(p.Argv, os.Args) {
 		t.Errorf("self = %+v, want ppid %d uid %d cwd %q argv %q", p, os.Getppid(), os.Geteuid(), wd, os.Args)
 	}
@@ -194,7 +194,7 @@ func TestCollectFindsChild(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("child %d not found", cmd.Process.Pid)
 	}
-	wd, _ := os.Getwd()
+	wd := kernelWd(t)
 	if p := res.Processes[i]; p.PPID != os.Getpid() || p.Name != "sleep" || !slices.Equal(p.Argv, cmd.Args) || p.Cwd != wd || p.Unknown != 0 {
 		t.Errorf("child = %+v, want ppid %d argv %q cwd %q", p, os.Getpid(), cmd.Args, wd)
 	}
