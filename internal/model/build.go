@@ -4,7 +4,9 @@ import (
 	"maps"
 	"math"
 	"net/netip"
+	"path"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -29,6 +31,24 @@ type RawListener struct {
 	PID   int
 }
 
+// commCut is the shortest length at which a kernel name may have been cut: Linux keeps 15
+// bytes of comm (TASK_COMM_LEN 16 with the NUL), macOS 16 of p_comm (MAXCOMLEN).
+const commCut = 15
+
+// fullName undoes the kernel's truncation of Name: when Name is at least commCut long and is
+// a strict prefix of the basename of a known argv[0] (a login shell's "-" dropped, as Classify
+// does), that basename is the name. Otherwise Name is kept, so a rewritten title
+// ("nginx: master process ...") or a symlinked argv[0] never invents a name.
+func fullName(p Process) string {
+	if len(p.Name) < commCut || p.Unknown&FieldArgv != 0 || len(p.Argv) == 0 || p.Argv[0] == "" {
+		return p.Name
+	}
+	if b := strings.TrimPrefix(path.Base(p.Argv[0]), "-"); len(b) > len(p.Name) && strings.HasPrefix(b, p.Name) {
+		return b
+	}
+	return p.Name
+}
+
 // unknownOwner is every field of the PID 0 pseudo-process: nothing about it is readable.
 const unknownOwner = FieldOwner | FieldArgv | FieldCwd | FieldCPU | FieldMem
 
@@ -45,6 +65,7 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 	byPID := make(map[int]int, len(raw.Processes))
 	for i, p := range raw.Processes {
 		p.Listeners, p.Kind, p.ProjectID, p.ContainerID = nil, KindOther, "", ""
+		p.Name = fullName(p)
 		procs[i] = p
 		byPID[p.PID] = i
 	}

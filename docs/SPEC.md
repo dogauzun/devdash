@@ -206,14 +206,14 @@ The CLI exposes the same snapshot the TUI shows, and its exit codes are the cont
 | Command | Output | Exit code |
 | --- | --- | --- |
 | `devdash` | the TUI | 0 |
-| `devdash --json` | one snapshot as a JSON document on stdout | 0 |
-| `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free |
-| `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | what was signalled, then survivors | 0 all exited, 3 permission denied, 4 survivors remain |
+| `devdash --json` | one snapshot as a JSON document on stdout | 0; 5 devdash failed |
+| `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free, 5 devdash failed |
+| `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | what was signalled, then survivors | 0 all exited, 3 permission denied, 4 survivors remain, 5 devdash failed |
 | `devdash version` | version, commit, build date | 0 |
 
-Global flags: `--roots <paths>` limits project scanning to repositories under those paths; `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms); `--no-docker` skips the Docker client; `--all` includes shells and editors; `--no-color` and `NO_COLOR` disable colour. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`.
+Global flags: `--roots <paths>` limits project scanning to repositories under those directories (comma-separated, and repeatable; a leading `~` is `$HOME`, `~user` is not supported, and a path that is not an existing directory is a usage error); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. Every command exits 5 when devdash itself fails (no snapshot could be taken, or the output could not be written), with the error on stderr and nothing on stdout; 1 is only ever "port free".
 
-The JSON document carries `schema_version`, and any field removal or rename bumps it. Additions do not. Times are RFC 3339 in UTC, sizes are bytes, durations are milliseconds, and unreadable fields are listed by name in `unknown` rather than filled with placeholders.
+The JSON document carries `schema_version`, and any field removal or rename bumps it. Additions do not. Times are RFC 3339 in UTC, sizes are bytes, durations are milliseconds, and unreadable fields are listed by name in `unknown` rather than filled with placeholders. Every key is always present; an absent or unreadable value is `null`. `--json` samples twice, 200 ms apart, so `cpu_percent` is a number (top-style: one core is 100). The full field reference is [`docs/json-schema.md`](json-schema.md); the example below follows it.
 
 ```json
 {
@@ -222,7 +222,7 @@ The JSON document carries `schema_version`, and any field removal or rename bump
   "host": {"os": "darwin", "arch": "arm64", "hostname": "mbp", "uid": 501},
   "projects": [
     {"id": "/Users/me/code/shop", "root": "/Users/me/code/shop", "name": "shop",
-     "branch": "feat/cart", "worktree": true, "main_repo": "/Users/me/code/shop-main"}
+     "branch": "feat/cart", "short_sha": null, "worktree": true, "main_repo": "/Users/me/code/shop-main"}
   ],
   "processes": [
     {"pid": 48211, "ppid": 48190, "start_time": "2026-09-28T09:12:44Z",
@@ -232,8 +232,10 @@ The JSON document carries `schema_version`, and any field removal or rename bump
      "listeners": [{"proto": "tcp6", "addr": "::", "port": 5173}],
      "kind": "server", "project": "/Users/me/code/shop", "container": null,
      "unknown": []},
-    {"pid": 0, "name": "unknown", "listeners": [{"proto": "tcp4", "addr": "0.0.0.0", "port": 631}],
-     "kind": "other", "project": null, "unknown": ["owner", "argv", "cwd", "cpu", "mem"]}
+    {"pid": 0, "ppid": null, "start_time": null, "uid": null, "user": null, "name": "unknown",
+     "argv": null, "cwd": null, "cpu_percent": null, "rss_bytes": null,
+     "listeners": [{"proto": "tcp4", "addr": "0.0.0.0", "port": 631}],
+     "kind": "other", "project": null, "container": null, "unknown": ["owner", "argv", "cwd", "cpu", "mem"]}
   ],
   "containers": [
     {"id": "9f1c2a7b0d3e", "name": "shop-db-1", "image": "postgres:16", "state": "running",
@@ -241,7 +243,7 @@ The JSON document carries `schema_version`, and any field removal or rename bump
      "ports": [{"host_ip": "0.0.0.0", "host_port": 5432, "container_port": 5432, "proto": "tcp"}]}
   ],
   "warnings": [{"code": "listener_owner_unreadable", "count": 3, "hint": "run with sudo to see owners"}],
-  "timing_ms": {"processes": 31, "listeners": 12, "projects": 4, "docker": 8, "total": 52}
+  "timing_ms": {"argv_cwd": 8.012, "listeners": 1.5, "pcblist": 0.09, "proctable": 0.29, "projects": 1.1, "total": 11.4}
 }
 ```
 

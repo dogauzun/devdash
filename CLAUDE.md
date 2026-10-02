@@ -17,7 +17,9 @@ Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linu
 
 ## Layout
 
-- `cmd/devdash` — flags, subcommand dispatch, exit codes (stdlib `flag`).
+- `cmd/devdash` — flags, subcommand dispatch, exit codes (stdlib `flag`): `main.go` (`options`, `parse`, `run`),
+  `json.go` (schema v1, documented in `docs/json-schema.md` and checked against it by `json_test.go`; golden file
+  `testdata/snapshot.golden.json`, rewritten with `go test ./cmd/devdash -run TestJSONGolden -update`), `port.go`.
 - `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`)
   and the raw input types in `build.go`; one file per seam: `project.go` (`Resolver`), `kind.go` (`Classify`),
   `rows.go` (`Row`, `Flatten`), `reconcile.go` (`Reconcile`).
