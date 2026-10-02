@@ -237,13 +237,12 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
 ## Building from source
 
 ```sh
-CGO_ENABLED=0 go build ./...
-go vet ./...
-go test -race ./...
-golangci-lint run
+make build   # ./devdash
+make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI runs)
 ```
 
-Build for the other OS too, for example `GOOS=darwin CGO_ENABLED=0 go build ./...`.
+`make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
+`go test -race ./...`.
 
 ## Contributing
 
