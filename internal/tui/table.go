@@ -253,22 +253,6 @@ func rowLabel(r model.Row) string {
 	return ""
 }
 
-// rowName is a row's label: the project or group name for a header, the container name for a
-// container row, else the process name.
-func rowName(r model.Row) string {
-	switch {
-	case r.Project != nil:
-		return r.Project.Name
-	case r.Key.Header != 0:
-		return r.Key.Group
-	case r.Container != nil:
-		return r.Container.Name
-	case r.Process != nil:
-		return r.Process.Name
-	}
-	return ""
-}
-
 // cell is the text of column c for the process or container row i, unpadded.
 func (m *Model) cell(i int, c col) string {
 	r := m.rows[i]
