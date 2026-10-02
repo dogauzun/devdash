@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,9 +23,28 @@ import (
 
 var update = flag.Bool("update", false, "rewrite testdata/snapshot.golden.json")
 
+// goldenContainers pin the encoding of containers.
+var goldenContainers = []model.Container{
+	{ID: "9f1c2a7b0d3e", Name: "shop-db-1", Image: "postgres:16", State: "running", ComposeProject: "shop", ComposeService: "db",
+		Ports: []model.PortMapping{{HostIP: netip.IPv4Unspecified(), HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
+	{ID: "77aa", Name: "scratch", Image: "alpine", State: "paused",
+		Ports: []model.PortMapping{{ContainerPort: 80, Proto: "tcp"}}},
+}
+
+// stubDocker is a ContainerSource with a fixed answer.
+type stubDocker struct {
+	containers []model.Container
+	warning    *model.Warning
+}
+
+func (s stubDocker) Fetch(context.Context) ([]model.Container, *model.Warning) {
+	return s.containers, s.warning
+}
+
 // goldenSnapshot builds a snapshot through the engine from a scripted collector: two samples
-// 200 ms apart, two repositories (one a linked worktree on a detached HEAD) under dir.
-func goldenSnapshot(t *testing.T, dir string) model.Snapshot {
+// 200 ms apart, two repositories (one a linked worktree on a detached HEAD) under dir. With
+// docker nil it sets goldenContainers itself, so the golden file has no "docker" timing.
+func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) model.Snapshot {
 	t.Helper()
 	write := func(path, content string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -78,6 +98,7 @@ func goldenSnapshot(t *testing.T, dir string) model.Snapshot {
 			}
 			return n
 		},
+		Docker: docker,
 	}
 	first, err := engine.Snapshot(context.Background(), o)
 	if err != nil {
@@ -88,12 +109,8 @@ func goldenSnapshot(t *testing.T, dir string) model.Snapshot {
 		t.Fatal(err)
 	}
 	s.Timing["projects"] = 125 * time.Microsecond // measured by Build
-	// The engine has no Docker input yet (DEV-27); containers pin their encoding now.
-	s.Containers = []model.Container{
-		{ID: "9f1c2a7b0d3e", Name: "shop-db-1", Image: "postgres:16", State: "running", ComposeProject: "shop", ComposeService: "db",
-			Ports: []model.PortMapping{{HostIP: netip.IPv4Unspecified(), HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
-		{ID: "77aa", Name: "scratch", Image: "alpine", State: "paused",
-			Ports: []model.PortMapping{{ContainerPort: 80, Proto: "tcp"}}},
+	if docker == nil {
+		s.Containers = goldenContainers
 	}
 	return s
 }
@@ -104,7 +121,7 @@ func TestJSONGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	if err := writeJSON(&b, goldenSnapshot(t, dir), 3*time.Millisecond+456*time.Microsecond); err != nil {
+	if err := writeJSON(&b, goldenSnapshot(t, dir, nil), 3*time.Millisecond+456*time.Microsecond); err != nil {
 		t.Fatal(err)
 	}
 	got := []byte(strings.ReplaceAll(b.String(), dir, "/TMP"))
@@ -122,6 +139,36 @@ func TestJSONGolden(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("output differs from %s (go test ./cmd/devdash -run TestJSONGolden -update):\n%s", golden, got)
+	}
+}
+
+// TestJSONDocker checks output with a Docker source against docs/json-schema.md: its
+// containers, its warning and the "docker" timing, whose value is measured, so only its
+// presence is checked.
+func TestJSONDocker(t *testing.T) {
+	src := stubDocker{goldenContainers, &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: no answer"}}
+	var b bytes.Buffer
+	if err := writeJSON(&b, goldenSnapshot(t, t.TempDir(), src), time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	validate(t, b.Bytes())
+
+	var s struct {
+		Containers []struct{ ID string }
+		Warnings   []struct{ Code string }
+		TimingMS   map[string]float64 `json:"timing_ms"`
+	}
+	if err := json.Unmarshal(b.Bytes(), &s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Containers) != 2 || s.Containers[0].ID != "9f1c2a7b0d3e" {
+		t.Errorf("containers %+v", s.Containers)
+	}
+	if _, ok := s.TimingMS["docker"]; !ok {
+		t.Errorf("timing_ms %v has no docker", s.TimingMS)
+	}
+	if !slices.ContainsFunc(s.Warnings, func(w struct{ Code string }) bool { return w.Code == "docker_unreachable" }) {
+		t.Errorf("warnings %+v have no docker_unreachable", s.Warnings)
 	}
 }
 
@@ -189,7 +236,7 @@ func schemaDoc(t *testing.T) map[string]map[string]field {
 }
 
 // validate checks that out is one JSON document whose fields are exactly the documented ones,
-// with the documented types.
+// with the documented types, and whose warning codes are all documented.
 func validate(t *testing.T, out []byte) {
 	t.Helper()
 	var v any
@@ -248,4 +295,12 @@ func validate(t *testing.T, out []byte) {
 		}
 	}
 	check(v, "snapshot", "$")
+	root, _ := v.(map[string]any)
+	ws, _ := root["warnings"].([]any)
+	for i, w := range ws {
+		m, _ := w.(map[string]any)
+		if code, _ := m["code"].(string); doc["Warning codes"][code] == (field{}) {
+			t.Errorf("$.warnings[%d].code: %q not in docs/json-schema.md (Warning codes)", i, code)
+		}
+	}
 }

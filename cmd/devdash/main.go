@@ -13,9 +13,14 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
+
 	"github.com/dogauzun/devdash/internal/collector"
+	"github.com/dogauzun/devdash/internal/docker"
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
+	"github.com/dogauzun/devdash/internal/tui"
 )
 
 // Set at build time with -ldflags "-X main.version=... -X main.commit=... -X main.date=...";
@@ -26,7 +31,7 @@ var (
 	date    = "unknown"
 )
 
-const usage = `usage: devdash [flags]              the dashboard (not implemented yet)
+const usage = `usage: devdash [flags]              the dashboard (? inside it lists the keys)
        devdash [flags] --json       print one snapshot as JSON (docs/json-schema.md)
        devdash [flags] port N       who listens on TCP port N: exit 0 found, 1 free
        devdash [flags] kill N       stop the process(es) listening on TCP port N
@@ -65,7 +70,7 @@ signalled (devdash refuses the target, or the confirmation was declined).
 // 4 and 6 belong to kill.
 const exitFailed = 5
 
-// options is the parsed command line. The dashboard (DEV-26 and later) and `kill N` (DEV-25)
+// options is the parsed command line. The dashboard and `kill N`
 // read their settings from here.
 type options struct {
 	JSON     bool          // --json
@@ -121,8 +126,28 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	if o.JSON {
 		return runJSON(ctx, o.engine(c), stdout, stderr)
 	}
-	fmt.Fprintln(stderr, "devdash: the dashboard is not implemented yet; try --json")
-	return 2
+	return runTUI(ctx, o, c, stderr)
+}
+
+// runTUI runs the dashboard until the user quits. The engine's refresh loop runs alongside it
+// and stops with it.
+func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Writer) int {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	e := engine.New(o.engine(c))
+	done := make(chan struct{})
+	go func() { defer close(done); e.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+
+	var opts []tea.ProgramOption
+	if o.NoColor {
+		opts = append(opts, tea.WithColorProfile(colorprofile.Ascii)) // keeps reverse and faint, drops colour
+	}
+	if err := tui.Run(ctx, tui.Options{Source: e, Kill: e.Kill, ShowAll: o.All}, opts...); err != nil {
+		fmt.Fprintln(stderr, "devdash:", err)
+		return exitFailed
+	}
+	return 0
 }
 
 // parse reads flags anywhere on the command line, then checks the subcommand and its
@@ -257,9 +282,38 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
-// engine returns the engine options for these flags. The Docker and colour settings are not
-// engine options; their readers take them from o.
+// engine returns the engine options for these flags. Unless --no-docker, it looks for a
+// Docker endpoint; the colour setting is not an engine option, its readers take it from o.
 func (o options) engine(c collector.Collector) engine.Options {
 	home, _ := os.UserHomeDir()
-	return engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
+	eo := engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
+	if !o.NoDocker {
+		eo.Docker = dockerSource(home)
+	}
+	return eo
+}
+
+// discover finds the Docker endpoint; tests replace it.
+var discover = docker.Discover
+
+// dockerSource is the container source for this machine: nil when no endpoint is found (no
+// containers, no warning), a docker.Source when one is, and endpointError when DOCKER_HOST or
+// the docker context names an endpoint devdash cannot use.
+func dockerSource(home string) engine.ContainerSource {
+	ep, ok, err := discover(docker.Env{Getenv: os.Getenv, Home: home})
+	switch {
+	case err != nil:
+		return endpointError{err}
+	case !ok:
+		return nil // not a typed nil: Options.Docker must compare equal to nil
+	}
+	return docker.NewSource(ep)
+}
+
+// endpointError is the source for an endpoint devdash cannot use: no containers, and one
+// docker_endpoint_invalid warning in every snapshot, so the footer and --json say why.
+type endpointError struct{ err error }
+
+func (e endpointError) Fetch(context.Context) ([]model.Container, *model.Warning) {
+	return nil, &model.Warning{Code: "docker_endpoint_invalid", Count: 1, Hint: "docker: " + e.err.Error()}
 }
