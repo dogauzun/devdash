@@ -339,25 +339,32 @@ func TestKillPlanIgnoresRefresh(t *testing.T) {
 }
 
 func TestKillRefusedContainer(t *testing.T) {
-	s := fixture()
+	s, hidden := fixture(), hiddenProxy()
 	for _, tc := range []struct {
 		name string
+		snap model.Snapshot
 		key  model.RowKey
 		hint string
 	}{
-		{"container row", model.RowKey{ContainerID: "4e5d6c7b8a90"}, "docker stop shop-web-1"},
-		{"proxy of a container port", keyOf(s, 300), "docker stop shop-db-1"},
+		{"container row", s, model.RowKey{ContainerID: "4e5d6c7b8a90"}, "docker stop shop-web-1"},
+		{"proxy of a container port", s, keyOf(s, 300), "docker stop shop-db-1"},
+		// DEV-89: the title names the container, not "unknown".
+		{"unreadable owner of a container port", hidden, hidden.Processes[len(hidden.Processes)-1].Key(),
+			"docker stop shop-db-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fk := &fakeKiller{}
 			// The real NewPlan: it refuses container targets after only reading devdash's own
 			// ancestry; it signals nothing.
 			m, _ := newTest(t, 80, 24, func(o *Options) { o.Plan, o.Kill = engine.NewPlan, fk.kill })
-			feed(m, s)
+			feed(m, tc.snap)
 			selectRow(t, m, tc.key)
 			press(m, "x")
 			if !m.kill.active() {
 				t.Fatal("a refused target did not open the modal")
+			}
+			if strings.Contains(screen(m), "cannot kill unknown") {
+				t.Errorf("the title does not name the container:\n%s", screen(m))
 			}
 			if line(m, tc.hint) == "" {
 				t.Errorf("no %q hint:\n%s", tc.hint, screen(m))
