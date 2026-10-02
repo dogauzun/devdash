@@ -18,16 +18,22 @@ builds:
     # The version keeps its leading v, as `go install …@v0.1.0` reports it (DEV-64).
     ldflags:
       - -s -w -X main.version=v{{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
-    # Commit time, not build time, so rebuilding a tag gives the same archives.
+    # Commit time, not build time, so rebuilding a tag gives the same binaries.
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: devdash
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Fixed owner and mtime so the archive bytes depend only on the commit.
     files:
-      - LICENSE
-      - README.md
+      - src: LICENSE
+        info: &info
+          owner: root
+          group: root
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info: *info
 
 checksum:
   name_template: checksums.txt

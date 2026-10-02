@@ -9,6 +9,10 @@ Docker containers to the processes that own them, and lets you kill any of it. I
 static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
 shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
+Status: the CLI (`--json`, `port`, `kill`) works today. Docker containers and the dashboard
+are being built (Phases 3 and 4 in [docs/SPEC.md](docs/SPEC.md)); the parts of this README
+that depend on them say so.
+
 <!-- demo GIF: DEV-65 -->
 
 ## Install
@@ -131,9 +135,10 @@ and reports what survived. Then it checks the port again and says whether it is 
 - `--timeout d`: how long to wait for the signalled processes to exit (default 3s).
 
 A target outside every project asks a second time, because it is usually a system service.
-devdash refuses pid 1, itself and its ancestors (your shell and terminal), container ports
-(with a `docker stop <name>` hint) and container-runtime processes such as `dockerd`,
-`docker-proxy` and `com.docker.backend`. If any owner is refused, nothing is signalled. Each
+devdash refuses pid 1, itself and its ancestors (your shell and terminal), and
+container-runtime processes such as `dockerd`, `docker-proxy` and `com.docker.backend`. Once
+Docker support lands it also refuses container ports, with a `docker stop <name>` hint. If
+any owner is refused, nothing is signalled. Each
 pid's start time is checked again right before `kill(2)`, so a reused pid is never signalled.
 
 | Exit code | Meaning |
@@ -147,7 +152,8 @@ pid's start time is checked again right before `kill(2)`, so a reused pid is nev
 
 ### `devdash version`
 
-Prints the version, commit and build date. Exits 0.
+Prints the version, the commit, and the commit's date (labelled `built`; release builds and
+`go install` builds both record the commit time, not the build time). Exits 0.
 
 ### Global flags
 
@@ -158,7 +164,7 @@ Flags may come before or after the command. `-h` or `--help` prints the usage an
 | `--roots paths` | only count git repositories under these directories; comma-separated and repeatable; a leading `~` is `$HOME` |
 | `--tick d` | dashboard refresh interval (default 2s, minimum 500ms) |
 | `--all` | show shells and editors in the dashboard (`--json` always lists every process) |
-| `--no-docker` | do not ask Docker for containers |
+| `--no-docker` | do not ask Docker for containers (accepted now; takes effect when Docker support lands) |
 | `--no-color` | no colour; also when `NO_COLOR` is set and not empty |
 | `--json` | print one snapshot as JSON |
 
@@ -188,7 +194,7 @@ the tool is built around.
 | Who has port N? | `devdash port N`, or filter the dashboard by port |
 | Which processes belong to this repository? | every process is grouped under the git repository of its working directory, linked worktrees included |
 | What runs here without a port? | watchers, test runners and agent sessions are shown under their project, listening or not |
-| Which container holds this port? | a published port is shown as its container under its compose project, not as `docker-proxy` |
+| Which container holds this port? | once Docker support lands, a published port is shown as its container under its compose project, not as `docker-proxy` |
 | What exactly will this kill do? | the plan lists every pid before any signal is sent |
 
 If you only want to free a port, any of the tools above will do, and some cover ground devdash
@@ -209,7 +215,9 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   empty list is treated as unknown, not as "no listeners", and a footer hint says so. Start
   devdash directly from a shell, or use sudo. Your own listeners are always found. See the
   Signing notes in [docs/SPEC.md](docs/SPEC.md#build-release-and-distribution) and [DECISIONS.md](DECISIONS.md) (DEV-10).
-- **Docker.** Docker is optional; with no socket there are no container rows and no warning.
+- **Docker** support is being built. Until it lands, a published container port shows as
+  `docker-proxy`, or with an unknown owner when root holds it. Once it lands: Docker is
+  optional; with no socket there are no container rows and no warning.
   A published port with no userland proxy behind it (iptables only) shows as a container row
   with no process. OrbStack, Colima and Podman may hold ports in processes devdash does not
   know, which then show with an unknown owner. `port N` only reports ports listening on the

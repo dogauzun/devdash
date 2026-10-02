@@ -2,7 +2,7 @@ package main
 
 import "runtime/debug"
 
-// versionInfo returns the version, commit and build date to print. Each linker value (set by
+// versionInfo returns the version, commit and commit date to print. Each linker value (set by
 // goreleaser with -ldflags -X) wins on its own; one still at its default ("dev", "none",
 // "unknown") falls back to the build info the go command embeds: the module version for
 // `go install ...@v0.1.0`, and the vcs revision and time for a build inside a git checkout, the

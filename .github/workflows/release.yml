@@ -48,7 +48,9 @@ jobs:
 
       # Fail before anything is published rather than after the GitHub release
       # exists: goreleaser pushes the cask last (DEV-37 creates the token).
+      # Prerelease tags (v0.1.0-rc1) never touch the tap (skip_upload: auto).
       - name: Check the tap token
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
         run: |
@@ -57,7 +59,8 @@ jobs:
             exit 1
           fi
 
-      - uses: goreleaser/goreleaser-action@v7
+      # Pinned by commit: this job can write releases and holds the tap token.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           # Keep in step with ci.yml.
           version: v2.18.2

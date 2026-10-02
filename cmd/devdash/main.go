@@ -30,7 +30,7 @@ const usage = `usage: devdash [flags]              the dashboard (not implemente
        devdash [flags] --json       print one snapshot as JSON (docs/json-schema.md)
        devdash [flags] port N       who listens on TCP port N: exit 0 found, 1 free
        devdash [flags] kill N       stop the process(es) listening on TCP port N
-       devdash version              print version, commit and build date
+       devdash version              print version, commit and commit date
 
 Flags may come before or after the subcommand and its arguments.
 
