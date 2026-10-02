@@ -218,7 +218,7 @@ func TestAdaptiveInterval(t *testing.T) {
 					if u.Interval != want {
 						t.Errorf("tick %d: interval %v, want %v", i, u.Interval, want)
 					}
-					if got := hasWarning(u.Snapshot, "refresh_slowed"); got != (want > tt.tick) {
+					if got := hasWarning(u, "refresh_slowed"); got != (want > tt.tick) {
 						t.Errorf("tick %d: refresh_slowed warning %v at %v", i, got, want)
 					}
 				}
@@ -227,13 +227,35 @@ func TestAdaptiveInterval(t *testing.T) {
 	}
 }
 
-func hasWarning(s model.Snapshot, code string) bool {
-	for _, w := range s.Warnings {
+func hasWarning(u Update, code string) bool {
+	for _, w := range u.Warnings {
 		if w.Code == code {
 			return true
 		}
 	}
 	return false
+}
+
+// TestSlowedHintOnFailedTicks: backoff caused by timed-out ticks is reported although no new
+// snapshot is built, and the held snapshot is not touched.
+func TestSlowedHintOnFailedTicks(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, stop := start(t, Options{Collector: &collector.Fake{Steps: []collector.Step{step(1), {Block: true}}}})
+		defer stop()
+		first := <-e.Updates()
+		for i, want := range []time.Duration{2e9, 2e9, 4e9, 4e9, 4e9, 8e9} {
+			u := <-e.Updates()
+			if u.Interval != want || hasWarning(u, "refresh_slowed") != (want > DefaultTick) {
+				t.Errorf("failed tick %d: interval %v, want %v; warnings %v", i, u.Interval, want, u.Warnings)
+			}
+			if len(u.Snapshot.Warnings) != 0 {
+				t.Errorf("failed tick %d: held snapshot changed: %v", i, u.Snapshot.Warnings)
+			}
+		}
+		if len(first.Snapshot.Warnings) != 0 {
+			t.Errorf("first snapshot changed: %v", first.Snapshot.Warnings)
+		}
+	})
 }
 
 func TestTickBounds(t *testing.T) {
@@ -257,8 +279,8 @@ func TestManyProcesses(t *testing.T) {
 		t0 := time.Now()
 		for _, at := range []time.Duration{0, 5 * time.Second, 10 * time.Second, 15 * time.Second, 20 * time.Second} {
 			u := next(t, e, t0, at) // fast ticks never halve below 5 s
-			if u.Interval != 5*time.Second || !hasWarning(u.Snapshot, "many_processes") || hasWarning(u.Snapshot, "refresh_slowed") {
-				t.Errorf("at %v: interval %v warnings %v", at, u.Interval, u.Snapshot.Warnings)
+			if u.Interval != 5*time.Second || !hasWarning(u, "many_processes") || hasWarning(u, "refresh_slowed") {
+				t.Errorf("at %v: interval %v warnings %v", at, u.Interval, u.Warnings)
 			}
 		}
 	})

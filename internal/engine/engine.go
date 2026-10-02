@@ -48,6 +48,10 @@ type Update struct {
 	Err      error         // why this tick failed (wraps context.DeadlineExceeded on a timeout); nil on success
 	Missed   int           // consecutive failed or timed-out ticks since Snapshot; the TUI shows "stale" from 2
 	Interval time.Duration // current interval, after adaptive backoff
+	// Warnings are the engine's own hints for this tick (refresh_slowed, many_processes), in
+	// the same deduplicated form as Snapshot.Warnings, which holds only collector and Build
+	// warnings. This is the only place engine hints appear; the footer shows both lists.
+	Warnings []model.Warning
 }
 
 // Engine runs the refresh loop. Create it with New, then call Run once.
@@ -130,7 +134,6 @@ func (e *Engine) Run(ctx context.Context) {
 		}
 		e.adapt(time.Since(start) > slowTick || errors.Is(err, context.DeadlineExceeded))
 		if err == nil {
-			snap.Warnings = append(snap.Warnings, e.warnings()...)
 			e.prev, e.missed = snap, 0
 		} else {
 			e.missed++
@@ -140,7 +143,7 @@ func (e *Engine) Run(ctx context.Context) {
 		case <-e.updates:
 		default:
 		}
-		e.updates <- Update{Snapshot: e.prev, Err: err, Missed: e.missed, Interval: e.interval}
+		e.updates <- Update{Snapshot: e.prev, Err: err, Missed: e.missed, Interval: e.interval, Warnings: e.warnings()}
 		t.Reset(e.interval)
 	}
 }
@@ -225,7 +228,7 @@ func (e *Engine) floor() time.Duration {
 	return e.o.Tick
 }
 
-// warnings are the engine's own footer hints, in the snapshot's deduplicated form.
+// warnings are the engine's own footer hints for Update.Warnings, fresh on every tick.
 func (e *Engine) warnings() []model.Warning {
 	var ws []model.Warning
 	if e.procs > manyProcs {
@@ -254,8 +257,13 @@ func (c *userCache) name(uid int) string {
 	return n
 }
 
-// lookupUser names a uid without cgo: the current user (pure Go falls back to $USER, which
-// covers macOS directory-service accounts), then /etc/passwd, then the number itself.
+// lookupUser names a uid: the current user, then any other, then the number itself. Without
+// cgo, os/user on macOS still calls libSystem's getpwuid_r, which asks the directory service;
+// on Linux it reads /etc/passwd.
+//
+// ponytail: runs in the Run goroutine outside the collection timeout, so a hung network
+// directory stalls the loop on a new uid; look up in a goroutine with a timeout, using the
+// numeric uid meanwhile, if that ever happens.
 func lookupUser(uid int) string {
 	id := strconv.Itoa(uid)
 	if u, err := user.Current(); err == nil && u.Uid == id {
