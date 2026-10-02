@@ -69,6 +69,8 @@ type Model struct {
 	filter    string // active filter query (rows.go)
 	filtering bool   // the filter prompt has the keyboard
 
+	fsel filterSel // the row chosen before the filter hid it (rows.go)
+
 	detail bool // detail pane open (detail.go)
 	help   bool // help overlay open (help.go)
 	kill   killState
@@ -154,6 +156,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m.status = ""
 		return m, m.key(msg)
+	case tea.PasteMsg:
+		m.paste(msg.Content)
 	case action:
 		return m, msg.apply(m)
 	}
