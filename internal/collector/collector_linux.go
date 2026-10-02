@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +21,7 @@ import (
 func New() Collector { return newLinux("/proc") }
 
 func newLinux(root string) *linuxCollector {
-	c := &linuxCollector{root: root}
+	c := &linuxCollector{root: root, euid: os.Geteuid()}
 	// btime is read once: the kernel shifts it when the wall clock is stepped,
 	// which would move every StartTime and break (pid, start time) identity.
 	c.btime = sync.OnceValues(func() (int64, error) {
@@ -38,7 +40,19 @@ func newLinux(root string) *linuxCollector {
 
 type linuxCollector struct {
 	root  string // proc root, "/proc" outside tests
+	euid  int    // whose fds the walk reads (all when 0); os.Geteuid outside tests
 	btime func() (int64, error)
+
+	// fd-walk state carried to the next Collect. A Collect abandoned on timeout may still be
+	// running when the next one starts, so it is copied in and out under mu.
+	mu        sync.Mutex
+	denied    map[procKey]bool // processes whose fd/ failed with EACCES on the last walk
+	unmatched []uint64         // sorted inodes of countable listeners the last walk left unowned
+}
+
+type procKey struct {
+	pid   int
+	start int64
 }
 
 const clockTick = 10 * time.Millisecond // USER_HZ = 100 on every Linux ABI
@@ -52,7 +66,7 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 	}
 
 	t := time.Now()
-	res.Listeners, err = c.listeners(ctx, procs, os.Getuid())
+	res.Listeners, err = c.listeners(ctx, procs)
 	if err != nil {
 		return Result{}, err
 	}
@@ -83,8 +97,8 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 
 // processes reads every user-space process in one pass per pid, so a pid
 // reused between reads cannot mix two processes into one row. Kernel threads,
-// zombies and processes that exit mid-read are skipped. It adds the
-// "proctable" and "argv_cwd" timings.
+// zombies and processes that exit mid-read are skipped. The result is sorted by
+// pid. It adds the "proctable" and "argv_cwd" timings.
 func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.Duration) ([]Process, error) {
 	btime, err := c.btime()
 	if err != nil {
@@ -95,19 +109,24 @@ func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.
 	if err != nil {
 		return nil, err
 	}
+	pids := make([]int, 0, len(names))
+	for _, name := range names {
+		if pid, err := strconv.Atoi(name); err == nil { // else not a process directory
+			pids = append(pids, pid)
+		}
+	}
+	// /proc lists pids in ascending order already; sorting keeps the fd walk's
+	// "lowest pid owns a shared socket" true for any proc root.
+	slices.Sort(pids)
 	tTable, tArgv := time.Since(start), time.Duration(0)
 	pageSize := uint64(os.Getpagesize())
 
-	procs := make([]Process, 0, len(names))
-	for i, name := range names {
+	procs := make([]Process, 0, len(pids))
+	for i, pid := range pids {
 		if i%64 == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		pid, err := strconv.Atoi(name)
-		if err != nil {
-			continue // not a process directory
-		}
-		dir := c.root + "/" + name
+		dir := c.root + "/" + strconv.Itoa(pid)
 		t0 := time.Now()
 		p, ok := readProcTable(dir, pid, btime, pageSize)
 		t1 := time.Now()
@@ -192,13 +211,22 @@ func readArgvCwd(dir string, p *Process) (ok bool) {
 	case err != nil:
 		return false
 	}
+	// The kernel marks a removed cwd "<path> (deleted)"; macOS reports the bare old path.
+	// ponytail: a directory really named "x (deleted)" loses its suffix too, since readlink
+	// cannot tell them apart; a stat of cwd showing nlink 0 can, if that ever matters.
+	p.Cwd = strings.TrimSuffix(p.Cwd, " (deleted)")
 	return true
 }
 
-// listeners reads listening TCP sockets and finds their owners by walking the
-// fds of processes that uid may inspect, stopping once every inode is matched.
-// An unmatched listener keeps PID 0.
-func (c *linuxCollector) listeners(ctx context.Context, procs []Process, uid int) ([]Listener, error) {
+// listeners reads listening TCP sockets and finds their owners by walking, in pid
+// order, the fds of the processes c.euid may inspect, so a socket shared across fork
+// goes to the lowest pid holding it. An unmatched listener keeps PID 0.
+//
+// The walk stops once every countable listener is matched: those whose socket uid is
+// c.euid, or all of them as root, since other users' fds are unreadable anyway. It
+// skips processes whose fd/ failed with EACCES on the last walk unless the set of
+// unmatched countable inodes differs from the one that walk ended with.
+func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]Listener, error) {
 	var rows []tcpListen
 	for _, f := range [...]struct{ file, proto string }{{"/net/tcp", "tcp4"}, {"/net/tcp6", "tcp6"}} {
 		b, err := os.ReadFile(c.root + f.file)
@@ -211,25 +239,39 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process, uid int
 		rows = append(rows, parseNetTCP(b, f.proto)...)
 	}
 
+	euid := c.euid
+	countable := func(r tcpListen) bool { return euid == 0 || r.uid == euid }
 	byInode := make(map[uint64]int, len(rows))
+	left := 0 // countable listeners still without an owner
 	for i, r := range rows {
 		byInode[r.inode] = i
+		if countable(r) {
+			left++
+		}
 	}
-	unmatched := len(byInode)
-	for _, p := range procs {
-		if unmatched == 0 {
-			break
+	unmatchedSet := func() []uint64 {
+		var s []uint64
+		for _, r := range rows {
+			if r.PID == 0 && countable(r) {
+				s = append(s, r.inode)
+			}
 		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if p.UID != uid && uid != 0 { // others' fds fail with EACCES unless we are root
-			continue
-		}
+		slices.Sort(s)
+		return s
+	}
+
+	c.mu.Lock()
+	wasDenied, wasUnmatched := c.denied, c.unmatched
+	c.mu.Unlock()
+	denied := map[procKey]bool{}
+	scan := func(p Process) {
 		fdDir := c.root + "/" + strconv.Itoa(p.PID) + "/fd/"
 		fds, err := readDirNames(fdDir)
+		if errors.Is(err, fs.ErrPermission) { // not dumpable, e.g. gpg-agent or a setgid binary
+			denied[procKey{p.PID, p.StartTime.UnixNano()}] = true
+		}
 		if err != nil {
-			continue
+			return // EACCES, or the process exited
 		}
 		for _, fd := range fds {
 			target, err := os.Readlink(fdDir + fd)
@@ -240,13 +282,51 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process, uid int
 			if !ok {
 				continue
 			}
-			// ponytail: a socket shared after fork goes to the first pid seen (usually the parent).
 			if i, ok := byInode[inode]; ok && rows[i].PID == 0 {
 				rows[i].PID = p.PID
-				unmatched--
+				if countable(rows[i]) {
+					left--
+				}
 			}
 		}
 	}
+
+	var retry []Process // denied last time; scanned only if the unmatched set changed
+	for _, p := range procs {
+		if left == 0 {
+			break
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if p.UID != euid && euid != 0 { // others' fds fail with EACCES unless we are root
+			continue
+		}
+		if wasDenied[procKey{p.PID, p.StartTime.UnixNano()}] {
+			retry = append(retry, p)
+			continue
+		}
+		scan(p)
+	}
+	unmatched := unmatchedSet()
+	if len(unmatched) > 0 && !slices.Equal(unmatched, wasUnmatched) {
+		// ponytail: retried pids come after higher ones, so a fork-shared socket held by
+		// a retried pid and a higher readable pid goes to the higher one.
+		for _, p := range retry {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			scan(p)
+		}
+		unmatched = unmatchedSet()
+	} else {
+		for _, p := range retry {
+			denied[procKey{p.PID, p.StartTime.UnixNano()}] = true
+		}
+	}
+	c.mu.Lock()
+	c.denied, c.unmatched = denied, unmatched
+	c.mu.Unlock()
 
 	out := make([]Listener, len(rows))
 	for i, r := range rows {

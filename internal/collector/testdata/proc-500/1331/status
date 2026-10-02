@@ -1,0 +1,8 @@
+Name:	go
+Umask:	0022
+State:	S
+Tgid:	1331
+Pid:	1331
+PPid:	1000
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

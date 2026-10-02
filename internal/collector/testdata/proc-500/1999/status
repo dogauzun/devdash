@@ -1,0 +1,8 @@
+Name:	caddy
+Umask:	0022
+State:	S
+Tgid:	1999
+Pid:	1999
+PPid:	1
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

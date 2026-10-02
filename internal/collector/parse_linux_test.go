@@ -55,11 +55,13 @@ func TestParseStat(t *testing.T) {
 
 func TestParseStatusUID(t *testing.T) {
 	in := "Name:\tbash\nUmask:\t0022\nState:\tS (sleeping)\nPid:\t9\nPPid:\t1\nUid:\t1000\t0\t0\t0\nGid:\t1000\t1000\t1000\t1000\n"
-	if uid, err := parseStatusUID([]byte(in)); err != nil || uid != 1000 {
-		t.Errorf("got %d, %v; want real uid 1000", uid, err)
+	if uid, err := parseStatusUID([]byte(in)); err != nil || uid != 0 {
+		t.Errorf("got %d, %v; want effective uid 0", uid, err)
 	}
-	if _, err := parseStatusUID([]byte("Name:\tx\n")); err == nil {
-		t.Error("missing Uid line: want error")
+	for _, bad := range []string{"Name:\tx\n", "Uid:\t1000\n"} {
+		if _, err := parseStatusUID([]byte(bad)); err == nil {
+			t.Errorf("%q: want error", bad)
+		}
 	}
 }
 
@@ -104,17 +106,17 @@ func TestParseNetTCP(t *testing.T) {
    2: 0000000000000000FFFF00000100007F:1F91 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 555 1 0000000000000000 100 0 0 10 0
    3: 000080FE000000000000000001000000:0050 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 666 1 0000000000000000 100 0 0 10 0
 `
-	l := func(proto, addr string, port uint16, inode uint64) tcpListen {
-		return tcpListen{Listener{Proto: proto, Addr: netip.MustParseAddr(addr), Port: port}, inode}
+	l := func(proto, addr string, port uint16, uid int, inode uint64) tcpListen {
+		return tcpListen{Listener{Proto: proto, Addr: netip.MustParseAddr(addr), Port: port}, uid, inode}
 	}
 	want := []tcpListen{
-		l("tcp4", "127.0.0.1", 8080, 23456),
-		l("tcp4", "0.0.0.0", 22, 111),
-		l("tcp4", "192.168.0.10", 80, 222),
-		l("tcp6", "::", 22, 333),
-		l("tcp6", "::1", 3000, 444),
-		l("tcp6", "::ffff:127.0.0.1", 8081, 555),
-		l("tcp6", "fe80::1", 80, 666),
+		l("tcp4", "127.0.0.1", 8080, 1000, 23456),
+		l("tcp4", "0.0.0.0", 22, 0, 111),
+		l("tcp4", "192.168.0.10", 80, 1000, 222),
+		l("tcp6", "::", 22, 0, 333), // dual-stack stays one tcp6 row
+		l("tcp6", "::1", 3000, 1000, 444),
+		l("tcp4", "127.0.0.1", 8081, 1000, 555), // v4-mapped ::ffff:127.0.0.1 is unmapped (DEV-43)
+		l("tcp6", "fe80::1", 80, 1000, 666),
 	}
 	got := append(parseNetTCP([]byte(tcp), "tcp4"), parseNetTCP([]byte(tcp6), "tcp6")...)
 	if !slices.Equal(got, want) {

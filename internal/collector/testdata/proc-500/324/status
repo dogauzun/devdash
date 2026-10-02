@@ -1,0 +1,8 @@
+Name:	nginx
+Umask:	0022
+State:	S
+Tgid:	324
+Pid:	324
+PPid:	320
+Uid:	33	33	33	33
+Gid:	33	33	33	33
