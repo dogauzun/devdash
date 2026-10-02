@@ -34,7 +34,7 @@ type Process struct {
 	StartTime   time.Time
 	UID         int
 	User        string
-	Name        string // comm on Linux, p_comm on macOS
+	Name        string // comm on Linux, p_comm on macOS; Build replaces a cut-short one with argv[0]'s basename
 	Argv        []string
 	Cwd         string        // "" when unreadable
 	CPUTime     time.Duration // cumulative user+system, as collected; input to CPUPercent
