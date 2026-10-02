@@ -38,7 +38,7 @@ func TestOpenLowestPort(t *testing.T) {
 			rec := &openRecorder{}
 			m, _ := newTest(t, 80, 24, func(o *Options) { o.Open = rec.open })
 			feed(m, s)
-			selectKey(t, m, tc.key)
+			detailSelect(t, m, tc.key)
 			cmd := press(m, "o")
 			if cmd == nil {
 				t.Fatalf("o returned no command; status %q", m.status)
@@ -68,7 +68,7 @@ func TestOpenContainerPortsFallback(t *testing.T) {
 	rec := &openRecorder{}
 	m, _ := newTest(t, 80, 24, func(o *Options) { o.Open = rec.open })
 	feed(m, s)
-	selectKey(t, m, keyOf(s, 300))
+	detailSelect(t, m, keyOf(s, 300))
 	m.Update(press(m, "o")())
 	if !slices.Equal(rec.urls, []string{"http://localhost:5432"}) {
 		t.Errorf("opened %q, want the lowest published port 5432", rec.urls)
@@ -87,7 +87,7 @@ func TestOpenNoPort(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24) // the default fake fails the test if Open is called
 			feed(m, s)
-			selectKey(t, m, tc.key)
+			detailSelect(t, m, tc.key)
 			if cmd := press(m, "o"); cmd != nil {
 				t.Error("o returned a command for a row without a port")
 			}
@@ -111,7 +111,7 @@ func TestOpenError(t *testing.T) {
 	m, _ := newTest(t, 80, 24, func(o *Options) { o.Open = rec.open })
 	s := fixture()
 	feed(m, s)
-	selectKey(t, m, keyOf(s, 200))
+	detailSelect(t, m, keyOf(s, 200))
 	m.Update(press(m, "o")())
 	if want := "open failed: xdg-open: exit status 3"; m.status != want || line(m, want) == "" {
 		t.Errorf("status %q, want %q in the footer", m.status, want)
