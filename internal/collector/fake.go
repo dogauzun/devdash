@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 )
 
@@ -11,8 +12,9 @@ import (
 type Fake struct {
 	Steps []Step
 
-	mu   sync.Mutex
-	next int
+	mu    sync.Mutex
+	next  int
+	calls []Options
 }
 
 // Step is one scripted Collect outcome.
@@ -22,9 +24,11 @@ type Step struct {
 	Block  bool // wait until ctx is done, then return ctx.Err()
 }
 
-// Collect implements Collector.
-func (f *Fake) Collect(ctx context.Context) (Result, error) {
+// Collect implements Collector. It records o and plays the next Step as scripted, whatever o
+// asks for.
+func (f *Fake) Collect(ctx context.Context, o Options) (Result, error) {
 	f.mu.Lock()
+	f.calls = append(f.calls, o)
 	if len(f.Steps) == 0 {
 		f.mu.Unlock()
 		return Result{}, errors.New("collector.Fake: no steps")
@@ -38,4 +42,11 @@ func (f *Fake) Collect(ctx context.Context) (Result, error) {
 		return Result{}, ctx.Err()
 	}
 	return s.Result, s.Err
+}
+
+// Calls returns the Options of every Collect so far, in order.
+func (f *Fake) Calls() []Options {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
 }

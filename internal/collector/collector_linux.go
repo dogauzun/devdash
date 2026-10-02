@@ -60,10 +60,11 @@ type procKey struct {
 
 const clockTick = 10 * time.Millisecond // USER_HZ = 100 on every Linux ABI
 
-func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
+func (c *linuxCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	res := Result{TakenAt: time.Now(), Host: host(), Timings: model.Timing{}}
 
-	procs, err := c.processes(ctx, res.Timings)
+	limit := o.InProject != nil
+	procs, err := c.processes(ctx, res.Timings, !limit)
 	if err != nil {
 		return Result{}, err
 	}
@@ -75,6 +76,14 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	res.Timings["listeners"] = time.Since(t)
+	var skipped map[int]bool // processes whose argv was not read (o.InProject)
+	if limit {
+		t := time.Now()
+		if procs, skipped, err = c.limitedArgv(ctx, procs, argvWanted(o, procs, res.Listeners)); err != nil {
+			return Result{}, err
+		}
+		res.Timings["argv_cwd"] += time.Since(t)
+	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -93,7 +102,11 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 	}
 	unknown := 0
 	for _, p := range procs {
-		if p.Unknown != 0 {
+		u := p.Unknown
+		if skipped[p.PID] {
+			u &^= model.FieldArgv // not read, not denied
+		}
+		if u != 0 {
 			unknown++
 		}
 	}
@@ -140,8 +153,9 @@ func hasPtrace() bool {
 // processes reads every user-space process in one pass per pid, so a pid
 // reused between reads cannot mix two processes into one row. Kernel threads,
 // zombies and processes that exit mid-read are skipped. The result is sorted by
-// pid. It adds the "proctable" and "argv_cwd" timings.
-func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.Duration) ([]Process, error) {
+// pid. Without withArgv, Argv is left for limitedArgv. It adds the "proctable" and
+// "argv_cwd" timings.
+func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.Duration, withArgv bool) ([]Process, error) {
 	btime, err := c.btime()
 	if err != nil {
 		return nil, err
@@ -176,7 +190,7 @@ func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.
 		if !ok {
 			continue
 		}
-		ok = readArgvCwd(dir, &p)
+		ok = (!withArgv || readArgv(dir, &p)) && readCwd(dir, &p)
 		tArgv += time.Since(t1)
 		if ok {
 			procs = append(procs, p)
@@ -231,12 +245,35 @@ func readProcTable(dir string, pid int, btime int64, pageSize uint64) (p Process
 	return p, true
 }
 
-// readArgvCwd fills Argv and Cwd; ok is false when the process is gone.
-// An empty cmdline (a process that blanked its argv) leaves Argv nil.
-func readArgvCwd(dir string, p *Process) (ok bool) {
-	// ponytail: a pid that exits and is reused between the stat read and these
-	// reads (microseconds apart, after the pid space wraps) still mixes two
-	// processes; re-check starttime after the last read if that ever matters.
+// limitedArgv reads argv for the processes want marks and marks the others' argv unknown,
+// returning those in skipped. A process that exited since its first read is dropped.
+func (c *linuxCollector) limitedArgv(ctx context.Context, procs []Process, want []bool) (_ []Process, skipped map[int]bool, _ error) {
+	skipped = map[int]bool{}
+	kept := procs[:0]
+	for i, p := range procs {
+		if i%64 == 0 && ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		switch {
+		case !want[i]:
+			p.Unknown |= model.FieldArgv
+			skipped[p.PID] = true
+		case !readArgv(c.root+"/"+strconv.Itoa(p.PID), &p):
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept, skipped, nil
+}
+
+// readArgv fills Argv; ok is false when the process is gone. An empty cmdline (a
+// process that blanked its argv) leaves Argv nil.
+//
+// ponytail: a pid that exits and is reused between the stat read and the argv and
+// cwd reads (microseconds apart, after the pid space wraps; with InProject, after
+// the listener walk) still mixes two processes; re-check starttime after the last
+// read if that ever matters.
+func readArgv(dir string, p *Process) (ok bool) {
 	b, err := os.ReadFile(dir + "/cmdline")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
@@ -246,6 +283,12 @@ func readArgvCwd(dir string, p *Process) (ok bool) {
 	default:
 		p.Argv = parseCmdline(b)
 	}
+	return true
+}
+
+// readCwd fills Cwd; ok is false when the process is gone.
+func readCwd(dir string, p *Process) (ok bool) {
+	var err error
 	p.Cwd, err = os.Readlink(dir + "/cwd")
 	switch {
 	case errors.Is(err, fs.ErrPermission):

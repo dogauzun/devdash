@@ -41,6 +41,27 @@ func TestRuntimeCLI(t *testing.T) {
 	}
 }
 
+// TestMayBeRuntime: a kernel name that could belong to a runtime process once argv[0] is known,
+// so the collector reads its argv over 5000 processes (DEV-92, PR #64 review).
+func TestMayBeRuntime(t *testing.T) {
+	for name, want := range map[string]bool{
+		"pasta.avx2":             true, // passt's pasta re-execs as pasta.avx2; argv[0] is pasta
+		"dockerd":                true,
+		"com.docker.vpn":         true, // a cut prefix
+		"containerd-shim-runc-v": true,
+		"OrbStack Helper":        true, // compared lower-case
+		"-dockerd":               true, // a login-shell dash is dropped, as names() does
+		"sleep":                  false,
+		"node":                   false,
+		"fourteen-chars":         false,
+		"zsh":                    false,
+	} {
+		if got := MayBeRuntime(name); got != want {
+			t.Errorf("MayBeRuntime(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 // TestRuntimeLists: every list key is a lower-case basename, as names() produces them, and
 // every proxy is a runtime process, so a forwarder Reconcile trusts is also refused by name
 // when Docker gives no container list (spec, risk 6).

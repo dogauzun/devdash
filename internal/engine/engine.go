@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/user"
+	"slices"
 	"strconv"
 	"time"
 
@@ -35,7 +36,7 @@ var errBusy = fmt.Errorf("previous collection still running: %w", context.Deadli
 // Options configures an Engine.
 type Options struct {
 	Collector collector.Collector
-	Resolver  *model.Resolver // reused across ticks; only the refresh goroutine touches it
+	Resolver  *model.Resolver // reused across ticks; used by one goroutine at a time (see inProject)
 	Tick      time.Duration   // refresh interval; 0 means DefaultTick, raised to MinTick
 	// LookupUser names a uid for Process.User, called once per uid for the engine's life (each
 	// Snapshot or SnapshotAfter call is its own engine). nil means the OS lookup: the current
@@ -128,8 +129,9 @@ func (e *Engine) Refresh() {
 // bounded by 1 s; every tick builds with the latest list it stored (none until the first
 // Fetch returns) and never waits for a Fetch. Run returns after that goroutine has stopped.
 //
-// ponytail: with more than 5000 processes the spec also reads argv only for processes in a
-// project or with a listener; that needs a collector option that does not exist yet.
+// After a good tick with more than 5000 processes, each Collect reads argv only for processes
+// in a project or with a listener (collector.Options.InProject, answered by inProject);
+// Snapshot and SnapshotAfter always read every argv.
 func (e *Engine) Run(ctx context.Context) {
 	defer close(e.updates)
 	if e.o.Docker != nil {
@@ -149,7 +151,11 @@ func (e *Engine) Run(ctx context.Context) {
 		}
 
 		start := time.Now()
-		raw, err := e.collect(ctx)
+		var co collector.Options
+		if e.procs > manyProcs {
+			co.InProject = e.inProject
+		}
+		raw, err := e.collect(ctx, co)
 		if ctx.Err() != nil {
 			return
 		}
@@ -195,7 +201,7 @@ func SnapshotAfter(ctx context.Context, o Options, prev model.Snapshot) (model.S
 		docker = make(chan dockerResult, 1)
 		go func() { docker <- fetch(ctx, o.Docker) }()
 	}
-	raw, err := e.collect(ctx)
+	raw, err := e.collect(ctx, collector.Options{}) // one-shot: no count to limit argv by
 	if err != nil {
 		return model.Snapshot{}, err
 	}
@@ -209,7 +215,7 @@ func SnapshotAfter(ctx context.Context, o Options, prev model.Snapshot) (model.S
 // collect runs Collect in its own goroutine and stops waiting after collectTimeout, because
 // a read can block in the kernel past its context. While an abandoned Collect is still
 // running no new one starts; that tick fails with errBusy.
-func (e *Engine) collect(ctx context.Context) (model.Raw, error) {
+func (e *Engine) collect(ctx context.Context, o collector.Options) (model.Raw, error) {
 	if e.inflight != nil {
 		select {
 		case <-e.inflight: // finished late; its sample is stale, drop it
@@ -222,16 +228,35 @@ func (e *Engine) collect(ctx context.Context) (model.Raw, error) {
 	defer cancel()
 	ch := make(chan outcome, 1) // buffered: an abandoned goroutine can always finish
 	go func() {
-		raw, err := e.o.Collector.Collect(ctx)
+		raw, err := e.o.Collector.Collect(ctx, o)
 		ch <- outcome{raw, err}
 	}()
 	select {
-	case o := <-ch:
-		return o.raw, o.err
+	case out := <-ch:
+		return out.raw, out.err
 	case <-ctx.Done():
 		e.inflight = ch
 		return model.Raw{}, ctx.Err()
 	}
+}
+
+// inProject is collector.Options.InProject: which of procs (Argv not read yet) Resolve puts in
+// a project, by their own or an ancestor's cwd (spec steps 1-5; step 6 needs the argv this
+// decides on). It resolves a copy, so procs is not touched. It runs on the Collect goroutine
+// and uses Options.Resolver, which the refresh goroutine never uses meanwhile: build runs only
+// after collect has received that Collect's result, and no tick builds while an abandoned
+// Collect is in flight.
+func (e *Engine) inProject(procs []model.Process) []bool {
+	in := make([]bool, len(procs))
+	if e.o.Resolver == nil {
+		return in
+	}
+	ps := slices.Clone(procs)
+	e.o.Resolver.Resolve(ps)
+	for i, p := range ps {
+		in[i] = p.ProjectID != ""
+	}
+	return in
 }
 
 // build turns a sample and the latest Docker result into a snapshot, using the previous good
@@ -284,7 +309,7 @@ func (e *Engine) warnings() []model.Warning {
 	var ws []model.Warning
 	if e.procs > manyProcs {
 		ws = append(ws, model.Warning{Code: "many_processes", Count: e.procs,
-			Hint: fmt.Sprintf("over %d processes: refreshing every %v", manyProcs, e.floor())})
+			Hint: fmt.Sprintf("over %d processes: refreshing every %v, argv only for projects and listeners", manyProcs, e.floor())})
 	}
 	if e.interval > e.floor() {
 		ws = append(ws, model.Warning{Code: "refresh_slowed", Count: 1,

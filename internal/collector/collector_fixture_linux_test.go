@@ -355,7 +355,7 @@ func TestCollectFixture(t *testing.T) {
 			}
 			c := newLinux(dir)
 			c.euid, c.ptrace = tt.euid, tt.ptrace
-			res, err := c.Collect(context.Background())
+			res, err := c.Collect(context.Background(), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -432,7 +432,7 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 	c := newLinux(dir)
 	c.euid = fixUser
 	ownerOf := func(port uint16) int {
-		res, err := c.Collect(context.Background())
+		res, err := c.Collect(context.Background(), Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -459,6 +459,80 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 	addListen(t, dir, 8091, fixUser, 2999) // a new unmatched inode, owned by nobody
 	if got := ownerOf(8090); got != fixDenied {
 		t.Fatalf("tick 3: owner %d, want %d (unmatched set changed, pid retried)", got, fixDenied)
+	}
+}
+
+// TestCollectFixtureLimitedArgv: with Options.InProject (over 5000 processes), cmdline is read
+// only for listener owners and for the processes InProject marks, here those under src/api;
+// every other process keeps its row with argv unknown, and that does not count as unreadable
+// (DEV-92).
+func TestCollectFixtureLimitedArgv(t *testing.T) {
+	procs, listens := proc500()
+	dir, denied := copyProc500(t)
+	const cron = 330 // root, cwd /, no listener: its cmdline must not be read
+	if err := os.Remove(filepath.Join(dir, strconv.Itoa(cron), "cmdline")); err != nil {
+		t.Fatal(err) // were it read, ENOENT would drop the process as exited
+	}
+	project := "/home/dev/src/api"
+	calls := 0
+	o := Options{InProject: func(ps []Process) []bool {
+		calls++
+		in := make([]bool, len(ps))
+		for i, p := range ps {
+			if p.Argv != nil || p.Cwd == "" {
+				t.Errorf("InProject got pid %d with argv %q, cwd %q; want argv not read, cwd read", p.PID, p.Argv, p.Cwd)
+			}
+			in[i] = p.Cwd == project
+		}
+		return in
+	}}
+	c := newLinux(dir)
+	c.euid = fixUser
+	res, err := c.Collect(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("InProject called %d times, want 1", calls)
+	}
+
+	owners := map[int]bool{}
+	for _, l := range listens {
+		if l.state == "" && l.userOwner != 0 {
+			owners[l.userOwner] = true
+		}
+	}
+	want := wantProcs(procs, denied)
+	read := 0
+	for i := range want {
+		if p := &want[i]; !owners[p.PID] && p.Cwd != project && len(p.Name) < 15 && !model.MayBeRuntime(p.Name) {
+			p.Argv, p.Unknown = nil, p.Unknown|model.FieldArgv
+		} else {
+			read++
+		}
+	}
+	if read < 10 || read > len(want)/2 {
+		t.Fatalf("fixture reads argv for %d of %d processes; want a few", read, len(want))
+	}
+	if !reflect.DeepEqual(res.Processes, want) {
+		for i := range min(len(res.Processes), len(want)) {
+			if !reflect.DeepEqual(res.Processes[i], want[i]) {
+				t.Fatalf("process %d:\n got %+v\nwant %+v", i, res.Processes[i], want[i])
+			}
+		}
+		t.Fatalf("got %d processes, want %d", len(res.Processes), len(want))
+	}
+
+	var codes []string
+	for _, w := range res.Warnings {
+		codes = append(codes, fmt.Sprintf("%s:%d", w.Code, w.Count))
+	}
+	var wantCodes []string
+	if denied { // fixDenied's statm; its argv is not read, so not denied
+		wantCodes = append(wantCodes, "process_fields_unreadable:1")
+	}
+	if !slices.Equal(codes, wantCodes) {
+		t.Errorf("warnings %q, want %q", codes, wantCodes)
 	}
 }
 
@@ -531,7 +605,7 @@ func TestCollectOwnerHint(t *testing.T) {
 			c.euid, c.ptrace = 0, tt.ptrace
 			// Tick 2 skips a pid whose fd/ was denied on tick 1; that still counts as denied.
 			for tick := 1; tick <= 2; tick++ {
-				res, err := c.Collect(context.Background())
+				res, err := c.Collect(context.Background(), Options{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -546,7 +620,7 @@ func TestCollectOwnerHint(t *testing.T) {
 			}
 			c = newLinux(dir)
 			c.euid, c.ptrace = fixUser, tt.ptrace
-			if res, err := c.Collect(context.Background()); err != nil || res.OwnerHint != "" {
+			if res, err := c.Collect(context.Background(), Options{}); err != nil || res.OwnerHint != "" {
 				t.Errorf("as a user: owner hint %q, err %v; want \"\" (Build's sudo hint)", res.OwnerHint, err)
 			}
 		})
@@ -576,7 +650,7 @@ func BenchmarkSnapshot(b *testing.B) {
 	r := model.NewResolver(b.TempDir(), nil)
 	var prev model.Snapshot
 	for b.Loop() {
-		res, err := c.Collect(context.Background())
+		res, err := c.Collect(context.Background(), Options{})
 		if err != nil {
 			b.Fatal(err)
 		}

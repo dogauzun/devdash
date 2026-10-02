@@ -30,7 +30,7 @@ func TestCollectFindsSelf(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 	port := uint16(ln.Addr().(*net.TCPAddr).Port)
 
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestListenerFamilies(t *testing.T) {
 		{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: uint16(dual.Addr().(*net.TCPAddr).Port), PID: pid},
 		{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: mappedPort, PID: pid}, // lsof shows 127.0.0.1 too
 	}
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestCollectForkSharedListener(t *testing.T) {
 	}
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestCollectFindsChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestCollectFindsChild(t *testing.T) {
 func TestCollectArgvExact(t *testing.T) {
 	argv := []string{"", "-c", "read x", "", "z"}
 	pid := startBash(t, argv)
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestCollectArgvTooLarge(t *testing.T) {
 	if pid == 0 {
 		t.Fatal("no child filled the kern.procargs2 buffer")
 	}
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestCollectChurn(t *testing.T) {
 
 	c := New()
 	for runs := 0; runs < 100 || spawned.Load() < 300; runs++ {
-		res, err := c.Collect(context.Background())
+		res, err := c.Collect(context.Background(), Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +309,7 @@ func TestCollectChurn(t *testing.T) {
 
 // TestCollectNoPID0: kernel_task is not a row; PID 0 is the "unknown owner" pseudo-process (DEV-42).
 func TestCollectNoPID0(t *testing.T) {
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestCollectDropsZombie(t *testing.T) {
 			t.Fatal("child did not become a zombie")
 		}
 	}
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestCollectOtherUsers(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("needs a normal user")
 	}
-	res, err := New().Collect(context.Background())
+	res, err := New().Collect(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func BenchmarkCollect(b *testing.B) {
 	procs := 0
 	for b.Loop() {
 		t := time.Now()
-		res, err := c.Collect(context.Background())
+		res, err := c.Collect(context.Background(), Options{})
 		if err != nil {
 			b.Fatal(err)
 		}

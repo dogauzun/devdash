@@ -11,6 +11,24 @@ func IsContainerRuntime(p Process) bool {
 	return ok
 }
 
+// MayBeRuntime reports whether a process with kernel name name could be a runtime process
+// once its argv[0] is known: the name (as names() compares it) starts with a runtime name or
+// runtimePrefix, as a runtime that re-execs under another name does (passt's pasta runs as
+// pasta.avx2 with argv[0] pasta), or is a prefix of one, as a cut name is. The collector reads
+// argv for such a process even over 5000 processes, so IsContainerRuntime keeps argv[0].
+func MayBeRuntime(name string) bool {
+	n := baseName(name)
+	if strings.HasPrefix(n, runtimePrefix) || strings.HasPrefix(runtimePrefix, n) {
+		return true
+	}
+	for r := range runtimeNames {
+		if strings.HasPrefix(n, r) || strings.HasPrefix(r, n) {
+			return true
+		}
+	}
+	return false
+}
+
 // RuntimeCLI is the command that lists the containers of runtime process p: "docker",
 // "podman", or "" when p serves either (or is not a runtime process).
 func RuntimeCLI(p Process) string {
