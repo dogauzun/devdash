@@ -59,6 +59,7 @@ func goldenSnapshot(t *testing.T, dir string) model.Snapshot {
 			Listeners: []collector.Listener{
 				{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: 5173, PID: 100},
 				{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 631, PID: 0},
+				{Proto: "tcp6", Addr: netip.MustParseAddr("fe80::1%lo0"), Port: 8081, PID: 101}, // a scoped address keeps its zone
 			},
 			Warnings: []model.Warning{{Code: "process_fields_unreadable", Count: 1, Hint: "run with sudo"}},
 			Timings:  model.Timing{"proctable": 1500 * time.Microsecond, "argv_cwd": 2250 * time.Microsecond, "listeners": 750 * time.Microsecond},

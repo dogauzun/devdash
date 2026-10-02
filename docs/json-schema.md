@@ -79,7 +79,7 @@ The top-level object.
 | Field | Type | Present | Description |
 | --- | --- | --- | --- |
 | `proto` | string | always | `tcp4` or `tcp6`. A dual-stack socket is one `tcp6` listener on `::`; a v4-mapped bind is `tcp4`. |
-| `addr` | string | always | Bind address; `0.0.0.0` or `::` means every interface. |
+| `addr` | string | always | Bind address; `0.0.0.0` or `::` means every interface. A scoped IPv6 address (link-local) carries its zone on macOS: `fe80::1%lo0`. |
 | `port` | integer | always | TCP port, 1 to 65535. |
 
 ## container
