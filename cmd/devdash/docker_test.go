@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +91,7 @@ func TestDockerRetryFollowsTick(t *testing.T) {
 			t.Errorf("--tick %v: RetryAfter = %v, want %v", tc.tick, got, tc.want)
 		}
 	}
-	o, err := parse([]string{"--tick", "1s"}, io.Discard)
+	o, err := parse([]string{"--tick", "1s"})
 	if err != nil {
 		t.Fatal(err)
 	}
