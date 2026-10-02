@@ -407,7 +407,9 @@ func TestCollectFixture(t *testing.T) {
 				}
 			}
 			wantOwner := tt.ownerHint
-			if tt.euid == 0 && !denied {
+			// As root a permission hint needs a denied read, or hidepid hiding other users' pids
+			// from root without CAP_SYS_PTRACE.
+			if tt.euid == 0 && !denied && (tt.hidepid == "" || tt.ptrace) {
 				wantOwner = "pid namespace"
 			}
 			if (wantOwner == "") != (res.OwnerHint == "") || !strings.Contains(res.OwnerHint, wantOwner) {

@@ -84,6 +84,11 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 		if opt := hidepidOption(mounts, c.root); opt != "" {
 			res.Warnings = append(res.Warnings, model.Warning{Code: "proc_hidepid", Count: 1, Hint: fmt.Sprintf(
 				"%s is mounted with %s: other users' processes are hidden and their listeners have no owner", c.root, opt)})
+			// hidepid falls back to ptrace_may_access, so root without CAP_SYS_PTRACE is not even
+			// shown other users' pids: nothing was denied to the walk, but the capability is the fix.
+			if c.euid == 0 && !c.ptrace {
+				fdDenied = true
+			}
 		}
 	}
 	unknown := 0
