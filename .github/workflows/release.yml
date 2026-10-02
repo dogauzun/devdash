@@ -1,0 +1,70 @@
+name: Release
+
+# Runs only when a version tag is pushed (DEV-62). Pushing the tag is a release
+# step for the owner (DEV-39); nothing here runs for branches or pull requests.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The same gate as CI, on the tagged commit itself.
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The changelog is built from the commits since the previous tag.
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Fail before anything is published rather than after the GitHub release
+      # exists: goreleaser pushes the cask last (DEV-37 creates the token).
+      # Prerelease tags (v0.1.0-rc1) never touch the tap (skip_upload: auto).
+      - name: Check the tap token
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+            echo "::error::secret HOMEBREW_TAP_GITHUB_TOKEN is not set (write access to dogauzun/homebrew-tap)"
+            exit 1
+          fi
+
+      # Pinned by commit: this job can write releases and holds the tap token.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          # Keep in step with ci.yml.
+          version: v2.18.2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

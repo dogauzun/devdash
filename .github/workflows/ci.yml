@@ -77,6 +77,61 @@ jobs:
           printf '### Benchmarks (%s)\n\n```\n%s\n```\n' "$RUNNER_OS" "$(cat bench.txt)" >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+  # The release pipeline on every push (spec: Testing strategy), so a tag never
+  # meets a broken .goreleaser.yaml. Nothing is published in snapshot mode.
+  release-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          # Keep in step with release.yml.
+          version: v2.18.2
+          args: check
+
+      - name: goreleaser --snapshot
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.2
+          args: release --snapshot --clean
+
+      - name: Check archives and cask
+        run: |
+          set -eu
+          for target in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do
+            ls dist/devdash_*_"$target".tar.gz
+          done
+          (cd dist && sha256sum -c checksums.txt)
+          tar -xzf dist/devdash_*_linux_amd64.tar.gz -C "$RUNNER_TEMP" devdash
+          out=$("$RUNNER_TEMP/devdash" version)
+          echo "$out"
+          sha=$(git rev-parse HEAD)
+          case "$out" in
+            "devdash v"*"-snapshot."*" (commit $sha, built "*")") ;;
+            *) echo "unexpected version output"; exit 1 ;;
+          esac
+          cask=dist/homebrew/Casks/devdash.rb
+          cat "$cask"
+          test "$(grep -c '^ *url ' "$cask")" -eq 4
+          grep -q 'com.apple.quarantine' "$cask"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: snapshot
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/homebrew/Casks/devdash.rb
+          retention-days: 7
+
   macos:
     runs-on: macos-latest
     timeout-minutes: 15
