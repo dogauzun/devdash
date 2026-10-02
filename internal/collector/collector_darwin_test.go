@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -92,11 +93,9 @@ func TestListenerFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pcb, n := decodePCBList(b)
-	if n == 0 {
-		t.Log("PCB list not served (ad-hoc-signed ancestor, e.g. go test); run the test binary from a shell to check it")
-		return
-	}
+	// Even when withheld (ad-hoc-signed ancestor, e.g. go test) the list holds our own sockets.
+	pcb, others := decodePCBList(b, os.Getpid())
+	t.Logf("PCB list: %d listeners, %d PCBs of other processes", len(pcb), others)
 	for _, w := range want {
 		if !slices.ContainsFunc(pcb, func(s sock) bool { return s.Listener == w }) {
 			t.Errorf("PCB list: %+v missing", w)
@@ -216,6 +215,62 @@ func TestCollectArgvExact(t *testing.T) {
 	}
 	if got := res.Processes[i].Argv; !slices.Equal(got, argv) {
 		t.Errorf("argv %q, want %q", got, argv)
+	}
+}
+
+// TestCollectArgvTooLarge: when exec path, argv, env and apple strings exceed kern.argmax,
+// kern.procargs2 fills the buffer with the tail of the strings area while argc stays the real
+// one. The row stays, with argv unknown and no environment in it (DEV-40 review).
+func TestCollectArgvTooLarge(t *testing.T) {
+	lib, err := loadLibSystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	argmax, err := unix.SysctlUint32("kern.argmax")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A long exec path counts twice (the path and executable_path=), pushing the area past argmax.
+	dir := t.TempDir()
+	for range 6 {
+		dir += "/" + strings.Repeat("d", 100)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := dir + "/bash"
+	if err := os.Symlink("/bin/bash", bin); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, argmax)
+	pid := 0
+	for size := int(argmax) - 200; size > int(argmax)-4000 && pid == 0; size -= 100 {
+		cmd := &exec.Cmd{Path: bin, Args: []string{"bash", "-c", "read x", strings.Repeat("a", size)}, Env: []string{"SENTINEL_ENV=leaked"}}
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Start() != nil { // E2BIG: try a smaller argument
+			continue
+		}
+		t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		if n, err := lib.procArgs2(cmd.Process.Pid, buf); err == nil && n == len(buf) {
+			pid = cmd.Process.Pid
+		}
+	}
+	if pid == 0 {
+		t.Fatal("no child filled the kern.procargs2 buffer")
+	}
+	res, err := New().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == pid })
+	if i < 0 {
+		t.Fatalf("child %d dropped", pid)
+	}
+	if p := res.Processes[i]; p.Unknown != model.FieldArgv || p.Argv != nil {
+		t.Errorf("child unknown %v argv %.80q, want argv unknown and nil", p.Unknown.Names(), p.Argv)
 	}
 }
 

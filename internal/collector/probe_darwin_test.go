@@ -43,6 +43,6 @@ func TestProbeOtherUID(t *testing.T) {
 		}
 	}
 	b, err := unix.SysctlRaw("net.inet.tcp.pcblist_n")
-	_, pcbs := decodePCBList(b)
-	t.Logf("other-uid processes by outcome: %v; pcblist_n: %d bytes, %d PCBs, err %v", counts, len(b), pcbs, err)
+	_, pcbs := decodePCBList(b, os.Getpid())
+	t.Logf("other-uid processes by outcome: %v; pcblist_n: %d bytes, %d PCBs of other processes, err %v", counts, len(b), pcbs, err)
 }

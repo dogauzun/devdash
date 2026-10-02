@@ -98,7 +98,10 @@ func TestDecodeRecordedBlobs(t *testing.T) {
 				t.Logf("no PCB list blob for %s: %v", tag, err)
 				return
 			}
-			pcb, n := decodePCBList(b)
+			pcb, n := decodePCBList(b, -1)
+			if _, others := decodePCBList(b, pcb[0].PID); others != 0 {
+				t.Errorf("PCB list of one pid: %d PCBs of others, want 0 (reads as withheld)", others)
+			}
 			if n != len(listeners)+1 || len(pcb) != n {
 				t.Fatalf("PCB list: %d PCBs, %d listeners, want %d of each", n, len(pcb), len(listeners)+1)
 			}
@@ -116,11 +119,8 @@ func TestDecodeRecordedBlobs(t *testing.T) {
 //
 //	DEVDASH_RECORD=1 go test -run TestRecordBlobs ./internal/collector
 //
-// The PCB list is withheld under go test (ad-hoc-signed ancestor), so to record it too, build the
-// test binary and start it from a shell in the package directory:
-//
-//	go test -c -o /tmp/collector.test ./internal/collector
-//	cd internal/collector && DEVDASH_RECORD=1 /tmp/collector.test -test.run TestRecordBlobs -test.v
+// The PCB list blob holds only the test's own listeners, which the kernel returns even when it
+// withholds everyone else's (ad-hoc-signed ancestor such as go test).
 func TestRecordBlobs(t *testing.T) {
 	if os.Getenv("DEVDASH_RECORD") == "" {
 		t.Skip("set DEVDASH_RECORD=1")
@@ -181,8 +181,7 @@ func TestRecordBlobs(t *testing.T) {
 		}
 	})
 	if len(out) == sizeofXgen {
-		t.Log("PCB list withheld (ad-hoc-signed ancestor); start the test binary from a shell to record it")
-		return
+		t.Fatal("PCB list holds none of this process's listeners")
 	}
 	write("pcblist_n.own", append(out, b[end:]...))
 }
@@ -302,7 +301,10 @@ func TestDecodePCBList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls, pcbs := decodePCBList(b)
+	ls, pcbs := decodePCBList(b, -1)
+	if _, others := decodePCBList(b, 1261); others != 6 {
+		t.Errorf("PCBs of pids other than 1261: %d, want 6", others)
+	}
 	l := func(proto, addr string, port uint16, pid int) Listener {
 		return Listener{Proto: proto, Addr: netip.MustParseAddr(addr), Port: port, PID: pid}
 	}
@@ -326,7 +328,7 @@ func TestDecodePCBList(t *testing.T) {
 	if len(handles) != len(ls) || handles[0] {
 		t.Errorf("socket handles not distinct and non-zero: %v", handles)
 	}
-	if ls, pcbs := decodePCBList(append(b[:24:24], b[len(b)-24:]...)); pcbs != 0 || ls != nil { // header-only list as served to non-entitled callers
+	if ls, pcbs := decodePCBList(append(b[:24:24], b[len(b)-24:]...), -1); pcbs != 0 || ls != nil { // header-only list as served to non-entitled callers
 		t.Errorf("header-only list: %d %v", pcbs, ls)
 	}
 }

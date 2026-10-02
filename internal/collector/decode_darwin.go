@@ -128,15 +128,19 @@ const (
 )
 
 // decodePCBList decodes net.inet.tcp.pcblist_n and returns the LISTEN sockets, with
-// so_last_pid as the owner, and the total PCB count.
-func decodePCBList(b []byte) (ls []sock, pcbs int) {
+// so_last_pid as the owner, and the number of PCBs whose so_last_pid is not self (pass -1 to
+// count all). A list withheld from devdash still holds devdash's own sockets, so zero others
+// means withheld.
+func decodePCBList(b []byte, self int) (ls []sock, others int) {
 	walkPCBList(b, func(_ []byte, s sock, listen bool) {
-		pcbs++
+		if s.PID != self {
+			others++
+		}
 		if listen {
 			ls = append(ls, s)
 		}
 	})
-	return ls, pcbs
+	return ls, others
 }
 
 // walkPCBList walks net.inet.tcp.pcblist_n: a struct xinpgen, then per PCB a group of records

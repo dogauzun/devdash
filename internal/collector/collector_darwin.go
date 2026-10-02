@@ -68,11 +68,16 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 		if err != nil && p.UID == uid {
 			continue // exiting, just forked or mid-exec: dropped, not shown half-filled (DEV-41)
 		}
-		if err != nil {
+		switch argv, ok := decodeProcArgs2(argBuf[:n]); {
+		case err != nil:
 			argvErr = err // EINVAL for other users' processes
-		} else if argv, ok := decodeProcArgs2(argBuf[:n]); ok {
+		case n == len(argBuf):
+			// The strings area is larger than kern.argmax and the kernel returned its tail, so
+			// argc no longer lines up: unknown, but the process is alive and keeps its row.
+			argvErr = syscall.E2BIG
+		case ok:
 			p.Argv = argv
-		} else {
+		default:
 			argvErr = syscall.EINVAL
 		}
 		if n, err := lib.pidinfo(p.PID, procPidVnodePathInfo, pathBuf); err != nil {
@@ -166,14 +171,15 @@ const pcbHint = "other users' listeners unknown: macOS withholds the socket list
 	"is ad-hoc signed (go run, a Homebrew-built tmux); start devdash directly from a shell, or run with sudo"
 
 // pcbListeners reads every TCP listener on the host from net.inet.tcp.pcblist_n, with
-// so_last_pid as the owner. An empty list means unknown, never "no listeners".
+// so_last_pid as the owner. A list without other processes' sockets is withheld, which means
+// unknown, never "no listeners".
 func pcbListeners() ([]sock, string) {
 	b, err := unix.SysctlRaw("net.inet.tcp.pcblist_n")
 	if err != nil {
 		return nil, "net.inet.tcp.pcblist_n: " + err.Error() + "; " + pcbHint
 	}
-	ls, pcbs := decodePCBList(b)
-	if pcbs == 0 {
+	ls, others := decodePCBList(b, os.Getpid())
+	if others == 0 {
 		return nil, pcbHint
 	}
 	return ls, ""
