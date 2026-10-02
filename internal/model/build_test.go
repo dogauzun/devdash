@@ -97,6 +97,17 @@ func TestBuildListeners(t *testing.T) {
 	}
 }
 
+// TestBuildOwnerHint: a collector that knows why owners are unreadable (root without
+// CAP_SYS_PTRACE, DEV-49) replaces the "run with sudo" hint; the code and count stay.
+func TestBuildOwnerHint(t *testing.T) {
+	raw := Raw{TakenAt: t0, Listeners: []RawListener{{"tcp4", lo, 22, 0}}, OwnerHint: "add a capability"}
+	s := Build(raw, Snapshot{}, nil, NewResolver("", nil))
+	want := []Warning{{"listener_owner_unreadable", 1, "add a capability"}}
+	if !reflect.DeepEqual(s.Warnings, want) {
+		t.Errorf("warnings %+v, want %+v", s.Warnings, want)
+	}
+}
+
 func TestBuildCPUPercent(t *testing.T) {
 	reused := proc(10, 0)
 	reused.StartTime = start.Add(time.Minute)
