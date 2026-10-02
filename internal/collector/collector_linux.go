@@ -69,7 +69,8 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 	}
 
 	t := time.Now()
-	res.Listeners, err = c.listeners(ctx, procs)
+	var fdDenied bool
+	res.Listeners, fdDenied, err = c.listeners(ctx, procs)
 	if err != nil {
 		return Result{}, err
 	}
@@ -91,7 +92,7 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 			unknown++
 		}
 	}
-	fieldsHint, ownerHint := c.hints()
+	fieldsHint, ownerHint := c.hints(fdDenied)
 	if unknown > 0 {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown, Hint: fieldsHint})
 	}
@@ -102,17 +103,23 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 // hints are the process_fields_unreadable hint and model.Raw.OwnerHint. Root is denied only
 // by ptrace access checks, so sudo cannot help: without CAP_SYS_PTRACE (a Docker container's
 // default) the hint names the capability, with it the denial comes from a security module.
-func (c *linuxCollector) hints() (fields, owner string) {
+// The owner hint blames permissions only if the fd walk was denied a read (fdDenied); if not,
+// root's unowned listeners belong to processes outside its pid namespace or to the kernel.
+func (c *linuxCollector) hints(fdDenied bool) (fields, owner string) {
 	switch {
 	case c.euid != 0:
 		return "processes of other users have unreadable fields; run with sudo to see them", ""
 	case !c.ptrace:
 		const why = "running as root without CAP_SYS_PTRACE; start the container with --cap-add SYS_PTRACE"
-		return why + " to see them", why + " to see owners"
+		fields, owner = why+" to see them", why+" to see owners"
 	default:
 		const why = "denied even to root with CAP_SYS_PTRACE, by a security module or sandbox"
-		return "some processes have unreadable fields: " + why, why
+		fields, owner = "some processes have unreadable fields: "+why, why
 	}
+	if !fdDenied {
+		owner = "owner not visible from this pid namespace, or the socket is held by the kernel"
+	}
+	return fields, owner
 }
 
 // hasPtrace reports whether CAP_SYS_PTRACE is in this process's effective set. If capget
@@ -256,7 +263,10 @@ func readArgvCwd(dir string, p *Process) (ok bool) {
 // c.euid, or all of them as root, since other users' fds are unreadable anyway. It
 // skips processes whose fd/ failed with EACCES on the last walk unless the set of
 // unmatched countable inodes differs from the one that walk ended with.
-func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]Listener, error) {
+//
+// fdDenied reports whether a read of fd/ or of an fd link failed with EACCES or EPERM, counting
+// the processes skipped because their fd/ was denied on the last walk.
+func (c *linuxCollector) listeners(ctx context.Context, procs []Process) (_ []Listener, fdDenied bool, _ error) {
 	var rows []tcpListen
 	for _, f := range [...]struct{ file, proto string }{{"/net/tcp", "tcp4"}, {"/net/tcp6", "tcp6"}} {
 		b, err := os.ReadFile(c.root + f.file)
@@ -264,7 +274,7 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]List
 			continue // tcp6 is absent when IPv6 is disabled
 		}
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		rows = append(rows, parseNetTCP(b, f.proto)...)
 	}
@@ -294,6 +304,7 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]List
 	wasDenied, wasUnmatched := c.denied, c.unmatched
 	c.mu.Unlock()
 	denied := map[procKey]bool{}
+	linkDenied := false
 	scan := func(p Process) {
 		fdDir := c.root + "/" + strconv.Itoa(p.PID) + "/fd/"
 		fds, err := readDirNames(fdDir)
@@ -306,6 +317,7 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]List
 		for _, fd := range fds {
 			target, err := os.Readlink(fdDir + fd)
 			if err != nil {
+				linkDenied = linkDenied || errors.Is(err, fs.ErrPermission)
 				continue
 			}
 			inode, ok := parseSocketLink(target)
@@ -327,7 +339,7 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]List
 			break
 		}
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 		if p.UID != euid && euid != 0 { // others' fds fail with EACCES unless we are root
 			continue
@@ -344,7 +356,7 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]List
 		// a retried pid and a higher readable pid goes to the higher one.
 		for _, p := range retry {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, false, ctx.Err()
 			}
 			scan(p)
 		}
@@ -362,7 +374,7 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) ([]List
 	for i, r := range rows {
 		out[i] = r.Listener
 	}
-	return out, nil
+	return out, len(denied) > 0 || linkDenied, nil
 }
 
 // readDirNames lists a directory without the per-entry allocations of os.ReadDir.
