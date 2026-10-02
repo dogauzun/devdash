@@ -111,7 +111,7 @@ func TestQuitAndRefresh(t *testing.T) {
 
 func TestEngineSubscription(t *testing.T) {
 	src := &fakeSource{ch: make(chan engine.Update, 1)}
-	m := New(Options{Source: src, Now: func() time.Time { return now }})
+	m := New(Options{Source: src, Now: func() time.Time { return now }, Kill: failKill(t)})
 	src.ch <- engine.Update{Snapshot: fixture()}
 	msg := m.wait()()
 	_, cmd := m.Update(msg)

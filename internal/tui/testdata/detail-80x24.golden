@@ -1,0 +1,24 @@
+mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
+node 101 · server
+command   node node_modules/.bin/vite --port 5173
+cwd       /src/shop
+project   shop @ feat/cart (worktree)
+root      /src/shop
+main repo /src/shop-main
+listeners tcp6 [::]:5173 (every interface)
+parents   zsh 100 < pid 90
+started   2026-10-02 09:00:00 (3 h ago)
+user      me (uid 501)
+cpu       12.3%
+mem       178.9 MiB
+
+
+
+
+
+
+
+
+
+run with sudo to see owners
+↑↓ move  ←→ fold  enter detail  / filter  x kill  o open  a all  ? help  q quit
