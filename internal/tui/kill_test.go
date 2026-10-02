@@ -15,8 +15,8 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// Kill modal tests. Plans come from fakePlanner (or engine.NewPlan, for refusals it makes
-// before reading anything from the OS) and kills from fakeKiller: nothing is ever signalled.
+// Kill modal tests. Plans come from fakePlanner (or engine.NewPlan, which at most reads
+// devdash's own ancestry from the OS) and kills from fakeKiller: nothing is ever signalled.
 
 // planCall is one recorded Plan call.
 type planCall struct {
@@ -350,7 +350,8 @@ func TestKillRefusedContainer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fk := &fakeKiller{}
-			// The real NewPlan: it refuses container ports before reading anything from the OS.
+			// The real NewPlan: it refuses container targets after only reading devdash's own
+			// ancestry; it signals nothing.
 			m, _ := newTest(t, 80, 24, func(o *Options) { o.Plan, o.Kill = engine.NewPlan, fk.kill })
 			feed(m, s)
 			selectRow(t, m, tc.key)
@@ -426,10 +427,7 @@ func TestKillPlanError(t *testing.T) {
 }
 
 func TestKillOutsideConfirmsTwice(t *testing.T) {
-	s := fixture()
-	pg := model.Process{PID: 400, PPID: 1, StartTime: at(time.Hour), UID: 501, User: "me", Name: "postgres",
-		Argv: []string{"postgres"}, Kind: model.KindServer, Listeners: []model.Listener{lis("tcp4", "127.0.0.1", 5433)}}
-	s.Processes = append(s.Processes, pg)
+	s, pg := withPostgres(fixture())
 	m, _, _, fk := newKillTest(t, 80, 24, s)
 	selectRow(t, m, pg.Key())
 	press(m, "x")
@@ -455,7 +453,7 @@ func TestKillOutsideConfirmsTwice(t *testing.T) {
 	}
 
 	press(m, "x", "y")
-	run(t, m, press(m, "y"))
+	run(t, m, press(m, "Y"))
 	if len(fk.plans) != 1 || fk.plans[0].Procs[0].PID != 400 {
 		t.Errorf("Kill got %+v after two confirms, want postgres once", fk.plans)
 	}
@@ -641,33 +639,33 @@ func TestKillScroll(t *testing.T) {
 	if !strings.Contains(line(m, "kill node"), "SIGTERM to 40 processes") {
 		t.Errorf("title %q lacks the total count", line(m, "kill node"))
 	}
-	// 24 lines: header, footer warning and hints leave 21; title, two blank lines and the
-	// hint leave 17: 16 pids and the position line.
-	if line(m, "pids 1-16 of 40, ↑↓ to scroll") == "" {
+	// 24 lines: header, footer warning and hints leave 21; title and hint leave 19 (the
+	// blank lines go first when the list does not fit): 18 pids and the position line.
+	if line(m, "pids 1-18 of 40, ↑↓ to scroll") == "" {
 		t.Fatalf("first page position missing:\n%s", screen(m))
 	}
-	if line(m, "101 ") == "" || line(m, "1013 ") == "" || line(m, "1014 ") != "" {
-		t.Errorf("first page is not pids 1-16:\n%s", screen(m))
+	if line(m, "101 ") == "" || line(m, "1015 ") == "" || line(m, "1016 ") != "" {
+		t.Errorf("first page is not pids 1-18:\n%s", screen(m))
 	}
 
 	press(m, "down", "j")
-	if line(m, "pids 3-18 of 40") == "" || line(m, "101 ") != "" || line(m, "1015 ") == "" {
+	if line(m, "pids 3-20 of 40") == "" || line(m, "101 ") != "" || line(m, "1017 ") == "" {
 		t.Errorf("down, j did not scroll by two:\n%s", screen(m))
 	}
 	press(m, "k")
-	if line(m, "pids 2-17 of 40") == "" {
+	if line(m, "pids 2-19 of 40") == "" {
 		t.Errorf("k did not scroll up:\n%s", screen(m))
 	}
 	scroll(m, "pgdown", "pgdown", "pgdown", "down")
-	if line(m, "pids 25-40 of 40") == "" || line(m, "1037 ") == "" || line(m, "1022 ") == "" || line(m, "1021 ") != "" {
+	if line(m, "pids 23-40 of 40") == "" || line(m, "1037 ") == "" || line(m, "1020 ") == "" || line(m, "1019 ") != "" {
 		t.Errorf("not at the end after paging past it:\n%s", screen(m))
 	}
 	press(m, "up")
-	if line(m, "pids 24-39 of 40") == "" {
+	if line(m, "pids 22-39 of 40") == "" {
 		t.Errorf("one up from the end:\n%s", screen(m))
 	}
 	scroll(m, "pgup", "pgup", "pgup")
-	if line(m, "pids 1-16 of 40") == "" {
+	if line(m, "pids 1-18 of 40") == "" {
 		t.Errorf("not at the top after paging past it:\n%s", screen(m))
 	}
 	scroll(m, "pgdown")
@@ -695,7 +693,7 @@ func TestKillScrollResets(t *testing.T) {
 	selectRow(t, m, keyOf(s, 101))
 	scroll(m, "x", "t", "pgdown")
 	press(m, "f") // a re-plan starts at the top
-	if line(m, "pids 1-16 of 40") == "" {
+	if line(m, "pids 1-18 of 40") == "" {
 		t.Errorf("re-plan kept the scroll:\n%s", screen(m))
 	}
 	scroll(m, "pgdown")

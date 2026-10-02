@@ -18,8 +18,8 @@ import (
 )
 
 // DEV-34 owns this file: the kill modal over engine plans (p process, t tree, f force, esc
-// cancel), the second confirmation outside every project, refusals, and survivors with the
-// offer to force-kill them. Kill runs as a tea.Cmd, off the UI goroutine, and its result
+// cancel), the second confirmation outside every project (Y only), refusals, and survivors
+// with the offer to force-kill them. Kill runs as a tea.Cmd, off the UI goroutine, and its result
 // comes back as an action.
 
 // killStage is where the kill modal is; killClosed is the zero value.
@@ -29,7 +29,7 @@ const (
 	killClosed  killStage = iota
 	killRefused           // the target itself is refused: the reason, and only esc closes
 	killConfirm           // the plan (or why these options are refused): p, t, f, enter/y, esc
-	killOutside           // the target is outside every project: second confirmation
+	killOutside           // the target is outside every project: second confirmation, Y only
 	killRunning           // Kill runs off the UI goroutine; every key but ctrl+c is ignored
 	killReport            // Kill finished with survivors or errors: f force-kills survivors, esc closes
 )
@@ -50,6 +50,9 @@ type killState struct {
 	err       error             // killReport: Kill's own error, nothing was signalled
 	top       int               // first list line shown when the list scrolls
 	page      int               // list lines the last render showed (the pgup/pgdown step)
+	// blind is set by the last render when not one pid line fitted: confirm is then neither
+	// offered nor accepted. Bubble Tea renders after every message, so it is what the user saw.
+	blind bool
 }
 
 // killDoneMsg is Kill's answer, delivered back to the UI goroutine.
@@ -135,7 +138,10 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 		m.killScroll(max(k.page, 1))
 		return nil
 	}
-	if k.stage == killRunning {
+	// A held key repeats: it must never confirm, so repeats do nothing here. Most terminals do
+	// not mark repeats (Bubble Tea sets IsRepeat only with Kitty keyboard enhancements), hence
+	// also the second confirmation's key, which the first prompt does not take.
+	if k.stage == killRunning || key.IsRepeat {
 		return nil
 	}
 	if s == "esc" {
@@ -153,7 +159,7 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 			m.killReplan(engine.KillOptions{Tree: k.opts.Tree, Force: !k.opts.Force})
 		case "enter", "y":
 			switch {
-			case k.refusal != "":
+			case k.refusal != "" || k.blind:
 			case k.plan.Outside:
 				k.stage = killOutside
 			default:
@@ -161,7 +167,7 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 	case killOutside:
-		if s == "enter" || s == "y" {
+		if s == "Y" && !k.blind {
 			return m.killSignal(k.plan)
 		}
 	case killReport:
@@ -248,15 +254,25 @@ func (m *Model) killView(w, h int) string {
 		if k.plan.Group != 0 {
 			tail = append(tail, fmt.Sprintf("pid %d leads its process group: the signal goes to the whole group", k.plan.Group))
 		}
+		if k.stage == killOutside {
+			tail = append(tail, styleWarn.Render(k.name+" is outside every project, usually a system service."))
+		}
+		hint := ""
 		switch k.stage {
 		case killConfirm:
-			tail = append(tail, "p process  t tree  f force  enter confirm  esc cancel")
+			hint = "p process  t tree  f force  enter confirm  esc cancel"
 		case killOutside:
-			tail = append(tail, styleWarn.Render(k.name+" is outside every project, usually a system service."),
-				"Confirm again: enter or y   esc cancel")
+			hint = "Confirm again: press Y (shift+y)  esc cancel"
 		case killRunning:
-			tail = append(tail, fmt.Sprintf("signalling %s, waiting up to %s", killSig(k.plan.Signal), m.o.KillTimeout))
+			hint = fmt.Sprintf("signalling %s, waiting up to %s", killSig(k.plan.Signal), m.o.KillTimeout)
 		}
+		// Confirm only what can be seen: when not one pid line fits beside the hints, confirm
+		// is off until the terminal grows.
+		k.blind = k.stage != killRunning && h-1-len(killWrap(append(tail, hint), w)) < 1
+		if k.blind {
+			hint = "too small to show the plan: enlarge to confirm  esc cancel"
+		}
+		tail = append(tail, hint)
 	case killReport:
 		if k.err != nil {
 			title += ": nothing was signalled"
@@ -318,40 +334,47 @@ func killTable(rows []string) []string {
 	return strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
 }
 
-// killLayout stacks the title, a blank line, the list, a blank line and the tail, list and
-// tail indented, in w by h: tail lines (reasons, prompts, key hints) are wrapped to the width
-// so none is cut. A list longer than the room left scrolls: it shows the page from
-// m.kill.top (clamped here, and the page size kept for the keys) and a position line; the
-// blank lines go first when not even one list line fits.
-func (m *Model) killLayout(w, h int, title string, list, tail []string) string {
-	k := &m.kill
+// killWrap wraps tail lines (reasons, prompts, key hints) to the modal's width, indent
+// included, so none is cut.
+func killWrap(tail []string, w int) []string {
 	var wrapped []string
 	for _, l := range tail {
 		wrapped = append(wrapped, strings.Split(ansi.Wrap(l, max(w-2, 1), ""), "\n")...)
 	}
-	tail = wrapped
+	return wrapped
+}
+
+// killLayout stacks the title, a blank line, the list, a blank line and the tail, list and
+// tail indented, in w by h, with the tail wrapped by killWrap. A pid line is worth more than
+// a blank line: when the list does not fit whole, the blank lines go first. A list still
+// longer than the room scrolls: it shows the page from m.kill.top (clamped here, and the
+// page size kept for the keys) and a position line, or a single pid line when only one line
+// is left (the title has the count).
+func (m *Model) killLayout(w, h int, title string, list, tail []string) string {
+	k := &m.kill
+	tail = killWrap(tail, w)
 	blank := []string{""}
 	gaps := 2
 	if len(list) == 0 {
 		gaps = 1
 	}
 	room := h - 1 - len(tail) - gaps
-	if room < min(len(list), 1) {
+	if room < len(list) {
 		blank, room = nil, h-1-len(tail)
 	}
 	k.page = len(list)
 	if len(list) > room {
-		n := max(room-1, 0) // pid lines; the last line of the room is the position
+		n := max(room-1, 0) // pid lines; the last line of the room is the position,
+		if room == 1 {
+			n = 1 // unless only one line is left: a pid line beats a position line
+		}
 		k.page = max(n, 1)
 		k.top = max(min(k.top, len(list)-n), 0)
-		pos := fmt.Sprintf("%d pids", len(list))
-		if n > 0 {
-			pos = fmt.Sprintf("pids %d-%d of %d, ↑↓ to scroll", k.top+1, k.top+n, len(list))
+		page := list[k.top : k.top+n : k.top+n]
+		if n < room {
+			page = append(page, fmt.Sprintf("pids %d-%d of %d, ↑↓ to scroll", k.top+1, k.top+n, len(list)))
 		}
-		list = append(list[k.top:k.top+n:k.top+n], pos)
-		if room <= 0 {
-			list = nil
-		}
+		list = page
 	} else {
 		k.top = 0
 	}
