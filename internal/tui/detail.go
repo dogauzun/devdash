@@ -16,6 +16,7 @@ import (
 
 // DEV-33 owns this file: the detail pane (full argv wrapped, cwd, project and branch,
 // listeners with bind address, parent chain, start time, user, Docker socket for containers).
+// DEV-86: the command is capped so those fields stay on screen, and the pane scrolls.
 
 // Detail pane layout.
 const (
@@ -36,30 +37,97 @@ func detailWidth(w int) int { return max(min(w*2/5, detailMax, w-minWidth), 1) }
 
 // detailView draws the selected row's details in w by h. As the right split it draws exactly h
 // lines, each starting with detailSep; as the full-screen overlay it draws only its content.
-// Content longer than h is cut by the caller; there is no scrolling in v1.
+// The command takes at most a third of h, so the fields after it stay on screen; a longer
+// command ends with "… +N lines" and is written whole as "full argv" at the end of the pane.
+// A pane longer than h scrolls (detailPage).
 func (m *Model) detailView(w, h int) string {
 	split := m.width >= splitWidth
-	d := &detailDoc{w: w}
+	d := &detailDoc{w: w, cap: max(h/3, 2)}
 	if split {
 		d.w = max(w-len(detailSep), 1)
 	}
-	if r, ok := m.selected(); ok {
+	r, ok := m.selected()
+	if ok {
 		m.detailRow(d, r)
 	} else {
 		d.add("nothing selected")
 	}
+	if d.full != nil {
+		d.blank()
+		d.labelled("full argv", d.full)
+	}
+	lines := m.detailPage(d.lines, r.Key, h)
 	if !split {
-		return strings.Join(d.lines, "\n")
+		return strings.Join(lines, "\n")
 	}
 	out := make([]string, h)
 	for i := range out {
 		var l string
-		if i < len(d.lines) {
-			l = d.lines[i]
+		if i < len(lines) {
+			l = lines[i]
 		}
 		out[i] = styleDim.Render(detailSep[:1]) + detailSep[1:] + l
 	}
 	return strings.Join(out, "\n")
+}
+
+// detailScroll is the pane's scroll position. It belongs to one row: another selection, or
+// closing the pane (tui.go), starts the pane at the top again.
+type detailScroll struct {
+	key  model.RowKey // the row top was scrolled on
+	top  int          // first pane line shown
+	page int          // pane lines the last render showed: the pgup/pgdown step
+}
+
+// detailScrollOf returns the pane's scroll position for the row with key, at the top for a row
+// other than the one it was scrolled on.
+func (m *Model) detailScrollOf(key model.RowKey) *detailScroll {
+	if m.dscroll.key != key {
+		m.dscroll.key, m.dscroll.top = key, 0
+	}
+	return &m.dscroll
+}
+
+// detailPage returns what fits of the pane's lines in h for the row with key: all of them
+// when they fit, otherwise h-1 lines from the scroll position (clamped here, and the page size
+// kept for the keys) and a dim position line, or a single line when h is 1.
+func (m *Model) detailPage(lines []string, key model.RowKey, h int) []string {
+	ds := m.detailScrollOf(key)
+	if h < 1 || len(lines) <= h {
+		ds.top, ds.page = 0, max(h, 1)
+		return lines
+	}
+	n := max(h-1, 1)
+	ds.page = n
+	ds.top = max(min(ds.top, len(lines)-n), 0)
+	page := lines[ds.top : ds.top+n : ds.top+n]
+	if n < h {
+		page = append(page, styleDim.Render(fmt.Sprintf("lines %d-%d of %d, pgup/pgdn", ds.top+1, ds.top+n, len(lines))))
+	}
+	return page
+}
+
+// detailKey handles pgup and pgdown while the pane is open: they move the pane by the page the
+// last render showed, and the next render clamps it. Every other key goes on to the table.
+func (m *Model) detailKey(s string) bool {
+	r, _ := m.selected() // the zero key when nothing is selected, as in detailView
+	ds := m.detailScrollOf(r.Key)
+	step := max(ds.page, 1)
+	switch s {
+	case "pgup":
+		ds.top = max(ds.top-step, 0)
+	case "pgdown":
+		ds.top += step
+	default:
+		return false
+	}
+	return true
+}
+
+// closeDetail closes the pane; it opens again at the top.
+func (m *Model) closeDetail() {
+	m.detail = false
+	m.dscroll.top = 0
 }
 
 // detailRow writes the details of r: a header, the PID 0 owner, a process, or a container.
@@ -112,7 +180,7 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 	case len(p.Argv) == 0:
 		d.field("command", "none")
 	default:
-		d.words("command", quoteArgv(p.Argv), " ")
+		d.command(quoteArgv(p.Argv))
 	}
 	cwd := "unknown"
 	if p.Cwd != "" {
@@ -330,10 +398,13 @@ func detailBytes(n uint64) string {
 	return fmt.Sprintf("%.1f %s", v, units[i])
 }
 
-// detailDoc collects the pane's lines at content width w.
+// detailDoc collects the pane's lines at content width w. A command longer than cap lines is
+// cut there (command) and kept whole in full for the end of the pane.
 type detailDoc struct {
 	w     int
 	lines []string
+	cap   int
+	full  []string
 }
 
 func (d *detailDoc) add(l string)   { d.lines = append(d.lines, l) }
@@ -346,8 +417,24 @@ func (d *detailDoc) field(label, value string) { d.words(label, strings.Split(va
 // words writes a label and words joined by sep, wrapped to the value column; continuation
 // lines are indented to the value column.
 func (d *detailDoc) words(label string, words []string, sep string) {
+	d.labelled(label, detailWrap(words, sep, d.w-detailLabel))
+}
+
+// command writes argv wrapped to the value column in at most cap lines: a longer one keeps
+// cap-1 lines, ends with "… +N lines" and is kept whole in full.
+func (d *detailDoc) command(argv []string) {
+	lines := detailWrap(argv, " ", d.w-detailLabel)
+	if keep := d.cap - 1; keep > 0 && len(lines) > d.cap {
+		d.full = lines
+		lines = append(lines[:keep:keep], fmt.Sprintf("… +%d lines", len(lines)-keep))
+	}
+	d.labelled("command", lines)
+}
+
+// labelled writes lines in the value column, label before the first.
+func (d *detailDoc) labelled(label string, lines []string) {
 	pad := strings.Repeat(" ", detailLabel)
-	for i, l := range detailWrap(words, sep, d.w-detailLabel) {
+	for i, l := range lines {
 		prefix := pad
 		if i == 0 {
 			prefix = label + pad[min(len(label), detailLabel-1):]

@@ -71,9 +71,10 @@ type Model struct {
 
 	fsel filterSel // the row chosen before the filter hid it (rows.go)
 
-	detail bool // detail pane open (detail.go)
-	help   bool // help overlay open (help.go)
-	kill   killState
+	detail  bool         // detail pane open (detail.go)
+	dscroll detailScroll // its scroll position (detail.go)
+	help    bool         // help overlay open (help.go)
+	kill    killState
 
 	status string // one-shot message in the footer (open failed, kill result); cleared by the next key
 }
@@ -189,11 +190,15 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "/":
 		m.filtering = true
 	case "enter":
-		m.detail = !m.detail
+		if m.detail {
+			m.closeDetail()
+		} else {
+			m.detail = true
+		}
 	case "esc":
 		switch {
 		case m.detail:
-			m.detail = false
+			m.closeDetail()
 		case m.filter != "":
 			m.setFilter("")
 		}
@@ -202,6 +207,9 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "o":
 		return m.openSelected()
 	default:
+		if m.detail && m.detailKey(s) { // pgup and pgdown scroll the open pane
+			return nil
+		}
 		return m.tableKey(k)
 	}
 	return nil
