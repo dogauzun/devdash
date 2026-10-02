@@ -19,14 +19,7 @@ func RuntimeCLI(p Process) string {
 }
 
 func runtimeCLI(p Process) (string, bool) {
-	if p.PID == 0 {
-		return "", false
-	}
-	names := []string{baseName(p.Name)}
-	if len(p.Argv) > 0 {
-		names = append(names, baseName(p.Argv[0]))
-	}
-	for _, n := range names {
+	for _, n := range names(p) {
 		if cli, ok := runtimeNames[n]; ok {
 			return cli, true
 		}
@@ -35,4 +28,27 @@ func runtimeCLI(p Process) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// isProxy reports whether p is a runtime process that holds published ports (proxyNames).
+func isProxy(p Process) bool {
+	for _, n := range names(p) {
+		if proxyNames[n] {
+			return true
+		}
+	}
+	return false
+}
+
+// names are the lower-case basenames of p's Name and argv[0], the forms runtime lists are
+// matched on; none for the PID 0 "unknown owner" pseudo-process.
+func names(p Process) []string {
+	if p.PID == 0 {
+		return nil
+	}
+	ns := []string{baseName(p.Name)}
+	if len(p.Argv) > 0 {
+		ns = append(ns, baseName(p.Argv[0]))
+	}
+	return ns
 }

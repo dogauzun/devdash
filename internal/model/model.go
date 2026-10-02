@@ -43,15 +43,16 @@ type Process struct {
 	Listeners   []Listener
 	Kind        Kind
 	ProjectID   string   // Project.ID or ""
-	ContainerID string   // set when this process holds a container's published port
+	ContainerID string   // set when every published port this process holds is one container's (Reconcile)
 	Unknown     FieldSet // fields that could not be read
 }
 
 // Listener is one listening TCP socket.
 type Listener struct {
-	Proto string     // "tcp4" | "tcp6"
-	Addr  netip.Addr // bind address; unspecified means every interface
-	Port  uint16
+	Proto       string     // "tcp4" | "tcp6"
+	Addr        netip.Addr // bind address; unspecified means every interface
+	Port        uint16
+	ContainerID string // the container whose published port this is (Reconcile), "" otherwise
 }
 
 // Project is one git repository that at least one process belongs to.
