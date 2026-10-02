@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -799,5 +800,79 @@ func TestFetchTCPEndpoint(t *testing.T) {
 	got, w := fetch(t, NewSource(ep, testTick, beat))
 	if w != nil || !reflect.DeepEqual(got, wantPodman) {
 		t.Fatalf("Fetch = %+v, %+v", got, w)
+	}
+}
+
+func denied(ep Endpoint) *model.Warning {
+	return &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: permission denied on " + ep.Address + " (add yourself to the docker group)"}
+}
+
+// dialing replaces s's transport with one whose every dial returns err, and counts the dials.
+func dialing(s *Source, err error) *int {
+	n := new(int)
+	s.c.hc.Transport = &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+		*n++
+		return nil, err
+	}}
+	return n
+}
+
+// TestFetchPermissionDenied: a socket the user may not open (Linux's root:docker 0660 for a
+// user outside the docker group) says so instead of "not reachable", which reads as Docker
+// being down. It is still a failure, with the failure holdoff: at the 5 s beat and the
+// default 2 s tick it is dialled at 0, 20 and 40 s. The dial error is injected, so this runs
+// as root too (DEV-76).
+func TestFetchPermissionDenied(t *testing.T) {
+	for _, errno := range []syscall.Errno{syscall.EACCES, syscall.EPERM} {
+		t.Run(errno.Error(), func(t *testing.T) {
+			ep := Endpoint{Network: "unix", Address: "/var/run/docker.sock"}
+			s, clk := newSource(ep)
+			dials := dialing(s, &net.OpError{Op: "dial", Net: "unix", Err: os.NewSyscallError("connect", errno)})
+			for at := time.Duration(0); at <= 45*time.Second; at += beat {
+				before := *dials
+				got, w := fetch(t, s)
+				if got != nil || !reflect.DeepEqual(w, denied(ep)) {
+					t.Fatalf("at %v = %+v, %+v; want no containers and %+v", at, got, w, denied(ep))
+				}
+				want := 0
+				if at%testRetry == 0 { // 0, 20 s, 40 s retry
+					want = 1
+				}
+				if n := *dials - before; n != want {
+					t.Fatalf("at %v: %d dials, want %d", at, n, want)
+				}
+				clk.add(beat)
+			}
+		})
+	}
+}
+
+// TestFetchPermissionDeniedTCP: a tcp endpoint has no docker group to join.
+func TestFetchPermissionDeniedTCP(t *testing.T) {
+	ep := Endpoint{Network: "tcp", Address: "10.0.0.5:2375"}
+	s, _ := newSource(ep)
+	dialing(s, &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EPERM)})
+	want := &model.Warning{Code: "docker_unreachable", Count: 1, Hint: "docker: permission denied on tcp://10.0.0.5:2375"}
+	if _, w := fetch(t, s); !reflect.DeepEqual(w, want) {
+		t.Fatalf("warning = %+v, want %+v", w, want)
+	}
+}
+
+// TestFetchUnreadableSocket: the real thing, an engine whose socket file has mode 000. Root
+// opens any socket regardless of its mode, so this needs another user.
+func TestFetchUnreadableSocket(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the socket's mode; TestFetchPermissionDenied covers the classification")
+	}
+	e := newEngine(t, dockerBody)
+	if err := os.Chmod(e.ep.Address, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, w := fetch(t, NewSource(e.ep, testTick, beat))
+	if got != nil || !reflect.DeepEqual(w, denied(e.ep)) {
+		t.Fatalf("Fetch = %+v, %+v; want no containers and %+v", got, w, denied(e.ep))
+	}
+	if r := e.take(); len(r) != 0 {
+		t.Errorf("requests = %q, want none", r)
 	}
 }
