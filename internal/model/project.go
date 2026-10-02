@@ -2,10 +2,10 @@ package model
 
 import (
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // maxCache caps the per-directory cache (spec: 4096 entries).
@@ -24,11 +24,11 @@ type Resolver struct {
 	tick  map[string]Project // directory → result for the current Resolve call, misses included
 }
 
-// cached is a walk result plus what validates it: the HEAD file and its mtime when read.
+// cached is a walk result plus what validates it: the HEAD file and its lstat when read.
 type cached struct {
-	p     Project
-	head  string
-	mtime time.Time
+	p    Project
+	head string
+	fi   fs.FileInfo
 }
 
 // NewResolver returns a Resolver that stops walking at home (a repository rooted at home does
@@ -147,9 +147,11 @@ func under(path, dir string) bool {
 // dir returns the project for directory d (ID "" for none), at most once per tick per d.
 //
 // Cache hit: one lstat of the repository's HEAD file (.git/HEAD, or <gitdir>/HEAD for a
-// worktree), compared with the mtime recorded when HEAD was read. git rewrites HEAD by
-// renaming HEAD.lock over it on every branch switch (and on every commit while detached), so
-// a changed mtime, or HEAD vanishing with the repository, is a miss and the walk runs again.
+// worktree), compared with the lstat recorded when HEAD was read: same file (inode), size and
+// mtime. git rewrites HEAD by renaming HEAD.lock over it on every branch switch (and on every
+// commit while detached), so every write is a new inode even when a coarse-mtime filesystem
+// gives it the old timestamp; a changed file, or HEAD vanishing with the repository, is a miss
+// and the walk runs again.
 // The .git entry's own mtime is not checked: for a main repository it changes on every index
 // write, which would make most hits misses, and a worktree's .git file never changes.
 // Known ceiling: a repository created between d and a cached root (or above a directory that
@@ -163,14 +165,14 @@ func (r *Resolver) dir(d string) Project {
 		return p
 	}
 	if c, ok := r.cache[d]; ok {
-		if fi, err := lstat(c.head); err == nil && fi.ModTime().Equal(c.mtime) {
+		if fi, err := lstat(c.head); err == nil && os.SameFile(fi, c.fi) && fi.Size() == c.fi.Size() && fi.ModTime().Equal(c.fi.ModTime()) {
 			r.tick[d] = c.p
 			return c.p
 		}
 		delete(r.cache, d)
 	}
-	p, head, mtime := r.walk(d)
-	if p.ID != "" && !mtime.IsZero() {
+	p, head, fi := r.walk(d)
+	if p.ID != "" && fi != nil {
 		if len(r.cache) >= maxCache {
 			// Evict one arbitrary entry (Go map order). Correct for any victim: an evicted
 			// directory costs one walk the next time it is seen.
@@ -179,7 +181,7 @@ func (r *Resolver) dir(d string) Project {
 				break
 			}
 		}
-		r.cache[d] = cached{p, head, mtime}
+		r.cache[d] = cached{p, head, fi}
 	}
 	r.tick[d] = p
 	return p
@@ -187,20 +189,20 @@ func (r *Resolver) dir(d string) Project {
 
 // walk goes up from d to the nearest .git entry (spec steps 2–4). It stops at the filesystem
 // root or at home without checking home itself, so a repository rooted at home never counts.
-// A repository outside roots ends the walk with no project: its ancestors are outside too.
-func (r *Resolver) walk(d string) (Project, string, time.Time) {
-	for ; d != r.home; d = filepath.Dir(d) {
-		if p, head, mtime, ok := repoAt(d); ok {
-			if !r.inRoots(d) {
-				break
-			}
-			return p, head, mtime
+// With roots, the walk stops before the first directory outside every root, without touching
+// it: a project root must lie under a root, and so does every directory between it and the
+// cwd. A cwd outside the roots (or above one) costs no filesystem call, so --roots keeps a
+// slow or hung mount out of the refresh path.
+func (r *Resolver) walk(d string) (Project, string, fs.FileInfo) {
+	for ; d != r.home && r.inRoots(d); d = filepath.Dir(d) {
+		if p, head, fi, ok := repoAt(d); ok {
+			return p, head, fi
 		}
 		if d == filepath.Dir(d) {
 			break
 		}
 	}
-	return Project{}, "", time.Time{}
+	return Project{}, "", nil
 }
 
 func (r *Resolver) inRoots(d string) bool {
@@ -218,8 +220,8 @@ func (r *Resolver) inRoots(d string) bool {
 // repoAt reports whether dir holds a .git entry: a directory (main repository, or a nested
 // one), or a regular file with a gitdir: line (linked worktree when the gitdir is
 // <common>/worktrees/<name>, otherwise a submodule or separate git dir, its own project).
-// A symlinked .git, or HEAD, is refused, never followed. mtime is HEAD's, zero if unreadable.
-func repoAt(dir string) (p Project, head string, mtime time.Time, ok bool) {
+// A symlinked .git, or HEAD, is refused, never followed. headFI is HEAD's lstat, nil if unreadable.
+func repoAt(dir string) (p Project, head string, headFI fs.FileInfo, ok bool) {
 	dotgit := filepath.Join(dir, ".git")
 	fi, err := lstat(dotgit)
 	if err != nil {
@@ -233,7 +235,7 @@ func repoAt(dir string) (p Project, head string, mtime time.Time, ok bool) {
 		line, _, _ := strings.Cut(string(readSmall(dotgit)), "\n")
 		g, found := strings.CutPrefix(strings.TrimSpace(line), "gitdir: ")
 		if !found || g == "" {
-			return Project{}, "", time.Time{}, false
+			return Project{}, "", nil, false
 		}
 		if !filepath.IsAbs(g) {
 			g = filepath.Join(dir, g)
@@ -247,12 +249,12 @@ func repoAt(dir string) (p Project, head string, mtime time.Time, ok bool) {
 			p.Worktree, p.MainRepo, p.Name = true, main, filepath.Base(main)
 		}
 	default:
-		return Project{}, "", time.Time{}, false
+		return Project{}, "", nil, false
 	}
 
 	head = filepath.Join(gitdir, "HEAD")
 	if hi, err := lstat(head); err == nil && hi.Mode().IsRegular() {
-		mtime = hi.ModTime()
+		headFI = hi
 		s := strings.TrimSpace(string(readSmall(head)))
 		if ref, isRef := strings.CutPrefix(s, "ref: "); isRef {
 			p.Branch = strings.TrimPrefix(ref, "refs/heads/")
@@ -260,7 +262,7 @@ func repoAt(dir string) (p Project, head string, mtime time.Time, ok bool) {
 			p.ShortSHA = s[:7]
 		}
 	}
-	return p, head, mtime, true
+	return p, head, headFI, true
 }
 
 // readSmall reads at most 4 KiB of a file already checked to be regular by lstat; .git files

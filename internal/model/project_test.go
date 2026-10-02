@@ -395,6 +395,53 @@ func TestResolveCacheInvalidation(t *testing.T) {
 	check(Project{})
 }
 
+// TestResolveCacheSameMtime: HEAD replaced by rename (as git does with HEAD.lock) keeping the
+// old mtime and size, as on a coarse-mtime filesystem; the new inode must still be a miss.
+func TestResolveCacheSameMtime(t *testing.T) {
+	base := tmp(t)
+	shop := mkrepo(t, base, "shop", "main")
+	head := filepath.Join(shop, ".git/HEAD")
+	r := NewResolver("", nil)
+	for _, branch := range []string{"main", "next", "main"} { // same length: size cannot tell them apart
+		old, err := os.Lstat(head)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lock := head + ".lock"
+		mkfile(t, shop, ".git/HEAD.lock", "ref: refs/heads/"+branch+"\n")
+		if err := os.Chtimes(lock, old.ModTime(), old.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(lock, head); err != nil {
+			t.Fatal(err)
+		}
+		if _, p := resolveOne(r, inDir(10, shop)); len(p) != 1 || p[0].Branch != branch {
+			t.Errorf("after HEAD → %s with the same mtime: %+v", branch, p)
+		}
+	}
+}
+
+// TestResolveRootsNoStat: with --roots, a cwd outside every root, or above one, costs no
+// filesystem call (a hung mount outside the roots never blocks the refresh).
+func TestResolveRootsNoStat(t *testing.T) {
+	base := tmp(t)
+	app := mkrepo(t, base, "code/app", "main")
+	outside := mkrepo(t, base, "elsewhere/x", "main")
+	r := NewResolver("", []string{filepath.Join(base, "code")})
+	n := countLstat(t)
+	for _, cwd := range []string{outside, filepath.Join(outside, "deep/dir"), base, "/"} {
+		for range 2 { // every tick, not only the first
+			*n = 0
+			if id, _ := resolveOne(r, inDir(10, cwd)); id != "" || *n != 0 {
+				t.Errorf("cwd %s: ProjectID %q, %d lstat calls, want none", cwd, id, *n)
+			}
+		}
+	}
+	if id, _ := resolveOne(r, inDir(10, filepath.Join(app, "src"))); id != app {
+		t.Errorf("inside the roots: ProjectID %q, want %q", id, app)
+	}
+}
+
 func TestResolveBranchSwitchGit(t *testing.T) {
 	base := needGit(t)
 	// Own clone of the fixture so other tests keep their branch.
