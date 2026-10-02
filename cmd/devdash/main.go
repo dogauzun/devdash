@@ -18,7 +18,8 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// Set at build time with -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
+// Set at build time with -ldflags "-X main.version=... -X main.commit=... -X main.date=...";
+// any left at its default falls back to the embedded build info (version.go).
 var (
 	version = "dev"
 	commit  = "none"
@@ -107,7 +108,8 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	ctx := context.Background()
 	switch o.Cmd {
 	case "version":
-		fmt.Fprintf(stdout, "devdash %s (commit %s, built %s)\n", version, commit, date)
+		ver, rev, built := versionInfo(version, commit, date, buildInfo())
+		fmt.Fprintf(stdout, "devdash %s (commit %s, built %s)\n", ver, rev, built)
 		return 0
 	case "port":
 		port, _ := parsePort(o.Args[0]) // checked by parse
