@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dogauzun/devdash/internal/docker"
+	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -122,4 +123,51 @@ func TestDockerEndpointInvalid(t *testing.T) {
 		t.Errorf("--json: exit %d, stdout %s, stderr %q", got, stdout.String(), stderr.String())
 	}
 	validate(t, stdout.Bytes())
+}
+
+// TestTUIDockerSocket: the dashboard's detail pane names the endpoint the engine's source
+// asks, from the same single discovery; nothing when there is no usable endpoint.
+func TestTUIDockerSocket(t *testing.T) {
+	tests := []struct {
+		name     string
+		o        options
+		ep       docker.Endpoint
+		ok       bool
+		err      error
+		want     string // "" means DockerSocket is nil
+		discover int    // discover calls expected
+	}{
+		{"default socket", options{}, docker.Endpoint{Network: "unix", Address: "/home/u/.docker/run/docker.sock", Source: "default"}, true, nil,
+			"/home/u/.docker/run/docker.sock", 1},
+		{"context", options{}, docker.Endpoint{Network: "unix", Address: "/home/u/.colima/default/docker.sock", Source: "context colima"}, true, nil,
+			"/home/u/.colima/default/docker.sock (context colima)", 1},
+		{"DOCKER_HOST tcp", options{}, docker.Endpoint{Network: "tcp", Address: "10.0.0.5:2375", Source: "DOCKER_HOST"}, true, nil,
+			"tcp://10.0.0.5:2375 (DOCKER_HOST)", 1},
+		{"not found", options{}, docker.Endpoint{}, false, nil, "", 1},
+		{"invalid", options{}, docker.Endpoint{}, false, errors.New("DOCKER_HOST=ssh://box: unsupported scheme"), "", 1},
+		{"--no-docker", options{NoDocker: true}, docker.Endpoint{Network: "unix", Address: "/run/docker.sock", Source: "default"}, true, nil, "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls, _ := stubDiscover(t, tt.ep, tt.ok, tt.err)
+			tt.o.All = true
+			eo := tt.o.engine(fake())
+			e := engine.New(eo)
+			to := tuiOptions(tt.o, e, eo.Docker)
+			if *calls != tt.discover {
+				t.Errorf("discover called %d times, want %d", *calls, tt.discover)
+			}
+			if to.Source != e || to.Kill == nil || !to.ShowAll {
+				t.Errorf("Source %v (want the engine), Kill set %v, ShowAll %v", to.Source, to.Kill != nil, to.ShowAll)
+			}
+			switch {
+			case tt.want == "" && to.DockerSocket != nil:
+				t.Errorf("DockerSocket() = %q, want nil", to.DockerSocket())
+			case tt.want != "" && to.DockerSocket == nil:
+				t.Errorf("DockerSocket is nil, want %q", tt.want)
+			case tt.want != "" && to.DockerSocket() != tt.want:
+				t.Errorf("DockerSocket() = %q, want %q", to.DockerSocket(), tt.want)
+			}
+		})
+	}
 }
