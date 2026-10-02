@@ -361,13 +361,13 @@ The two risks that could change the design are both about macOS, and both are se
 | 9 | pid reuse between snapshot and kill | wrong process signalled | `(pid, start_time)` re-validated before every `kill(2)` |
 | 10 | Linux `hidepid=2` or containers without userland proxy | rows missing or ownerless | warnings name the cause; documented limitation |
 
-Open questions, to decide before Phase 2:
+Open questions, to decide before Phase 2 (decisions recorded 2026-10-02, DEV-20):
 
-- The name. `devdash` is generic; check GitHub, Homebrew, pkg.go.dev and crates.io before the first tag.
-- Should root-owned listeners on ports below 1024 (sshd, cups, mDNS) be hidden by default behind a `--system` flag, to keep the default view about development?
-- Default interval: 2 s, or 1 s with the adaptive backoff carrying the load?
-- Is UDP worth including in v1 after all, given the fd walk already sees UDP sockets on both OSes?
-- Should `port N` also answer for a port held inside a Docker network but not published, using the container's port list?
+- The name. `devdash` is generic; check GitHub, Homebrew, pkg.go.dev and crates.io before the first tag. **Still open:** `devdash` collides with `Phantas0s/devdash` (a Go terminal dashboard, ~1,600 stars) and is taken on npm and PyPI; it is free on Homebrew core and crates.io. The owner decides before the first tag; work continues under `github.com/dogauzun/devdash`.
+- Should root-owned listeners on ports below 1024 (sshd, cups, mDNS) be hidden by default behind a `--system` flag, to keep the default view about development? **Decided: no `--system` flag.** Goal 1 shows every listening TCP socket; root-owned listeners below 1024 stay visible in the `other` group.
+- Default interval: 2 s, or 1 s with the adaptive backoff carrying the load? **Decided: 2 s**, with the adaptive backoff.
+- Is UDP worth including in v1 after all, given the fd walk already sees UDP sockets on both OSes? **Decided: no**, UDP stays a v1 non-goal; planned for v1.1.
+- Should `port N` also answer for a port held inside a Docker network but not published, using the container's port list? **Decided: no.** `port N` answers only for ports listening on the host, including published container ports; unpublished ports inside a Docker network are not reported.
 
 ## Appendix: prior art
 
