@@ -204,7 +204,7 @@ func targets(s model.Snapshot, port uint16) []target {
 				container(l.ContainerID)
 			case !own:
 				own = true
-				ts = append(ts, target{key: p.Key(), sudo: p.PID == 0 && p.ContainerID == ""})
+				ts = append(ts, target{key: p.Key(), sudo: p.PID == 0})
 			}
 		}
 	}
