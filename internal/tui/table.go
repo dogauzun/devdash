@@ -1,9 +1,16 @@
 package tui
 
 import (
+	"cmp"
+	"fmt"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dogauzun/devdash/internal/model"
 )
@@ -11,23 +18,243 @@ import (
 // DEV-31 owns this file: columns by priority and width, project headers, container rows,
 // dimmed rows, scrolling (m.top), movement, collapse and expand, and the a, d and s toggles.
 
-// tableView draws the rows that fit in h lines of width w, keeping the selection on screen.
-//
-// ponytail: placeholder until DEV-31; one indented name per row, no columns.
+// Column breakpoints (spec "TUI design"); below minWidth only name, ports and pid are kept.
+const (
+	wideWidth    = 100 // cpu, mem and user from here
+	commandWidth = 90  // command from here
+	nameMin      = 20  // the name column is never narrower while the command is shown
+	commandMin   = 16  // the name column grows up to its longest cell, but leaves this to the command
+)
+
+// col is one table column.
+type col uint8
+
+// Columns in priority order.
+const (
+	colName col = iota
+	colKind
+	colPorts
+	colPID
+	colUp
+	colCPU
+	colMem
+	colUser
+	colCommand
+)
+
+// colSpecs holds each column's title, fixed width (0: computed from the table's width) and
+// alignment.
+var colSpecs = [...]struct {
+	title string
+	width int
+	right bool
+}{
+	colName:    {"NAME", 0, false},
+	colKind:    {"KIND", 9, false}, // "container"
+	colPorts:   {"PORTS", 11, false},
+	colPID:     {"PID", 7, true}, // Linux pids go up to 4194304
+	colUp:      {"UP", 4, true},  // "400d"
+	colCPU:     {"CPU", 5, true}, // "812.5"
+	colMem:     {"MEM", 5, true}, // "1023M"
+	colUser:    {"USER", 8, false},
+	colCommand: {"COMMAND", 0, false},
+}
+
+// columnsFor returns the columns shown at width w.
+func columnsFor(w int) []col {
+	switch {
+	case w >= wideWidth:
+		return []col{colName, colKind, colPorts, colPID, colUp, colCPU, colMem, colUser, colCommand}
+	case w >= commandWidth:
+		return []col{colName, colKind, colPorts, colPID, colUp, colCommand}
+	case w >= minWidth:
+		return []col{colName, colKind, colPorts, colPID, colUp}
+	}
+	return []col{colName, colPorts, colPID}
+}
+
+// layout returns the columns at width w and their widths, to be joined by one space. Name gets
+// what the fixed columns leave; when the command is shown, name takes its longest cell
+// (longest), but at least nameMin and leaving commandMin, and the command gets the rest.
+func layout(w, longest int) ([]col, []int) {
+	cols := columnsFor(w)
+	widths := make([]int, len(cols))
+	rest := w - (len(cols) - 1)
+	for i, c := range cols {
+		widths[i] = colSpecs[c].width
+		rest -= widths[i]
+	}
+	widths[0] = max(rest, 0)
+	if cols[len(cols)-1] == colCommand {
+		widths[0] = max(nameMin, min(longest, rest-commandMin))
+		widths[len(cols)-1] = max(rest-widths[0], 0)
+	}
+	return cols, widths
+}
+
+// tableView draws the column titles and the rows that fit in h lines of width w, keeping the
+// selection on screen.
 func (m *Model) tableView(w, h int) string {
-	if m.selIdx >= 0 {
-		m.top = max(min(m.top, m.selIdx), m.selIdx-h+1)
+	if h <= 0 || w <= 0 || !m.have {
+		return ""
 	}
-	var b strings.Builder
-	for i := m.top; i < min(len(m.rows), m.top+h); i++ {
-		r := m.rows[i]
-		line := strings.Repeat("  ", r.Depth) + rowName(r)
-		if i == m.selIdx {
-			line = styleSel.Render(line)
+	titled := h > 1 // with one line, the selected row matters more than the titles
+	rh := h
+	if titled {
+		rh--
+	}
+	m.scroll(rh)
+
+	name := m.nameTitle()
+	longest := ansi.StringWidth(name)
+	for i, r := range m.rows {
+		if r.Key.Header == model.GroupNone {
+			longest = max(longest, ansi.StringWidth(m.nameCell(i)))
 		}
-		b.WriteString(line + "\n")
 	}
-	return strings.TrimSuffix(b.String(), "\n")
+	cols, widths := layout(w, longest)
+	var lines []string
+	if titled {
+		cells := make([]string, len(cols))
+		for j, c := range cols {
+			t := colSpecs[c].title
+			if c == colName {
+				t = name
+			}
+			cells[j] = pad(t, widths[j], colSpecs[c].right)
+		}
+		lines = append(lines, styleBold.Render(pad(strings.Join(cells, " "), w, false)))
+	}
+	if len(m.rows) == 0 {
+		return strings.Join(append(lines, "  nothing to show"), "\n")
+	}
+
+	var counts map[model.RowKey]groupCount
+	for i := m.top; i < min(len(m.rows), m.top+rh); i++ {
+		r := m.rows[i]
+		var l string
+		if r.Key.Header != model.GroupNone {
+			if counts == nil {
+				counts = m.groupCounts()
+			}
+			l = pad(m.nameCell(i)+counts[r.Key].text(r.Key.Header), w, false)
+		} else {
+			cells := make([]string, len(cols))
+			for j, c := range cols {
+				cells[j] = pad(m.cell(i, c), widths[j], colSpecs[c].right)
+			}
+			l = pad(strings.Join(cells, " "), w, false)
+		}
+		switch {
+		case i == m.selIdx:
+			l = styleSel.Render(l)
+		case r.Key.Header != model.GroupNone:
+			l = styleBold.Render(l)
+		case r.Dimmed:
+			l = styleDim.Render(l)
+		}
+		lines = append(lines, l)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// scroll moves m.top so that the selected row is among the rh rows on screen and the window
+// does not end past the last row.
+func (m *Model) scroll(rh int) {
+	m.top = max(min(m.top, len(m.rows)-rh), 0)
+	if m.selIdx >= 0 {
+		m.top = max(min(m.top, m.selIdx), m.selIdx-rh+1, 0)
+	}
+}
+
+// nameTitle is the name column's title, followed by the active view toggles.
+func (m *Model) nameTitle() string {
+	t := []string{"NAME"}
+	if m.view.Sort != model.SortDefault {
+		t = append(t, "sort: "+sortNames[m.view.Sort])
+	}
+	if m.view.ShowAll {
+		t = append(t, "all")
+	}
+	if m.view.HideContainers {
+		t = append(t, "no containers")
+	}
+	return strings.Join(t, " · ")
+}
+
+// sortNames are the sort modes as the title line names them, in the order s cycles them.
+var sortNames = [...]string{
+	model.SortDefault: "default", model.SortPort: "port", model.SortCPU: "cpu", model.SortStart: "start",
+}
+
+// pad cuts s to width cells, with an ellipsis, and pads it with spaces to exactly width.
+func pad(s string, width int, right bool) string {
+	if width <= 0 {
+		return ""
+	}
+	s = ansi.Truncate(s, width, "…")
+	fill := strings.Repeat(" ", width-ansi.StringWidth(s))
+	if right {
+		return fill + s
+	}
+	return s + fill
+}
+
+// Tree markers on headers and on rows with children.
+const (
+	markOpen   = "▾ "
+	markClosed = "▸ "
+	markNone   = "  "
+)
+
+// nameCell is row i's name: indented by depth, a marker when it has children, and its label.
+// A row has children when it is collapsed (only rows with children are) or the next row is
+// deeper.
+func (m *Model) nameCell(i int) string {
+	r := m.rows[i]
+	mark := markNone
+	switch {
+	case m.view.Collapsed[r.Key]:
+		mark = markClosed
+	case i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth:
+		mark = markOpen
+	}
+	return strings.Repeat("  ", r.Depth) + mark + rowLabel(r)
+}
+
+// rowLabel is what the name column says about r: the group for a header, the container name
+// and image for a container row or a process holding a container's port, else the process name.
+func rowLabel(r model.Row) string {
+	switch r.Key.Header {
+	case model.GroupProject:
+		p := r.Project
+		if p == nil {
+			return r.Key.Group
+		}
+		s, at := p.Name, cmp.Or(p.Branch, p.ShortSHA)
+		if at != "" {
+			s += " @ " + at
+		}
+		if p.Worktree {
+			s += " (worktree)"
+		}
+		return s
+	case model.GroupCompose:
+		return r.Key.Group + " (compose)"
+	case model.GroupContainers:
+		return "containers"
+	case model.GroupOther:
+		return "other"
+	}
+	switch {
+	case r.Container != nil:
+		return r.Container.Name + " (" + r.Container.Image + ")"
+	case r.Process != nil && r.Process.PID == 0:
+		return "unknown"
+	case r.Process != nil:
+		return r.Process.Name
+	}
+	return ""
 }
 
 // rowName is a row's label: the project or group name for a header, the container name for a
@@ -46,17 +273,244 @@ func rowName(r model.Row) string {
 	return ""
 }
 
+// cell is the text of column c for the process or container row i, unpadded.
+func (m *Model) cell(i int, c col) string {
+	r := m.rows[i]
+	p := r.Process
+	switch c {
+	case colName:
+		return m.nameCell(i)
+	case colPorts:
+		return portsText(ports(r))
+	case colKind:
+		if p == nil {
+			return model.KindContainer.String()
+		}
+		return p.Kind.String()
+	}
+	if p == nil { // a container with no process behind it has nothing more to show
+		return ""
+	}
+	unknown := p.PID == 0 // the "unknown owner" pseudo-process
+	switch c {
+	case colPID:
+		if unknown {
+			return "-"
+		}
+		return strconv.Itoa(p.PID)
+	case colUp:
+		if unknown || p.StartTime.IsZero() {
+			return "-"
+		}
+		return uptime(m.o.Now().Sub(p.StartTime))
+	case colCPU:
+		return cpu(p)
+	case colMem:
+		if p.Unknown&model.FieldMem != 0 {
+			return "–"
+		}
+		return mem(p.RSSBytes)
+	case colUser:
+		return cmp.Or(p.User, "-")
+	case colCommand:
+		switch {
+		case unknown:
+			return ""
+		case len(p.Argv) == 0:
+			return p.Name
+		}
+		return strings.Join(p.Argv, " ")
+	}
+	return ""
+}
+
+// uptime formats a duration as its largest whole unit: 45s, 12m, 3h, 2d.
+func uptime(d time.Duration) string {
+	d = max(d, 0)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", d/time.Second)
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", d/time.Hour)
+	}
+	return fmt.Sprintf("%dd", d/(24*time.Hour))
+}
+
+// cpu formats a CPU percent with one decimal, or an en dash when it is not known (first sample).
+func cpu(p *model.Process) string {
+	if p.Unknown&model.FieldCPU != 0 || math.IsNaN(p.CPUPercent) {
+		return "–"
+	}
+	return strconv.FormatFloat(p.CPUPercent, 'f', 1, 64)
+}
+
+// mem formats a byte count in binary units: 512B, 12K, 179M, 1.2G, 15G.
+func mem(b uint64) string {
+	const k, m, g = 1 << 10, 1 << 20, 1 << 30
+	f := float64(b)
+	switch {
+	case b >= 10*g:
+		return fmt.Sprintf("%.0fG", f/g)
+	case b >= g:
+		return fmt.Sprintf("%.1fG", f/g)
+	case b >= m:
+		return fmt.Sprintf("%.0fM", f/m)
+	case b >= k:
+		return fmt.Sprintf("%.0fK", f/k)
+	}
+	return fmt.Sprintf("%dB", b)
+}
+
+// port is one distinct port of a row; any is set when one of its sockets or mappings is bound
+// to every interface.
+type port struct {
+	n   uint16
+	any bool
+}
+
+// ports returns r's distinct listener ports, or a container row's published host ports,
+// ascending.
+func ports(r model.Row) []port {
+	var ps []port
+	add := func(n uint16, any bool) {
+		if i := slices.IndexFunc(ps, func(p port) bool { return p.n == n }); i >= 0 {
+			ps[i].any = ps[i].any || any
+			return
+		}
+		ps = append(ps, port{n, any})
+	}
+	switch {
+	case r.Process != nil:
+		for _, l := range r.Process.Listeners {
+			add(l.Port, l.Addr.IsUnspecified())
+		}
+	case r.Container != nil:
+		for _, pm := range r.Container.Ports {
+			if pm.HostPort != 0 {
+				add(pm.HostPort, !pm.HostIP.IsValid() || pm.HostIP.IsUnspecified())
+			}
+		}
+	}
+	slices.SortFunc(ps, func(a, b port) int { return cmp.Compare(a.n, b.n) })
+	return ps
+}
+
+// portsText joins ports with commas, with a leading * on those bound to every interface.
+func portsText(ps []port) string {
+	s := make([]string, len(ps))
+	for i, p := range ps {
+		s[i] = strconv.Itoa(int(p.n))
+		if p.any {
+			s[i] = "*" + s[i]
+		}
+	}
+	return strings.Join(s, ",")
+}
+
+// groupCount is what a header counts: its rows and their distinct ports.
+type groupCount struct{ rows, ports int }
+
+// text is a header's counts: containers for compose and containers groups, processes for the
+// others.
+func (c groupCount) text(g model.GroupKind) string {
+	one, many := "process", "processes"
+	if g == model.GroupCompose || g == model.GroupContainers {
+		one, many = "container", "containers"
+	}
+	return " · " + count(c.rows, one, many) + " · " + count(c.ports, "port", "ports")
+}
+
+// count is n with the singular or plural noun.
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
+}
+
+// groupCounts counts the rows and distinct ports of each group as the a and d toggles show
+// them, expanded and unfiltered, so a header's counts stay put when it is collapsed or
+// filtered. Dimmed rows count, since they are drawn.
+func (m *Model) groupCounts() map[model.RowKey]groupCount {
+	counts := map[model.RowKey]groupCount{}
+	var header model.RowKey
+	var seen map[uint16]bool
+	view := model.ViewOptions{ShowAll: m.view.ShowAll, HideContainers: m.view.HideContainers}
+	for _, r := range model.Flatten(m.upd.Snapshot, view) {
+		if r.Key.Header != model.GroupNone {
+			header, seen = r.Key, map[uint16]bool{}
+			continue
+		}
+		c := counts[header]
+		c.rows++
+		for _, p := range ports(r) {
+			if !seen[p.n] {
+				seen[p.n] = true
+				c.ports++
+			}
+		}
+		counts[header] = c
+	}
+	return counts
+}
+
 // tableKey handles the keys the global switch in key does not.
-//
-// ponytail: placeholder until DEV-31; only up and down.
 func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
+	page := max(m.height-4, 1) // about the table's rows: the header, titles and footer take the rest
 	switch k.String() {
 	case "up", "k":
 		m.moveTo(m.selIdx - 1)
 	case "down", "j":
 		m.moveTo(m.selIdx + 1)
+	case "pgup":
+		m.moveTo(m.selIdx - page)
+	case "pgdown":
+		m.moveTo(m.selIdx + page)
+	case "home", "g":
+		m.moveTo(0)
+	case "end", "G":
+		m.moveTo(len(m.rows) - 1)
+	case "left", "h":
+		m.collapse()
+	case "right", "l":
+		if m.selIdx >= 0 && m.view.Collapsed[m.sel] {
+			delete(m.view.Collapsed, m.sel)
+			m.rebuild()
+		}
+	case "a":
+		m.view.ShowAll = !m.view.ShowAll
+		m.rebuild()
+	case "d":
+		m.view.HideContainers = !m.view.HideContainers
+		m.rebuild()
+	case "s":
+		m.view.Sort = (m.view.Sort + 1) % model.SortMode(len(sortNames))
+		m.rebuild()
 	}
 	return nil
+}
+
+// collapse collapses the selected header or tree node when it is expanded and has children,
+// and otherwise moves the selection to its parent row.
+func (m *Model) collapse() {
+	i := m.selIdx
+	if i < 0 || i >= len(m.rows) {
+		return
+	}
+	r := m.rows[i]
+	if !m.view.Collapsed[r.Key] && i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth {
+		m.view.Collapsed[r.Key] = true
+		m.rebuild()
+		return
+	}
+	for j := i - 1; j >= 0; j-- {
+		if m.rows[j].Depth < r.Depth {
+			m.moveTo(j)
+			return
+		}
+	}
 }
 
 // moveTo selects the row at index i, clamped to the rows.
