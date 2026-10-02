@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"syscall"
 	"time"
@@ -36,6 +35,9 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	res.Processes = make([]Process, 0, len(kps))
 	for i := range kps {
 		kp := &kps[i]
+		if kp.Proc.P_pid == 0 {
+			continue // kernel_task; PID 0 is the "unknown owner" pseudo-process in model.Build
+		}
 		res.Processes = append(res.Processes, Process{
 			PID:       int(kp.Proc.P_pid),
 			PPID:      int(kp.Eproc.Ppid),
@@ -57,10 +59,27 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	argBuf := make([]byte, argmax)
 	pathBuf := make([]byte, sizeofVnodePathInfo)
 	taskBuf := make([]byte, sizeofProcTaskInfo)
+	uid := os.Geteuid()
 	denied := 0
 	kept := res.Processes[:0]
 	for _, p := range res.Processes {
 		var argvErr, cwdErr, taskErr error
+		n, err := lib.procArgs2(p.PID, argBuf)
+		if err != nil && p.UID == uid {
+			continue // exiting, just forked or mid-exec: dropped, not shown half-filled (DEV-41)
+		}
+		switch argv, ok := decodeProcArgs2(argBuf[:n]); {
+		case err != nil:
+			argvErr = err // EINVAL for other users' processes
+		case n == len(argBuf):
+			// The strings area is larger than kern.argmax and the kernel returned its tail, so
+			// argc no longer lines up: unknown, but the process is alive and keeps its row.
+			argvErr = syscall.E2BIG
+		case ok:
+			p.Argv = argv
+		default:
+			argvErr = syscall.EINVAL
+		}
 		if n, err := lib.pidinfo(p.PID, procPidVnodePathInfo, pathBuf); err != nil {
 			cwdErr = err
 		} else if cwd, ok := decodeVnodePathInfo(pathBuf[:n]); ok {
@@ -78,13 +97,6 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 		if exited(cwdErr) || exited(taskErr) {
 			continue
 		}
-		if n, err := lib.procArgs2(p.PID, argBuf); err != nil {
-			argvErr = err // EINVAL for other users' processes, so not used to decide on exit
-		} else if argv, ok := decodeProcArgs2(argBuf[:n]); ok {
-			p.Argv = argv
-		} else {
-			argvErr = syscall.EINVAL
-		}
 		for _, f := range []struct {
 			bit model.FieldSet
 			err error
@@ -101,7 +113,7 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	res.Processes = kept
 	if denied > 0 {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: denied,
-			Hint: "processes of other users: argv, cwd or cpu/mem not readable without root"})
+			Hint: "other users' processes: argv, cwd, cpu and mem need root; run with sudo"})
 	}
 	res.Timings["argv_cwd"] = time.Since(t)
 	if err := ctx.Err(); err != nil {
@@ -109,27 +121,27 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	}
 
 	t = time.Now()
-	res.Listeners = fdListeners(lib, res.Processes)
+	fd := fdListeners(lib, res.Processes)
 	tp := time.Now()
 	pcb, warn := pcbListeners()
 	res.Timings["pcblist"] = time.Since(tp)
 	if warn != "" {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: warn})
 	}
-	res.Listeners = mergeListeners(res.Listeners, pcb)
+	res.Listeners = mergeListeners(fd, pcb)
 	res.Timings["listeners"] = time.Since(t)
 	return res, nil
 }
 
 // fdListeners walks the socket fds of own-uid processes (the only ones libproc lets us read)
-// and returns their TCP listeners with the owning pid.
-func fdListeners(lib *libSystem, procs []Process) []Listener {
+// and returns their TCP listeners with the owning pid, one entry per socket and pid.
+func fdListeners(lib *libSystem, procs []Process) []sock {
 	uid := os.Geteuid()
-	var ls []Listener
+	var ls []sock
 	fdBuf := make([]byte, 64*1024)
 	sockBuf := make([]byte, sizeofSocketFDInfo)
 	for _, p := range procs {
-		if p.UID != uid || p.PID == 0 {
+		if p.UID != uid {
 			continue
 		}
 		n, err := lib.pidinfo(p.PID, procPidListFDs, fdBuf)
@@ -145,53 +157,53 @@ func fdListeners(lib *libSystem, procs []Process) []Listener {
 			if err != nil {
 				continue // closed since the list was read
 			}
-			if l, ok := decodeSocketFDInfo(sockBuf[:n]); ok {
-				l.PID = p.PID
-				ls = append(ls, l)
+			if s, ok := decodeSocketFDInfo(sockBuf[:n]); ok {
+				s.PID = p.PID
+				ls = append(ls, s)
 			}
 		}
 	}
 	return ls
 }
 
+// pcbHint is the warning hint for an empty or denied PCB list: the cause users can act on.
+const pcbHint = "other users' listeners unknown: macOS withholds the socket list when an ancestor of devdash " +
+	"is ad-hoc signed (go run, a Homebrew-built tmux); start devdash directly from a shell, or run with sudo"
+
 // pcbListeners reads every TCP listener on the host from net.inet.tcp.pcblist_n, with
-// so_last_pid as the owner. An empty list means unknown, never "no listeners".
-func pcbListeners() ([]Listener, string) {
+// so_last_pid as the owner. A list without other processes' sockets is withheld, which means
+// unknown, never "no listeners".
+func pcbListeners() ([]sock, string) {
 	b, err := unix.SysctlRaw("net.inet.tcp.pcblist_n")
 	if err != nil {
-		return nil, "net.inet.tcp.pcblist_n: " + err.Error() + "; other users' listeners unknown"
+		return nil, "net.inet.tcp.pcblist_n: " + err.Error() + "; " + pcbHint
 	}
-	ls, pcbs := decodePCBList(b)
-	if pcbs == 0 {
-		return nil, "net.inet.tcp.pcblist_n is empty; other users' listeners unknown"
+	ls, others := decodePCBList(b, os.Getpid())
+	if others == 0 {
+		return nil, pcbHint
 	}
 	return ls, ""
 }
 
-// mergeListeners keeps the fd-walk listeners (exact pid; a socket shared by several pids is
-// listed once per pid) and adds PCB-list listeners whose (proto, addr, port) the fd walk did
-// not see, typically sockets of other users.
-func mergeListeners(fd, pcb []Listener) []Listener {
-	type key struct {
-		proto string
-		addr  netip.Addr
-		port  uint16
-	}
+// mergeListeners returns one listener per socket handle: a socket shared across fork goes to
+// the lowest pid holding it (the fd walk sees every holder; the PCB list's so_last_pid is
+// whoever touched it last), and SO_REUSEPORT siblings, being distinct sockets, stay distinct.
+// The PCB list only adds sockets the fd walk did not see, typically other users'.
+func mergeListeners(fd, pcb []sock) []Listener {
 	var out []Listener
-	seenFD := map[Listener]bool{}
-	seen := map[key]bool{}
-	for _, l := range fd {
-		if !seenFD[l] {
-			seenFD[l] = true
-			seen[key{l.Proto, l.Addr, l.Port}] = true
-			out = append(out, l)
+	at := map[uint64]int{}
+	for _, s := range fd {
+		if i, ok := at[s.so]; ok {
+			out[i].PID = min(out[i].PID, s.PID)
+			continue
 		}
+		at[s.so] = len(out)
+		out = append(out, s.Listener)
 	}
-	for _, l := range pcb {
-		k := key{l.Proto, l.Addr, l.Port}
-		if !seen[k] {
-			seen[k] = true
-			out = append(out, l)
+	for _, s := range pcb {
+		if _, ok := at[s.so]; !ok {
+			at[s.so] = len(out)
+			out = append(out, s.Listener)
 		}
 	}
 	return out
