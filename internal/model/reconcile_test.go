@@ -43,6 +43,8 @@ func TestReconcile(t *testing.T) {
 	podman := Container{ID: "pod", Ports: []PortMapping{pm("", 8000, 80, "tcp")}}
 	v4 := Container{ID: "v4", Ports: []PortMapping{pm("0.0.0.0", 8080, 80, "tcp")}}
 	v6 := Container{ID: "v6", Ports: []PortMapping{pm("::", 8080, 80, "tcp")}}
+	orbProbe := Container{ID: "probe", Name: "devdash-orb-probe", Image: "nginx:alpine",
+		Ports: []PortMapping{pm("0.0.0.0", 18090, 80, "tcp"), pm("::", 18090, 80, "tcp")}}
 	dns := Container{ID: "dns", Ports: []PortMapping{pm("0.0.0.0", 53, 53, "udp"), pm("", 0, 9000, "tcp")}}
 
 	type want struct {
@@ -72,6 +74,25 @@ func TestReconcile(t *testing.T) {
 			[]Process{rp(20, "com.docker.backend", KindServer, lst("tcp6", any6, 5432))},
 			[]Container{db},
 			[]want{{"db", KindContainer, []string{"db"}}}},
+		// Recorded with OrbStack 2.2.3 (DEV-73): `docker run -p 18090:80` is held by OrbStack
+		// Helper on *:18090 for each family, next to its own 32222 and 59838.
+		{"orbstack: the helper holds a container's port and its own",
+			[]Process{orbHelper(14887, lst("tcp4", any4, 18090), lst("tcp6", any6, 18090),
+				lst("tcp4", lo, 32222), lst("tcp6", netip.IPv6Loopback(), 32222), lst("tcp4", lo, 59838))},
+			[]Container{orbProbe},
+			[]want{{"probe", KindContainer, []string{"probe", "probe", "", "", ""}}}},
+		{"orbstack: the helper's own ports alone are not a container's",
+			[]Process{orbHelper(14887, lst("tcp4", lo, 32222), lst("tcp4", lo, 59838))},
+			[]Container{orbProbe},
+			[]want{{"", KindServer, []string{"", ""}}}},
+		{"orbstack's app is not a forwarder",
+			[]Process{func() Process {
+				p := rp(14800, "OrbStack", KindServer, lst("tcp4", any4, 18090))
+				p.Argv = []string{"/Applications/OrbStack.app/Contents/MacOS/OrbStack"}
+				return p
+			}()},
+			[]Container{orbProbe},
+			[]want{{"", KindServer, []string{""}}}},
 		{"rootless docker",
 			[]Process{rp(30, "rootlesskit", KindServer, lst("tcp4", any4, 6379))},
 			[]Container{cache},

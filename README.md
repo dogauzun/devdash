@@ -141,7 +141,8 @@ and reports what survived. Then it checks the port again and says whether it is 
 
 A target outside every project asks a second time, because it is usually a system service.
 devdash refuses pid 1, itself and its ancestors (your shell and terminal), and
-container-runtime processes such as `dockerd`, `docker-proxy` and `com.docker.backend`. A
+container-runtime processes such as `dockerd`, `docker-proxy`, `com.docker.backend` and
+OrbStack's `OrbStack Helper`. A
 port published by a container is refused with a `docker stop <name>` hint. If any owner is
 refused, nothing is signalled. Each
 pid's start time is checked again right before `kill(2)`, so a reused pid is never signalled.
@@ -227,9 +228,9 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   endpoints are supported, not TLS. A published port with no userland proxy behind it
   (iptables only) shows as a container with no process. With `--no-docker`, or when Docker is
   not found, a published port shows as the process that forwards it (`docker-proxy` on Linux,
-  `com.docker.backend` on Docker Desktop for Mac, another forwarder on OrbStack, Colima or
-  Podman), or with an unknown owner when root holds it. `port N` only reports ports listening
-  on the host, not unpublished ports inside a Docker network.
+  `com.docker.backend` on Docker Desktop for Mac, `OrbStack Helper` on OrbStack, another
+  forwarder on Colima or Podman), or with an unknown owner when root holds it. `port N` only
+  reports ports listening on the host, not unpublished ports inside a Docker network.
 - **Container processes on Linux.** Processes running inside containers are also host
   processes on Linux, so devdash lists them in the `other` group as ordinary processes (with
   host user names for the container's uids), not under their container. A container on

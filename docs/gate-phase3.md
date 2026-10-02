@@ -15,7 +15,7 @@ The compose project is always taken down when the script exits. On Linux, CI run
 
 GitHub's macOS runners have no Docker, so the macOS half is run on a Mac and pasted into the PR that closes Phase 3.
 
-1. Start Docker Desktop and wait until `docker info` answers. The gate is defined against Docker Desktop, where `com.docker.backend` holds published ports. If another runtime (OrbStack, Colima) holds the port with a process that is not on the spec's runtime list, the script stops before any kill instead of signalling that process.
+1. Start Docker Desktop and wait until `docker info` answers. The gate is defined against Docker Desktop, where `com.docker.backend` holds published ports. If another runtime holds the port with a process that is not on the spec's runtime list, the script stops before any kill instead of signalling that process (OrbStack's `OrbStack Helper` and Colima's `limactl` are on it).
 2. Have Go (the version in `go.mod`), `jq` (in `/usr/bin` since macOS 15, else `brew install jq`) and `curl`.
 3. From the repository root, in a Terminal.app or iTerm shell, run:
 
