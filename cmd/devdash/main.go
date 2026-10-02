@@ -18,7 +18,8 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// Set at build time with -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
+// Set at build time with -ldflags "-X main.version=... -X main.commit=... -X main.date=...";
+// any left at its default falls back to the embedded build info (version.go).
 var (
 	version = "dev"
 	commit  = "none"
@@ -29,7 +30,7 @@ const usage = `usage: devdash [flags]              the dashboard (not implemente
        devdash [flags] --json       print one snapshot as JSON (docs/json-schema.md)
        devdash [flags] port N       who listens on TCP port N: exit 0 found, 1 free
        devdash [flags] kill N       stop the process(es) listening on TCP port N
-       devdash version              print version, commit and build date
+       devdash version              print version, commit and commit date
 
 Flags may come before or after the subcommand and its arguments.
 
@@ -107,7 +108,8 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	ctx := context.Background()
 	switch o.Cmd {
 	case "version":
-		fmt.Fprintf(stdout, "devdash %s (commit %s, built %s)\n", version, commit, date)
+		ver, rev, built := versionInfo(version, commit, date, buildInfo())
+		fmt.Fprintf(stdout, "devdash %s (commit %s, built %s)\n", ver, rev, built)
 		return 0
 	case "port":
 		port, _ := parsePort(o.Args[0]) // checked by parse
