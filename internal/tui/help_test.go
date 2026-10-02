@@ -18,7 +18,7 @@ func TestHelp(t *testing.T) {
 	// Every key of the spec's key table, and the keys beyond it, in full at 80 columns.
 	for _, want := range []string{
 		"↑ ↓ j k     move the selection",
-		"pgup pgdown move a page; g or home: first row; G or end: last row",
+		"pgup pgdown page the table or the open detail pane; g/home first, G/end last row",
 		"← → h l     collapse or expand a project group or a tree node",
 		"enter       open or close the detail pane (esc closes it too)",
 		"/           filter by port, name, argv, project or container; ctrl+u, esc clear",
@@ -183,7 +183,7 @@ func TestHelpScroll(t *testing.T) {
 		t.Errorf("at 80x5:\n%s", screen(m))
 	}
 	press(m, "down")
-	if !m.help || bodyLines(m)[1] != "pgup pgdown move a page; g or home: first row; G or end: last row" {
+	if !m.help || bodyLines(m)[1] != "pgup pgdown page the table or the open detail pane; g/home first, G/end last row" {
 		t.Errorf("at 80x5 down did not scroll:\n%s", screen(m))
 	}
 }

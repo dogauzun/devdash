@@ -175,7 +175,7 @@ The dashboard's keys; `?` shows the same table inside it.
 | Key | Action |
 | --- | --- |
 | `↑ ↓ j k` | move the selection |
-| `pgup pgdown` | move a page; g or home: first row; G or end: last row |
+| `pgup pgdown` | page the table or the open detail pane; g/home first, G/end last row |
 | `← → h l` | collapse or expand a project group or a tree node |
 | `enter` | open or close the detail pane (esc closes it too) |
 | `/` | filter by port, name, argv, project or container; ctrl+u, esc clear |
