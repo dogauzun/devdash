@@ -38,6 +38,8 @@ func TestWritePort(t *testing.T) {
 		{"dual-stack socket is one line", []model.RawListener{l("tcp6", any6, 8080, 10)}, 8080, "10  node  -  [::]:8080\n", true},
 		{"IPv4 and IPv6 sockets are two lines", []model.RawListener{l("tcp4", lo4, 5173, 10), l("tcp6", lo6, 5173, 10)}, 5173,
 			"10  node  -  127.0.0.1:5173\n10  node  -  [::1]:5173\n", true},
+		{"scoped IPv6 address keeps its zone", []model.RawListener{l("tcp6", netip.MustParseAddr("fe80::1%lo0"), 8081, 10)}, 8081,
+			"10  node  -  [fe80::1%lo0]:8081\n", true},
 		{"two owners, aligned", []model.RawListener{l("tcp4", lo4, 9000, 11), l("tcp6", any6, 9000, 0), l("tcp4", lo4, 9001, 10)}, 9000,
 			"11  postgres  -  127.0.0.1:9000\n" +
 				"0   unknown   -  [::]:9000  owner unknown: run with sudo to see owners\n", true},
