@@ -1,0 +1,8 @@
+Name:	python3
+Umask:	0022
+State:	S
+Tgid:	1103
+Pid:	1103
+PPid:	1001
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

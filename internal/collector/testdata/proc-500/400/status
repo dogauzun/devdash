@@ -1,0 +1,8 @@
+Name:	sudo
+Umask:	0022
+State:	S
+Tgid:	400
+Pid:	400
+PPid:	1001
+Uid:	1000	0	0	0
+Gid:	1000	1000	1000	1000

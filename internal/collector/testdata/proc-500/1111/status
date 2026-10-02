@@ -1,0 +1,8 @@
+Name:	gunicorn
+Umask:	0022
+State:	S
+Tgid:	1111
+Pid:	1111
+PPid:	1110
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

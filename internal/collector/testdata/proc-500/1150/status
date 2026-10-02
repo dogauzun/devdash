@@ -1,0 +1,8 @@
+Name:	uvicorn
+Umask:	0022
+State:	S
+Tgid:	1150
+Pid:	1150
+PPid:	1200
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000

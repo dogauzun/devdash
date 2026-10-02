@@ -1,0 +1,8 @@
+Name:	node
+Umask:	0022
+State:	X
+Tgid:	1144
+Pid:	1144
+PPid:	1100
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
