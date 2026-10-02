@@ -156,3 +156,80 @@ func TestKeyRouting(t *testing.T) {
 		t.Error("closing help changed the selection or the header")
 	}
 }
+
+// TestHeaderFit: the filter gets its room first; the counts are dropped (containers, then
+// listeners, then projects) and then the hostname is cut with "…" before the filter is, and a
+// query wider than what is left shows its tail, so the cursor is always on screen (DEV-84).
+func TestHeaderFit(t *testing.T) {
+	const mac = "Dogas-MacBook-Pro.local" // os.Hostname on a typical Mac
+	header := func(m *Model) string {
+		t.Helper()
+		got := strings.Split(screen(m), "\n")[0]
+		if n := ansi.StringWidth(got); n > m.width {
+			t.Errorf("header is %d cells at %d columns: %q", n, m.width, got)
+		}
+		return got
+	}
+	withHost := func(h string) model.Snapshot {
+		s := fixture()
+		s.Host.Hostname = h
+		return s
+	}
+
+	m, _ := newTest(t, 80, 24)
+	feed(m, withHost(mac))
+	press(m, "/")
+	typeText(m, "5173")
+	if got, want := header(m), mac+" · 2 s ago · 2 projects · 6 listeners · /5173_"; got != want {
+		t.Errorf("prompt at 80 columns\n got %q\nwant %q", got, want)
+	}
+	press(m, "enter")
+	if got, want := header(m), mac+" · 2 s ago · 2 projects · 6 listeners · filter: 5173"; got != want {
+		t.Errorf("applied filter at 80 columns\n got %q\nwant %q", got, want)
+	}
+
+	// A 60-character query: every count goes, then the hostname is cut.
+	q := strings.Repeat("abcdefghij", 5) + "0123456789"
+	m, _ = newTest(t, 80, 24)
+	feed(m, withHost(mac))
+	press(m, "/")
+	typeText(m, q)
+	if got, want := header(m), "Doga… · 2 s ago · /"+q+"_"; got != want {
+		t.Errorf("60-character query\n got %q\nwant %q", got, want)
+	}
+	press(m, "enter")
+	if got, want := header(m), "D… · 2 s ago · filter: …"+q[len(q)-56:]; got != want {
+		t.Errorf("60-character applied filter\n got %q\nwant %q", got, want)
+	}
+
+	// Wider than the whole line: the hostname is down to one letter and the query shows its
+	// tail, the cursor last.
+	long := strings.Repeat(q, 2)
+	m, _ = newTest(t, 80, 24)
+	feed(m, withHost(mac))
+	press(m, "/")
+	typeText(m, long)
+	if got, want := header(m), "D… · 2 s ago · /…"+long[len(long)-62:]+"_"; got != want {
+		t.Errorf("120-character query\n got %q\nwant %q", got, want)
+	}
+
+	// No filter, narrow: whole counts go, never one cut mid-word.
+	m, _ = newTest(t, 50, 24)
+	feed(m, fixture())
+	if got, want := header(m), "mbp · 2 s ago · 2 projects · 6 listeners"; got != want {
+		t.Errorf("at 50 columns\n got %q\nwant %q", got, want)
+	}
+	m, _ = newTest(t, 30, 24)
+	feed(m, fixture())
+	if got, want := header(m), "mbp · 2 s ago · 2 projects"; got != want {
+		t.Errorf("at 30 columns\n got %q\nwant %q", got, want)
+	}
+
+	// Before the first snapshot the prompt still shows.
+	m, _ = newTest(t, 30, 24)
+	press(m, "/")
+	typeText(m, "python3 -m http.server")
+	if got, want := header(m), "d… · collecting · /…tp.server_"; got != want {
+		t.Errorf("collecting\n got %q\nwant %q", got, want)
+	}
+}

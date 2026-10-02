@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -14,38 +15,88 @@ import (
 // staleAfter is the number of consecutive missed ticks from which the header says "stale".
 const staleAfter = 2
 
-// headerView is one line: hostname, snapshot age, counts of projects, listeners and
-// containers, and the active filter (spec "TUI design", Header).
+// headerSep separates the parts of the header line.
+const headerSep = " · "
+
+// headerView is one line of at most w cells: hostname, snapshot age, counts of projects,
+// listeners and containers, and the active filter (spec "TUI design", Header). The filter gets
+// its room first: when the line does not fit, the counts go whole (containers, then listeners,
+// then projects), then the hostname is cut with "…" down to one letter, and then the query
+// shows its tail, so the prompt's cursor stays on screen (DEV-84).
 func (m *Model) headerView(w int) string {
 	s := m.upd.Snapshot
 	host := clean(s.Host.Hostname)
 	if host == "" {
 		host = "devdash"
 	}
-	parts := []string{styleBold.Render(host)}
-	if !m.have {
-		parts = append(parts, "collecting")
-	} else {
-		age := max(m.o.Now().Sub(s.TakenAt), 0)
+	age, ageStyle := "collecting", lipgloss.NewStyle()
+	var counts []string
+	if m.have {
+		a := max(m.o.Now().Sub(s.TakenAt), 0)
 		if m.upd.Missed >= staleAfter {
-			parts = append(parts, styleWarn.Render("stale "+ago(age)))
+			age, ageStyle = "stale "+ago(a), styleWarn
 		} else {
-			parts = append(parts, ago(age)+" ago")
+			age = ago(a) + " ago"
 		}
 		listeners := 0
 		for _, p := range s.Processes {
 			listeners += len(p.Listeners)
 		}
-		parts = append(parts,
-			plural(len(s.Projects), "project"), plural(listeners, "listener"), plural(len(s.Containers), "container"))
+		counts = []string{plural(len(s.Projects), "project"), plural(listeners, "listener"), plural(len(s.Containers), "container")}
 	}
+	var prefix, query, cursor string
 	switch {
 	case m.filtering:
-		parts = append(parts, styleAccent.Render("/"+clean(m.filter)+"_"))
+		prefix, query, cursor = "/", clean(m.filter), "_"
 	case m.filter != "":
-		parts = append(parts, styleAccent.Render("filter: "+clean(m.filter)))
+		prefix, query = "filter: ", clean(m.filter)
 	}
-	return strings.Join(parts, " · ")
+	filter := prefix + query + cursor
+
+	sepW := ansi.StringWidth(headerSep)
+	width := func() int {
+		n := ansi.StringWidth(host) + sepW + ansi.StringWidth(age)
+		for _, c := range counts {
+			n += sepW + ansi.StringWidth(c)
+		}
+		if filter != "" {
+			n += sepW + ansi.StringWidth(filter)
+		}
+		return n
+	}
+	for len(counts) > 0 && width() > w {
+		counts = counts[:len(counts)-1]
+	}
+	if over := width() - w; over > 0 {
+		hw := ansi.StringWidth(host)
+		host = ansi.Truncate(host, max(hw-over, 2), "…")
+	}
+	if over := width() - w; over > 0 && filter != "" {
+		room := ansi.StringWidth(query) - over - 1 // the "…"
+		filter = prefix + "…" + tail(query, max(room, 0)) + cursor
+	}
+
+	parts := []string{styleBold.Render(host), ageStyle.Render(age)}
+	parts = append(parts, counts...)
+	if filter != "" {
+		parts = append(parts, styleAccent.Render(filter))
+	}
+	return strings.Join(parts, headerSep)
+}
+
+// tail is the end of s that is at most n cells wide.
+func tail(s string, n int) string {
+	r := []rune(s)
+	i, cells := len(r), 0
+	for i > 0 {
+		c := ansi.StringWidth(string(r[i-1]))
+		if cells+c > n {
+			break
+		}
+		cells += c
+		i--
+	}
+	return string(r[i:])
 }
 
 // ago formats a snapshot age as "2 s", "3 m" or "1 h".
