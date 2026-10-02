@@ -5,41 +5,30 @@ package collector
 
 import (
 	"context"
-	"net/netip"
-	"time"
+	"os"
+	"runtime"
+
+	"github.com/dogauzun/devdash/internal/model"
 )
 
-// Process is one process as read from the OS.
-type Process struct {
-	PID       int           `json:"pid"`
-	PPID      int           `json:"ppid"`
-	UID       int           `json:"uid"`
-	StartTime time.Time     `json:"start_time"`
-	Name      string        `json:"name"` // comm / p_comm
-	Argv      []string      `json:"argv"`
-	Cwd       string        `json:"cwd"`      // "" when unreadable
-	CPUTime   time.Duration `json:"cpu_time"` // cumulative user+system
-	RSSBytes  uint64        `json:"rss_bytes"`
-	Unknown   []string      `json:"unknown"` // names of fields that could not be read: "argv", "cwd", "cpu", "mem"
-}
+// The raw types are model's, so a Result goes into model.Build without conversion.
+type (
+	// Result is one raw sample.
+	Result = model.Raw
+	// Process carries only the collected fields; see model.Raw.
+	Process = model.Process
+	// Listener is a listening socket with its owner pid, 0 when unknown.
+	Listener = model.RawListener
+)
 
-// Listener is one listening TCP socket.
-type Listener struct {
-	Proto string     `json:"proto"` // "tcp4" | "tcp6"
-	Addr  netip.Addr `json:"addr"`  // bind address
-	Port  uint16     `json:"port"`
-	PID   int        `json:"pid"` // 0 when the owner is unknown
-}
-
-// Result is one raw snapshot.
-type Result struct {
-	Processes []Process                `json:"processes"`
-	Listeners []Listener               `json:"listeners"`
-	Warnings  []string                 `json:"warnings"`
-	Timings   map[string]time.Duration `json:"timings"` // per source, e.g. "proctable", "argv_cwd", "listeners"
-}
-
-// Collector produces a Result for the current machine.
+// Collector produces a Result for the current machine. Collect may block on a stuck read
+// and checks ctx only between reads, so callers run it in a goroutine.
 type Collector interface {
 	Collect(ctx context.Context) (Result, error)
+}
+
+// host describes this machine and the effective uid devdash runs as.
+func host() model.Host {
+	name, _ := os.Hostname()
+	return model.Host{OS: runtime.GOOS, Arch: runtime.GOARCH, Hostname: name, UID: os.Geteuid()}
 }

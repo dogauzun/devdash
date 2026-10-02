@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 // New returns the macOS collector.
@@ -24,7 +26,7 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("collector: load libSystem: %w", err)
 	}
-	res := Result{Timings: map[string]time.Duration{}}
+	res := Result{TakenAt: time.Now(), Host: host(), Timings: model.Timing{}}
 
 	t := time.Now()
 	kps, err := unix.SysctlKinfoProcSlice("kern.proc.all")
@@ -84,11 +86,11 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 			argvErr = syscall.EINVAL
 		}
 		for _, f := range []struct {
-			name string
-			err  error
-		}{{"argv", argvErr}, {"cwd", cwdErr}, {"cpu", taskErr}, {"mem", taskErr}} {
+			bit model.FieldSet
+			err error
+		}{{model.FieldArgv, argvErr}, {model.FieldCwd, cwdErr}, {model.FieldCPU, taskErr}, {model.FieldMem, taskErr}} {
 			if f.err != nil {
-				p.Unknown = append(p.Unknown, f.name)
+				p.Unknown |= f.bit
 			}
 		}
 		if errors.Is(argvErr, syscall.EPERM) || errors.Is(cwdErr, syscall.EPERM) || errors.Is(taskErr, syscall.EPERM) {
@@ -98,7 +100,8 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	}
 	res.Processes = kept
 	if denied > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("%d processes of other users: argv, cwd or cpu/mem not readable without root", denied))
+		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: denied,
+			Hint: "processes of other users: argv, cwd or cpu/mem not readable without root"})
 	}
 	res.Timings["argv_cwd"] = time.Since(t)
 	if err := ctx.Err(); err != nil {
@@ -111,7 +114,7 @@ func (darwinCollector) Collect(ctx context.Context) (Result, error) {
 	pcb, warn := pcbListeners()
 	res.Timings["pcblist"] = time.Since(tp)
 	if warn != "" {
-		res.Warnings = append(res.Warnings, warn)
+		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: warn})
 	}
 	res.Listeners = mergeListeners(res.Listeners, pcb)
 	res.Timings["listeners"] = time.Since(t)

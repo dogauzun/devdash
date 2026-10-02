@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 // New returns the Linux collector, reading from /proc.
@@ -42,7 +44,7 @@ type linuxCollector struct {
 const clockTick = 10 * time.Millisecond // USER_HZ = 100 on every Linux ABI
 
 func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
-	res := Result{Timings: map[string]time.Duration{}}
+	res := Result{TakenAt: time.Now(), Host: host(), Timings: model.Timing{}}
 
 	procs, err := c.processes(ctx, res.Timings)
 	if err != nil {
@@ -62,19 +64,19 @@ func (c *linuxCollector) Collect(ctx context.Context) (Result, error) {
 
 	if mounts, err := os.ReadFile(c.root + "/mounts"); err == nil {
 		if opt := hidepidOption(mounts, c.root); opt != "" {
-			res.Warnings = append(res.Warnings, fmt.Sprintf(
-				"%s is mounted with %s: other users' processes are hidden and their listeners have no owner", c.root, opt))
+			res.Warnings = append(res.Warnings, model.Warning{Code: "proc_hidepid", Count: 1, Hint: fmt.Sprintf(
+				"%s is mounted with %s: other users' processes are hidden and their listeners have no owner", c.root, opt)})
 		}
 	}
 	unknown := 0
 	for _, p := range procs {
-		if len(p.Unknown) > 0 {
+		if p.Unknown != 0 {
 			unknown++
 		}
 	}
 	if unknown > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"%d processes of other users have unreadable fields; run with sudo to see them", unknown))
+		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown,
+			Hint: "processes of other users have unreadable fields; run with sudo to see them"})
 	}
 	return res, nil
 }
@@ -155,7 +157,7 @@ func readProcTable(dir string, pid int, btime int64, pageSize uint64) (p Process
 	b, err = os.ReadFile(dir + "/statm")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
-		p.Unknown = append(p.Unknown, "mem")
+		p.Unknown |= model.FieldMem
 	case err != nil:
 		return p, false
 	default:
@@ -177,7 +179,7 @@ func readArgvCwd(dir string, p *Process) (ok bool) {
 	b, err := os.ReadFile(dir + "/cmdline")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
-		p.Unknown = append(p.Unknown, "argv")
+		p.Unknown |= model.FieldArgv
 	case err != nil:
 		return false
 	default:
@@ -186,7 +188,7 @@ func readArgvCwd(dir string, p *Process) (ok bool) {
 	p.Cwd, err = os.Readlink(dir + "/cwd")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
-		p.Unknown = append(p.Unknown, "cwd")
+		p.Unknown |= model.FieldCwd
 	case err != nil:
 		return false
 	}
