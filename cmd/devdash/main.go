@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dogauzun/devdash/internal/collector"
+	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -56,17 +57,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runJSON(stdout, stderr io.Writer) int {
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-
+	home, _ := os.UserHomeDir()
 	start := time.Now()
-	res, err := collector.New().Collect(ctx)
+	snap, err := engine.Snapshot(context.Background(), engine.Options{
+		Collector: collector.New(),
+		Resolver:  model.NewResolver(home, nil),
+	})
 	if err != nil {
 		fmt.Fprintln(stderr, "devdash:", err)
 		return 1
 	}
-	home, _ := os.UserHomeDir()
-	snap := model.Build(res, model.Snapshot{}, nil, model.NewResolver(home, nil))
 	total := time.Since(start)
 
 	// ponytail: interim output with encoding/json defaults until DEV-22 defines schema v1.

@@ -25,7 +25,9 @@ Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linu
   `Listener` alias `model.Raw`, `model.Process`, `model.RawListener`); `fake.go` is the scripted test `Fake`;
   one implementation per OS in `collector_darwin.go` / `collector_linux.go` and sibling files with the same build tag.
 - Everything lives under `internal/`; no public Go API is promised.
-- Later packages per the spec (`engine`, `docker`, `tui`) are added when their phase starts, not before.
+- `internal/engine` — the refresh loop (`Run`, `Updates`, `Refresh`), the one-shot `Snapshot` for the CLI, and
+  uid-to-user naming; tested with `testing/synctest` against `collector.Fake`.
+- Later packages per the spec (`docker`, `tui`) are added when their phase starts, not before.
 
 ## Conventions
 
