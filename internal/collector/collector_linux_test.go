@@ -53,7 +53,7 @@ func TestCollectFindsSelf(t *testing.T) {
 	if self.PPID != os.Getppid() || self.UID != os.Getuid() || self.Cwd != wd || !slices.Equal(self.Argv, os.Args) {
 		t.Errorf("self = %+v; want ppid %d uid %d cwd %q argv %q", self, os.Getppid(), os.Getuid(), wd, os.Args)
 	}
-	if self.RSSBytes == 0 || self.Unknown != nil {
+	if self.RSSBytes == 0 || self.Unknown != 0 {
 		t.Errorf("self RSS %d, unknown %v", self.RSSBytes, self.Unknown)
 	}
 	if d := time.Since(self.StartTime); d < 0 || d > time.Hour {

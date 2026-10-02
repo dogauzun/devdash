@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 // TestCollectFixture runs the collector on a hand-built proc root.
@@ -101,7 +103,7 @@ func TestCollectFixture(t *testing.T) {
 	}
 	secret := p(12, me, "secret")
 	if !asRoot {
-		secret.Argv, secret.RSSBytes, secret.Unknown = nil, 0, []string{"mem", "argv"}
+		secret.Argv, secret.RSSBytes, secret.Unknown = nil, 0, model.FieldMem|model.FieldArgv
 	}
 	wantProcs := []Process{p(10, me, "node", "server.js"), p(11, me, "vite"), secret, p(13, other, "postgres"), p(16, me)}
 	slices.SortFunc(res.Processes, func(a, b Process) int { return a.PID - b.PID })
@@ -126,7 +128,7 @@ func TestCollectFixture(t *testing.T) {
 		t.Errorf("listeners:\n got %+v\nwant %+v", res.Listeners, wantListeners)
 	}
 
-	if len(res.Warnings) == 0 || !strings.Contains(res.Warnings[0], "hidepid=invisible") {
-		t.Errorf("warnings %q: want the hidepid option named first", res.Warnings)
+	if len(res.Warnings) == 0 || res.Warnings[0].Code != "proc_hidepid" || !strings.Contains(res.Warnings[0].Hint, "hidepid=invisible") {
+		t.Errorf("warnings %+v: want the hidepid option named first", res.Warnings)
 	}
 }

@@ -18,10 +18,14 @@ Check the other OS too: `GOOS=linux CGO_ENABLED=0 go build ./...` and `GOOS=linu
 ## Layout
 
 - `cmd/devdash` — flags, subcommand dispatch, exit codes (stdlib `flag`).
-- `internal/collector` — `Collector` interface and types in `collector.go` (no build tag, nothing OS-specific);
+- `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`)
+  and the raw input types in `build.go`; one file per seam: `project.go` (`Resolver`), `kind.go` (`Classify`),
+  `rows.go` (`Row`, `Flatten`), `reconcile.go` (`Reconcile`).
+- `internal/collector` — `Collector` interface in `collector.go` (no build tag, nothing OS-specific; `Result`, `Process`,
+  `Listener` alias `model.Raw`, `model.Process`, `model.RawListener`); `fake.go` is the scripted test `Fake`;
   one implementation per OS in `collector_darwin.go` / `collector_linux.go` and sibling files with the same build tag.
 - Everything lives under `internal/`; no public Go API is promised.
-- Later packages per the spec (`engine`, `model`, `docker`, `tui`) are added when their phase starts, not before.
+- Later packages per the spec (`engine`, `docker`, `tui`) are added when their phase starts, not before.
 
 ## Conventions
 

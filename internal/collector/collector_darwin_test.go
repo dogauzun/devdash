@@ -4,7 +4,6 @@ package collector
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -16,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 func TestCollectFindsSelf(t *testing.T) {
@@ -39,7 +40,7 @@ func TestCollectFindsSelf(t *testing.T) {
 	if p.PPID != os.Getppid() || p.UID != os.Geteuid() || p.Cwd != wd || !slices.Equal(p.Argv, os.Args) {
 		t.Errorf("self = %+v, want ppid %d uid %d cwd %q argv %q", p, os.Getppid(), os.Geteuid(), wd, os.Args)
 	}
-	if p.RSSBytes < 1<<20 || p.CPUTime <= 0 || len(p.Unknown) > 0 || time.Since(p.StartTime) > time.Hour || time.Since(p.StartTime) < 0 {
+	if p.RSSBytes < 1<<20 || p.CPUTime <= 0 || p.Unknown != 0 || time.Since(p.StartTime) > time.Hour || time.Since(p.StartTime) < 0 {
 		t.Errorf("self rss %d cpu %v unknown %v start %v", p.RSSBytes, p.CPUTime, p.Unknown, p.StartTime)
 	}
 	want := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: port, PID: os.Getpid()}
@@ -70,9 +71,9 @@ func TestListenerFamilies(t *testing.T) {
 
 	pid := os.Getpid()
 	want := []Listener{
-		{"tcp6", netip.MustParseAddr("::1"), uint16(v6.Addr().(*net.TCPAddr).Port), pid},
-		{"tcp6", netip.IPv6Unspecified(), uint16(dual.Addr().(*net.TCPAddr).Port), pid},
-		{"tcp4", netip.MustParseAddr("127.0.0.1"), mappedPort, pid}, // lsof shows 127.0.0.1 too
+		{Proto: "tcp6", Addr: netip.MustParseAddr("::1"), Port: uint16(v6.Addr().(*net.TCPAddr).Port), PID: pid},
+		{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: uint16(dual.Addr().(*net.TCPAddr).Port), PID: pid},
+		{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: mappedPort, PID: pid}, // lsof shows 127.0.0.1 too
 	}
 	res, err := New().Collect(context.Background())
 	if err != nil {
@@ -124,9 +125,9 @@ func listenV4Mapped(t *testing.T) uint16 {
 }
 
 func TestMergeListenersOneRowPerSocket(t *testing.T) {
-	a := Listener{"tcp4", netip.MustParseAddr("127.0.0.1"), 8080, 10}
-	other := Listener{"tcp4", netip.MustParseAddr("0.0.0.0"), 22, 0}
-	got := mergeListeners([]Listener{a, a}, []Listener{{"tcp4", a.Addr, 8080, 11}, other})
+	a := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: 8080, PID: 10}
+	other := Listener{Proto: "tcp4", Addr: netip.MustParseAddr("0.0.0.0"), Port: 22}
+	got := mergeListeners([]Listener{a, a}, []Listener{{Proto: "tcp4", Addr: a.Addr, Port: 8080, PID: 11}, other})
 	if !slices.Equal(got, []Listener{a, other}) {
 		t.Errorf("got %+v", got)
 	}
@@ -181,7 +182,7 @@ func TestCollectOtherUsers(t *testing.T) {
 	if i < 0 {
 		t.Fatal("launchd (pid 1) missing")
 	}
-	if p := res.Processes[i]; p.UID != 0 || p.Name != "launchd" || !slices.Equal(p.Unknown, []string{"argv", "cwd", "cpu", "mem"}) {
+	if p := res.Processes[i]; p.UID != 0 || p.Name != "launchd" || p.Unknown != model.FieldArgv|model.FieldCwd|model.FieldCPU|model.FieldMem {
 		t.Errorf("pid 1 = %+v", p)
 	}
 	others := 0
@@ -190,9 +191,10 @@ func TestCollectOtherUsers(t *testing.T) {
 			others++
 		}
 	}
-	want := fmt.Sprintf("%d processes of other users: argv, cwd or cpu/mem not readable without root", others)
-	if n := len(slices.DeleteFunc(slices.Clone(res.Warnings), func(w string) bool { return w != want })); n != 1 {
-		t.Errorf("warnings %q, want one %q", res.Warnings, want)
+	if n := len(slices.DeleteFunc(slices.Clone(res.Warnings), func(w model.Warning) bool {
+		return w.Code != "process_fields_unreadable" || w.Count != others
+	})); n != 1 {
+		t.Errorf("warnings %+v, want one process_fields_unreadable with count %d", res.Warnings, others)
 	}
 }
 
@@ -205,7 +207,7 @@ func TestDecodePCBList(t *testing.T) {
 	}
 	ls, pcbs := decodePCBList(b)
 	l := func(proto, addr string, port uint16, pid int) Listener {
-		return Listener{proto, netip.MustParseAddr(addr), port, pid}
+		return Listener{Proto: proto, Addr: netip.MustParseAddr(addr), Port: port, PID: pid}
 	}
 	want := []Listener{
 		l("tcp6", "::", 8080, 56883), // dual-stack (netstat tcp46): one tcp6 row
