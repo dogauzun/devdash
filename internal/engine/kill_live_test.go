@@ -279,6 +279,28 @@ func TestKillLiveSupervisorParentFirst(t *testing.T) {
 }
 
 func TestKillLiveRefusesDevdash(t *testing.T) {
+	// Kill itself refuses every ancestor read fresh from the OS; liveOS(t, 0) could not
+	// signal anything even if it did not.
+	chain := realOS.chain()
+	want := []int{os.Getpid()}
+	if os.Getppid() > 1 {
+		want = append(want, os.Getppid())
+	}
+	if len(chain) < len(want) || !slices.Equal(chain[:len(want)], want) {
+		t.Fatalf("chain %v, want it to start with %v", chain, want)
+	}
+	t.Logf("devdash's ancestors from the OS: %v", chain[1:])
+	for _, pid := range chain[1:] {
+		start, err := procStart(pid)
+		if err != nil {
+			continue
+		}
+		p := Plan{Procs: []model.Process{{PID: pid, StartTime: start}}, Signal: syscall.SIGTERM}
+		if _, err := kill(p, time.Millisecond, liveOS(t, 0)); err == nil {
+			t.Errorf("Kill accepted ancestor %d", pid)
+		}
+	}
+
 	s := liveSnapshot(t)
 	for _, pid := range []int{os.Getpid(), os.Getppid()} {
 		p, ok := find(s, pid)

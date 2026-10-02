@@ -47,13 +47,14 @@ type fakeOS struct {
 	starts  map[int]time.Time
 	errs    map[int]error // start-time read errors
 	pgids   map[int]int
+	ppids   map[int]int // parents for the fresh ancestor chain; a missing pid reads as gone
 	killErr map[int]error
 	dies    map[int]bool // removed from starts when signalled
 	sent    []sent
 }
 
 func newFake(ps ...model.Process) *fakeOS {
-	f := &fakeOS{starts: map[int]time.Time{}, errs: map[int]error{}, pgids: map[int]int{}, killErr: map[int]error{}, dies: map[int]bool{}}
+	f := &fakeOS{starts: map[int]time.Time{}, errs: map[int]error{}, pgids: map[int]int{}, ppids: map[int]int{}, killErr: map[int]error{}, dies: map[int]bool{}}
 	for _, p := range ps {
 		f.starts[p.PID] = p.StartTime
 		f.dies[p.PID] = true
@@ -72,6 +73,12 @@ func (f *fakeOS) sys() osys {
 				return time.Time{}, errGone
 			}
 			return t, nil
+		},
+		ppid: func(pid int) (int, error) {
+			if pp, ok := f.ppids[pid]; ok {
+				return pp, nil
+			}
+			return 0, errGone
 		},
 		getpgid: func(pid int) (int, error) {
 			if g, ok := f.pgids[pid]; ok {
@@ -123,6 +130,7 @@ func TestNewPlan(t *testing.T) {
 		key       model.RowKey
 		opt       KillOptions
 		pgids     map[int]int
+		ppids     map[int]int // the OS's view of devdash's ancestry
 		want      []int
 		group     int
 		sig       syscall.Signal
@@ -147,6 +155,10 @@ func TestNewPlan(t *testing.T) {
 		{name: "devdash itself", procs: devdash, key: devdash[0].Key(), refusedAs: "is devdash itself"},
 		{name: "parent of devdash", procs: devdash, key: devdash[1].Key(), refusedAs: "runs devdash"},
 		{name: "grandparent of devdash", procs: devdash, key: devdash[2].Key(), refusedAs: "runs devdash"},
+		{name: "ancestor missing from the snapshot", procs: []model.Process{proc(GP, 1)}, key: proc(GP, 1).Key(),
+			ppids: map[int]int{DDPP: GP, GP: 1}, refusedAs: "runs devdash"},
+		{name: "group containing an ancestor missing from the snapshot", procs: family(), key: proc(T, 7).Key(), opt: KillOptions{Tree: true},
+			pgids: map[int]int{T: T, GP: T}, ppids: map[int]int{DDPP: GP, GP: 1}, refusedAs: "process group"},
 		{name: "tree containing devdash", procs: append(slices.Clone(devdash), proc(T, 1), proc(C1, T)),
 			key: devdash[2].Key(), opt: KillOptions{Tree: true}, refusedAs: "runs devdash"},
 		{name: "group containing devdash", procs: family(), key: proc(T, 7).Key(), opt: KillOptions{Tree: true},
@@ -167,6 +179,9 @@ func TestNewPlan(t *testing.T) {
 			f := newFake(tt.procs...)
 			for k, v := range tt.pgids {
 				f.pgids[k] = v
+			}
+			if tt.ppids != nil {
+				f.ppids = tt.ppids
 			}
 			s := snap(tt.procs...)
 			s.Containers = []model.Container{{ID: "c0ffee", Name: "shop-db-1"}}
@@ -242,13 +257,31 @@ func TestKill(t *testing.T) {
 			pgids:    map[int]int{T: T, C1: T, C2: T, X: T},
 			setup:    func(f *fakeOS) { f.pgids[C2] = 99 },
 			wantSent: []sent{{-T, term}, {C2, term}, {G1, term}}},
-		{name: "group member reused: not counted as signalled", opt: KillOptions{Tree: true},
+		{name: "group member reused: no group signal", opt: KillOptions{Tree: true},
 			pgids:    map[int]int{T: T, C1: T, X: T},
 			setup:    func(f *fakeOS) { f.starts[X] = f.starts[X].Add(time.Second) },
+			wantSent: []sent{{T, term}, {C1, term}, {C2, term}, {G1, term}}, code: 4,
+			check: func(t *testing.T, r Result) {
+				if o := r.Outcomes[4]; r.Group != 0 || o.Signalled || !errors.Is(o.Err, ErrStartTime) {
+					t.Errorf("group %d; X: signalled %v, err %v", r.Group, o.Signalled, o.Err)
+				}
+			}},
+		{name: "group member unreadable: no group signal", opt: KillOptions{Tree: true},
+			pgids:    map[int]int{T: T, C1: T, X: T},
+			setup:    func(f *fakeOS) { f.errs[X] = syscall.EACCES },
+			wantSent: []sent{{T, term}, {C1, term}, {C2, term}, {G1, term}}, code: 4,
+			check: func(t *testing.T, r Result) {
+				if o := r.Outcomes[4]; r.Group != 0 || o.Signalled || o.Err == nil {
+					t.Errorf("group %d; X: signalled %v, err %v", r.Group, o.Signalled, o.Err)
+				}
+			}},
+		{name: "unreadable member left the group: group signal", opt: KillOptions{Tree: true},
+			pgids:    map[int]int{T: T, C1: T, X: T},
+			setup:    func(f *fakeOS) { f.errs[X] = syscall.EACCES; f.pgids[X] = 99 },
 			wantSent: []sent{{-T, term}, {C2, term}, {G1, term}}, code: 4,
 			check: func(t *testing.T, r Result) {
-				if o := r.Outcomes[4]; o.Signalled || !errors.Is(o.Err, ErrStartTime) {
-					t.Errorf("X: signalled %v, err %v", o.Signalled, o.Err)
+				if o := r.Outcomes[4]; r.Group != T || o.Signalled || o.Err == nil {
+					t.Errorf("group %d; X: signalled %v, err %v", r.Group, o.Signalled, o.Err)
 				}
 			}},
 		{name: "group EPERM", opt: KillOptions{Tree: true},
@@ -354,23 +387,30 @@ func TestKillRejectsBadPlans(t *testing.T) {
 	self, parent := DD, DDPP
 	term := syscall.SIGTERM
 	tests := []struct {
-		name string
-		plan Plan
+		name  string
+		plan  Plan
+		pgids map[int]int
 	}{
-		{"empty", Plan{Signal: term}},
-		{"pid 0", Plan{Procs: []model.Process{proc(0, 0)}, Signal: term}},
-		{"pid 1", Plan{Procs: []model.Process{proc(1, 0)}, Signal: term}},
-		{"negative pid", Plan{Procs: []model.Process{proc(-T, 0)}, Signal: term}},
-		{"devdash", Plan{Procs: []model.Process{proc(T, 7), proc(self, T)}, Signal: term}},
-		{"devdash's parent", Plan{Procs: []model.Process{proc(parent, 7)}, Signal: term}},
-		{"group is not the target", Plan{Procs: []model.Process{proc(T, 7), proc(C1, T)}, Group: C1, Signal: term}},
-		{"group contains devdash", Plan{Procs: []model.Process{proc(T, 7)}, Group: T, Signal: term}},
-		{"other signal", Plan{Procs: []model.Process{proc(T, 7)}, Signal: syscall.SIGHUP}},
+		{"empty", Plan{Signal: term}, nil},
+		{"pid 0", Plan{Procs: []model.Process{proc(0, 0)}, Signal: term}, nil},
+		{"pid 1", Plan{Procs: []model.Process{proc(1, 0)}, Signal: term}, nil},
+		{"negative pid", Plan{Procs: []model.Process{proc(-T, 0)}, Signal: term}, nil},
+		{"devdash", Plan{Procs: []model.Process{proc(T, 7), proc(self, T)}, Signal: term}, nil},
+		{"devdash's parent", Plan{Procs: []model.Process{proc(parent, 7)}, Signal: term}, nil},
+		{"group is not the target", Plan{Procs: []model.Process{proc(T, 7), proc(C1, T)}, Group: C1, Signal: term}, nil},
+		{"group contains devdash", Plan{Procs: []model.Process{proc(T, 7)}, Group: T, Signal: term}, map[int]int{self: T}},
+		{"grandparent missing from the snapshot", Plan{Procs: []model.Process{proc(T, 7), proc(GP, T)}, Signal: term}, nil},
+		{"group contains a grandparent", Plan{Procs: []model.Process{proc(T, 7)}, Group: T, Signal: term}, map[int]int{GP: T}},
+		{"other signal", Plan{Procs: []model.Process{proc(T, 7)}, Signal: syscall.SIGHUP}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFake(tt.plan.Procs...)
-			f.pgids = map[int]int{T: T, self: T}
+			f.pgids = map[int]int{T: T}
+			for k, v := range tt.pgids {
+				f.pgids[k] = v
+			}
+			f.ppids = map[int]int{DDPP: GP, GP: 1} // the OS's view; the plan was never checked against a snapshot
 			if _, err := kill(tt.plan, time.Millisecond, f.sys()); err == nil || len(f.sent) != 0 {
 				t.Errorf("err %v, sent %v", err, f.sent)
 			}

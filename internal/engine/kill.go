@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"syscall"
 	"time"
 
@@ -100,6 +101,7 @@ type osys struct {
 	// start returns a pid's start time read from the OS now, in the collector's terms, or
 	// errGone when the pid does not exist or is a zombie.
 	start   func(pid int) (time.Time, error)
+	ppid    func(pid int) (int, error) // read from the OS now, from the same source as start
 	getpgid func(pid int) (int, error)
 	kill    func(pid int, sig syscall.Signal) error
 	sleep   func(time.Duration)
@@ -108,7 +110,17 @@ type osys struct {
 
 var errGone = errors.New("no such process")
 
-var realOS = osys{start: procStart, getpgid: syscall.Getpgid, kill: syscall.Kill, sleep: time.Sleep,
+func procStart(pid int) (time.Time, error) {
+	t, _, err := procStat(pid)
+	return t, err
+}
+
+func procPPID(pid int) (int, error) {
+	_, ppid, err := procStat(pid)
+	return ppid, err
+}
+
+var realOS = osys{start: procStart, ppid: procPPID, getpgid: syscall.Getpgid, kill: syscall.Kill, sleep: time.Sleep,
 	self: func() (int, int) { return os.Getpid(), os.Getppid() }}
 
 // NewPlan returns what killing the process with row key key would signal, computed from s, or
@@ -154,11 +166,17 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 		return Plan{}, refuse("pid %d is gone, or its pid was reused", key.PID)
 	}
 
-	// devdash and its ancestors: the direct parent comes from the OS, the rest of the chain
-	// from the snapshot's ppid map.
+	// devdash and its ancestors, read fresh from the OS and also from the snapshot's ppid map,
+	// so a chain cut short in either one is still covered.
+	refused := map[int]string{}
+	for _, pid := range sy.chain() {
+		refused[pid] = "runs devdash"
+	}
 	self, parent := sy.self()
-	refused := map[int]string{self: "is devdash itself"}
-	for pid := parent; pid > 1 && refused[pid] == ""; {
+	refused[self] = "is devdash itself"
+	seen := map[int]bool{}
+	for pid := parent; pid > 1 && !seen[pid]; {
+		seen[pid] = true
 		refused[pid] = "runs devdash"
 		p := byPID[pid]
 		if p == nil {
@@ -289,23 +307,36 @@ func kill(p Plan, timeout time.Duration, sy osys) (Result, error) {
 	// A target that still leads its group gets one signal to -pgid, which reaches the whole
 	// group at the same moment, so no member can respawn another first. Members are found
 	// (and validated) just before, so they are reported as signalled even if they die at once.
+	// A planned member still in the group that fails validation (reused, or unreadable) would
+	// be reached by -pgid too, so then there is no group signal: the leader goes first alone
+	// and the validated rest one by one below.
 	done := make([]bool, len(p.Procs))
 	if p.Group != 0 {
 		done[0] = true
 		if leader := &r.Outcomes[0]; alive(leader) {
-			if g, err := sy.getpgid(p.Group); err == nil && g == p.Group {
-				members := []*Outcome{leader}
-				for i := 1; i < len(r.Outcomes); i++ {
-					if g, err := sy.getpgid(p.Procs[i].PID); err == nil && g == p.Group {
-						done[i] = true
-						if alive(&r.Outcomes[i]) {
-							members = append(members, &r.Outcomes[i])
-						}
+			g, err := sy.getpgid(p.Group)
+			group := err == nil && g == p.Group
+			members := []*Outcome{leader}
+			var idx []int
+			for i := 1; group && i < len(r.Outcomes); i++ {
+				if g, err := sy.getpgid(p.Procs[i].PID); err == nil && g == p.Group {
+					switch o := &r.Outcomes[i]; {
+					case alive(o):
+						members, idx = append(members, o), append(idx, i)
+					case o.Err != nil:
+						group, done[i] = false, true
+					default:
+						done[i] = true // gone (or a zombie) already
 					}
+				}
+			}
+			if group {
+				for _, i := range idx {
+					done[i] = true
 				}
 				send(-p.Group, members...)
 			} else {
-				send(leader.Process.PID, leader) // it left its group: signal it alone
+				send(leader.Process.PID, leader)
 			}
 		}
 	}
@@ -345,9 +376,9 @@ func (p Plan) check(sy osys) error {
 	if p.Signal != syscall.SIGTERM && p.Signal != syscall.SIGKILL {
 		return fmt.Errorf("kill: signal %v not allowed", p.Signal)
 	}
-	self, parent := sy.self()
+	chain := sy.chain()
 	for _, proc := range p.Procs {
-		if proc.PID <= 1 || proc.PID == self || proc.PID == parent {
+		if proc.PID <= 1 || slices.Contains(chain, proc.PID) {
 			return fmt.Errorf("kill: pid %d not allowed", proc.PID)
 		}
 	}
@@ -355,11 +386,28 @@ func (p Plan) check(sy osys) error {
 		if p.Group != p.Procs[0].PID {
 			return fmt.Errorf("kill: group %d is not the target's pid %d", p.Group, p.Procs[0].PID)
 		}
-		for _, pid := range []int{self, parent} {
+		for _, pid := range chain {
 			if g, err := sy.getpgid(pid); err != nil || g == p.Group {
-				return fmt.Errorf("kill: group %d contains devdash or its parent", p.Group)
+				return fmt.Errorf("kill: group %d contains pid %d, devdash or one of its ancestors", p.Group, pid)
 			}
 		}
 	}
 	return nil
+}
+
+// chain is devdash's pid and its ancestors, read from the OS now: the parent, then each
+// one's parent, up to pid 1 or the first read error. Unlike the snapshot it cannot miss an
+// ancestor that was hidden or not yet collected.
+func (sy osys) chain() []int {
+	self, pid := sy.self()
+	c := []int{self}
+	for pid > 1 && !slices.Contains(c, pid) {
+		c = append(c, pid)
+		next, err := sy.ppid(pid)
+		if err != nil {
+			break
+		}
+		pid = next
+	}
+	return c
 }

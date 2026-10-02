@@ -36,30 +36,29 @@ func readBootTime() (int64, error) {
 	return 0, errors.New("no btime in /proc/stat")
 }
 
-// procStart reads pid's start time from /proc/[pid]/stat (field 22), converted as the
-// collector does. A missing pid, or state Z or X (an unreaped zombie), counts as gone.
-func procStart(pid int) (time.Time, error) {
+// procStat reads pid's start time (field 22, converted as the collector does) and parent
+// (field 4) from /proc/[pid]/stat. A missing pid, or state Z or X (an unreaped zombie),
+// counts as gone.
+func procStat(pid int) (time.Time, int, error) {
 	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-		return time.Time{}, errGone
+		return time.Time{}, 0, errGone
 	}
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, 0, err
 	}
 	// Fields after comm, which may contain spaces and ')'; field n is f[n-3].
 	f := strings.Fields(string(b[bytes.LastIndexByte(b, ')')+1:]))
 	if len(f) < 20 {
-		return time.Time{}, fmt.Errorf("malformed /proc/%d/stat", pid)
+		return time.Time{}, 0, fmt.Errorf("malformed /proc/%d/stat", pid)
 	}
 	if f[0] == "Z" || f[0] == "X" {
-		return time.Time{}, errGone
+		return time.Time{}, 0, errGone
 	}
-	ticks, err := strconv.ParseUint(f[19], 10, 64)
-	if err != nil {
-		return time.Time{}, err
+	ppid, err1 := strconv.Atoi(f[1])
+	ticks, err2 := strconv.ParseUint(f[19], 10, 64)
+	if err := errors.Join(err1, err2, bootErr); err != nil {
+		return time.Time{}, 0, err
 	}
-	if bootErr != nil {
-		return time.Time{}, bootErr
-	}
-	return time.Unix(bootTime, 0).Add(time.Duration(ticks) * clockTick), nil
+	return time.Unix(bootTime, 0).Add(time.Duration(ticks) * clockTick), ppid, nil
 }
