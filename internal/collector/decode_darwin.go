@@ -5,7 +5,9 @@ package collector
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
 	"net/netip"
+	"strconv"
 )
 
 // One decoder per kernel struct, each taking the raw bytes the kernel returned, so they can be
@@ -74,14 +76,25 @@ func decodeSocketFDInfo(b []byte) (sock, bool) {
 // ::ffff:127.0.0.1 tcp6; the kernel clears INP_IPV6 on a v4-mapped bind, so it is tcp4 here.)
 // A dual-stack socket bound to :: has both flags (netstat's tcp46) and is reported once, as tcp6.
 // laddr is an in6_addr, or an in_addr_4in6 with the IPv4 address after 12 bytes of padding.
+// A scoped IPv6 address has its interface index embedded (fe80:1::1), which becomes the zone
+// (fe80::1%lo0).
 func inpAddr(vflag byte, laddr []byte) (string, netip.Addr) {
 	switch {
 	case vflag&0x2 != 0: // INP_IPV6
-		return "tcp6", netip.AddrFrom16([16]byte(laddr))
+		return "tcp6", unembedScope(netip.AddrFrom16([16]byte(laddr)), ifaceZone)
 	case vflag&0x1 != 0: // INP_IPV4
 		return "tcp4", netip.AddrFrom4([4]byte(laddr[12:]))
 	}
 	return "", netip.Addr{}
+}
+
+// ifaceZone names an interface index for an IPv6 zone: its name, or the decimal index when the
+// interface is gone or cannot be read.
+func ifaceZone(index uint32) string {
+	if ifi, err := net.InterfaceByIndex(int(index)); err == nil {
+		return ifi.Name
+	}
+	return strconv.FormatUint(uint64(index), 10)
 }
 
 // decodeProcArgs2 decodes kern.procargs2: int32 argc, the exec path NUL-padded to a multiple
