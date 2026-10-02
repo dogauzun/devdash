@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -45,7 +44,7 @@ func TestParse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			t.Setenv("NO_COLOR", "")
-			got, err := parse(tt.args, io.Discard)
+			got, err := parse(tt.args)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,10 +92,54 @@ func TestRootsErrors(t *testing.T) {
 	}
 }
 
+// TestUsageErrorMessages: every usage error, the flag package's own included, is one
+// "devdash: ..." line naming the flag with two dashes, then the usage once, exit 2 (DEV-95).
+func TestUsageErrorMessages(t *testing.T) {
+	home := testHome(t)
+	missing := filepath.Join(home, "missing")
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--roots", missing, "--json"}, "--roots " + missing + ": not an existing directory"},
+		{[]string{"--roots=" + missing}, "--roots " + missing + ": not an existing directory"},
+		{[]string{"--roots", "file"}, "--roots file: not an existing directory"},
+		{[]string{"--roots", "code,~/nothing"}, "--roots ~/nothing: not an existing directory"},
+		{[]string{"-roots", "~nobody/code"}, "--roots ~nobody/code: ~user is not supported, use the full path"},
+		{[]string{"--roots"}, "--roots needs a value"},
+		{[]string{"kill", "47002", "--timeout", "abc"}, "--timeout abc: not a duration"},
+		{[]string{"kill", "47002", "--timeout"}, "--timeout needs a value"},
+		{[]string{"kill", "47002", "--timeout", ""}, `--timeout "": not a duration`},
+		{[]string{"--tick", "soon"}, "--tick soon: not a duration"},
+		{[]string{"-tick=1 s", "port", "3000"}, `--tick "1 s": not a duration`},
+		{[]string{"--tick"}, "--tick needs a value"},
+		{[]string{"--tick", "100ms"}, "--tick 100ms is below the minimum of 500ms"},
+		{[]string{"--json=maybe"}, "--json=maybe: not true or false"},
+		{[]string{"kill", "47002", "--yes=2"}, "--yes=2: not true or false"},
+		{[]string{"--all=false", "--no-docker=x"}, "--no-docker=x: not true or false"},
+		{[]string{"--bogus"}, "unknown flag --bogus"},
+		{[]string{"-bogus=1", "--json"}, "unknown flag --bogus"},
+		{[]string{"port", "-1"}, "unknown flag --1"},
+		{[]string{"---x"}, "bad flag syntax: ---x"},
+		{[]string{"port", "abc"}, `"abc" is not a port number (1-65535)`},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run(tt.args, &stdout, &stderr, fake()); code != 2 || stdout.Len() != 0 {
+				t.Errorf("exit %d, stdout %q; want 2 and nothing", code, stdout.String())
+			}
+			if want := "devdash: " + tt.want + "\n" + usage; stderr.String() != want {
+				t.Errorf("stderr:\n%s\nwant:\n%s", stderr.String(), want)
+			}
+		})
+	}
+}
+
 func TestNoColorEnv(t *testing.T) {
 	for env, want := range map[string]bool{"": false, "1": true, "0": true} {
 		t.Setenv("NO_COLOR", env)
-		if o, err := parse(nil, io.Discard); err != nil || o.NoColor != want {
+		if o, err := parse(nil); err != nil || o.NoColor != want {
 			t.Errorf("NO_COLOR=%q: NoColor %v, err %v; want %v", env, o.NoColor, err, want)
 		}
 	}

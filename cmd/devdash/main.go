@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -88,9 +89,6 @@ type options struct {
 	Args     []string      // the subcommand's arguments, flags removed
 }
 
-// errUsage marks a usage error whose message was already printed.
-var errUsage = errors.New("usage error")
-
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, collector.New()))
 }
@@ -98,15 +96,13 @@ func main() {
 // run executes one command line and returns the exit code. c is only used by commands that
 // take a snapshot.
 func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
-	o, err := parse(args, stderr)
+	o, err := parse(args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
 		fmt.Fprint(stdout, usage)
 		return 0
 	case err != nil:
-		if !errors.Is(err, errUsage) {
-			fmt.Fprintln(stderr, "devdash:", err)
-		}
+		fmt.Fprintln(stderr, "devdash:", err)
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
@@ -182,14 +178,35 @@ func dockerLabel(ep docker.Endpoint) string {
 }
 
 // parse reads flags anywhere on the command line, then checks the subcommand and its
-// arguments. Flag errors are printed by the flag package and returned as errUsage; other
-// usage errors are returned for the caller to print.
-func parse(args []string, stderr io.Writer) (options, error) {
+// arguments. Every usage error is returned for the caller to print after "devdash: ", the flag
+// package's own included: it prints nothing, and its errors name the flag with two dashes, as
+// the usage does (checkedValue, flagError).
+func parse(args []string) (options, error) {
 	o := options{Tick: engine.DefaultTick, Timeout: engine.DefaultKillTimeout}
 	fs := flag.NewFlagSet("devdash", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard)
 	fs.Usage = func() {} // run prints the usage once, to the right stream
-	fs.BoolVar(&o.JSON, "json", false, "")
+	boolVar := func(p *bool, name string) {
+		fs.BoolFunc(name, "", func(s string) error {
+			b, err := strconv.ParseBool(s)
+			if err != nil {
+				return errors.New("not true or false")
+			}
+			*p = b
+			return nil
+		})
+	}
+	durationVar := func(p *time.Duration, name string) {
+		fs.Func(name, "", func(s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return errors.New("not a duration")
+			}
+			*p = d
+			return nil
+		})
+	}
+	boolVar(&o.JSON, "json")
 	fs.Func("roots", "", func(s string) error {
 		for _, r := range strings.Split(s, ",") {
 			if r == "" {
@@ -197,30 +214,29 @@ func parse(args []string, stderr io.Writer) (options, error) {
 			}
 			abs, err := rootDir(r)
 			if err != nil {
-				return err
+				return badEntry{r, err}
 			}
 			o.Roots = append(o.Roots, abs)
 		}
 		return nil
 	})
-	fs.DurationVar(&o.Tick, "tick", engine.DefaultTick, "")
-	fs.BoolVar(&o.All, "all", false, "")
-	fs.BoolVar(&o.NoDocker, "no-docker", false, "")
-	fs.BoolVar(&o.NoColor, "no-color", false, "")
-	fs.BoolVar(&o.Tree, "tree", false, "")
-	fs.BoolVar(&o.Force, "force", false, "")
-	fs.BoolVar(&o.Yes, "yes", false, "")
-	fs.DurationVar(&o.Timeout, "timeout", engine.DefaultKillTimeout, "")
+	durationVar(&o.Tick, "tick")
+	boolVar(&o.All, "all")
+	boolVar(&o.NoDocker, "no-docker")
+	boolVar(&o.NoColor, "no-color")
+	boolVar(&o.Tree, "tree")
+	boolVar(&o.Force, "force")
+	boolVar(&o.Yes, "yes")
+	durationVar(&o.Timeout, "timeout")
+	var bad error // the value a flag refused, as "--name value: reason"
+	fs.VisitAll(func(f *flag.Flag) { f.Value = checkedValue{f.Value, f.Name, &bad} })
 
 	// The flag package stops at the first non-flag argument; resume after each one so flags
 	// may follow the subcommand. No subcommand takes an argument starting with "-".
 	var pos []string
 	for {
 		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return o, err
-			}
-			return o, errUsage
+			return o, flagError(err, bad)
 		}
 		if fs.NArg() == 0 {
 			break
@@ -279,7 +295,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 
 // rootDir turns one --roots entry into an absolute directory. A leading "~" or "~/" is $HOME,
 // because a shell expands "~" only at the start of a word (not after a comma or "=").
-// "~user" is refused, and so is a path that is not an existing directory.
+// "~user" is refused, and so is a path that is not an existing directory. The error says why
+// without naming r; the caller names it.
 func rootDir(r string) (string, error) {
 	if r == "~" || strings.HasPrefix(r, "~/") {
 		home, err := os.UserHomeDir()
@@ -288,20 +305,83 @@ func rootDir(r string) (string, error) {
 		}
 		r = home + r[1:]
 	} else if strings.HasPrefix(r, "~") {
-		return "", fmt.Errorf("%s: ~user is not supported, use the full path", r)
+		return "", errors.New("~user is not supported, use the full path")
 	}
 	abs, err := filepath.Abs(r)
 	if err != nil {
 		return "", err
 	}
 	fi, err := os.Stat(abs)
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if pe, ok := errors.AsType[*fs.PathError](err); ok {
+			return "", pe.Err // "permission denied", without "stat" and the path
+		}
 		return "", err
 	}
-	if !fi.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", abs)
+	if err != nil || !fi.IsDir() {
+		return "", errors.New("not an existing directory")
 	}
 	return abs, nil
+}
+
+// badEntry is a --roots error naming the one comma-separated entry refused.
+type badEntry struct {
+	entry string
+	err   error
+}
+
+func (e badEntry) Error() string { return e.entry + ": " + e.err.Error() }
+
+// checkedValue wraps a flag's Value so that a value it refuses is recorded in *bad as
+// "--name value: reason" ("--name=value" for a boolean flag, which takes a value only after
+// "="; for --roots the refused entry, not the whole list), in place of the flag package's
+// `invalid value "x" for flag -name: reason`.
+type checkedValue struct {
+	flag.Value
+	name string
+	bad  *error
+}
+
+// IsBoolFlag keeps a boolean flag one that takes no separate argument.
+func (v checkedValue) IsBoolFlag() bool {
+	b, ok := v.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
+}
+
+func (v checkedValue) Set(s string) error {
+	err := v.Value.Set(s)
+	if err == nil {
+		return nil
+	}
+	sep := " "
+	if v.IsBoolFlag() {
+		sep = "="
+	}
+	if e, ok := errors.AsType[badEntry](err); ok {
+		s, err = e.entry, e.err
+	}
+	if s == "" || strings.ContainsAny(s, " \t\n") {
+		s = strconv.Quote(s)
+	}
+	*v.bad = fmt.Errorf("--%s%s%s: %w", v.name, sep, s, err)
+	return err
+}
+
+// flagError is the usage error for err from FlagSet.Parse: bad, the value a flag refused, when
+// set; an unknown flag or one missing its value, named with two dashes as the usage names
+// them; flag.ErrHelp and anything else ("bad flag syntax: ---x") as it is.
+func flagError(err, bad error) error {
+	if bad != nil {
+		return bad
+	}
+	msg := err.Error()
+	if name, ok := strings.CutPrefix(msg, "flag provided but not defined: -"); ok {
+		return fmt.Errorf("unknown flag --%s", name)
+	}
+	if name, ok := strings.CutPrefix(msg, "flag needs an argument: -"); ok {
+		return fmt.Errorf("--%s needs a value", name)
+	}
+	return err
 }
 
 // parsePort accepts a TCP port, 1 to 65535.
