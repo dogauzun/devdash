@@ -433,11 +433,12 @@ func TestFetchRefusedSocketIsUnreachable(t *testing.T) {
 
 // TestFetchRetryInterval pins the retry cadence (spec "Failure modes": "retry every 10th
 // tick"): after a failure or a missing socket, no request until 10 refresh ticks have
-// passed since the call that failed began, and one request at exactly that point, whatever
-// the tick.
+// passed since the call that failed began, less retrySlack for a beat that wakes early,
+// and one request from that point on, whatever the tick.
 func TestFetchRetryInterval(t *testing.T) {
 	for _, tick := range []time.Duration{testTick, 500 * time.Millisecond, 7 * time.Second} {
 		retry := 10 * tick
+		early := retry - retrySlack // the first instant a retry is due
 
 		t.Run("unreachable/"+tick.String(), func(t *testing.T) {
 			e := newEngine(t, dockerBody)
@@ -453,16 +454,16 @@ func TestFetchRetryInterval(t *testing.T) {
 				if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
 					t.Fatalf("round %d: requests = %q, want a ping", round, r)
 				}
-				for _, d := range []time.Duration{time.Nanosecond, retry / 2, retry/2 - 2*time.Nanosecond} {
-					clk.add(d) // up to 1 ns short of the retry
+				for _, d := range []time.Duration{time.Nanosecond, early / 2, early/2 - 2*time.Nanosecond} {
+					clk.add(d) // up to 1 ns short of the retry, less the slack
 					if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
 						t.Fatalf("round %d: warning = %+v while waiting", round, w)
 					}
 					if r := e.take(); len(r) != 0 {
-						t.Fatalf("round %d: requests %q before %v", round, r, retry)
+						t.Fatalf("round %d: requests %q before %v", round, r, early)
 					}
 				}
-				clk.add(time.Nanosecond) // exactly retry after the failed call: the next round retries
+				clk.add(time.Nanosecond) // retry - retrySlack after the failed call: the next round retries
 			}
 		})
 
@@ -473,19 +474,19 @@ func TestFetchRetryInterval(t *testing.T) {
 				t.Fatalf("Fetch = %+v, %+v; want no containers, no warning", got, w)
 			}
 			e := newEngineAt(t, sock, dockerBody)
-			clk.add(retry - time.Nanosecond)
+			clk.add(early - time.Nanosecond)
 			if got, w := fetch(t, s); got != nil || w != nil {
-				t.Fatalf("1 ns before %v: %+v, %+v; want no containers, no warning", retry, got, w)
+				t.Fatalf("1 ns before %v: %+v, %+v; want no containers, no warning", early, got, w)
 			}
 			if r := e.take(); len(r) != 0 {
-				t.Fatalf("1 ns before %v: requests = %q, want none", retry, r)
+				t.Fatalf("1 ns before %v: requests = %q, want none", early, r)
 			}
 			clk.add(time.Nanosecond)
 			if got, w := fetch(t, s); w != nil || !reflect.DeepEqual(got, wantDocker) {
-				t.Fatalf("at %v: %+v, %+v; want the list, no warning", retry, got, w)
+				t.Fatalf("at %v: %+v, %+v; want the list, no warning", early, got, w)
 			}
 			if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
-				t.Fatalf("at %v: requests = %q, want ping then list", retry, r)
+				t.Fatalf("at %v: requests = %q, want ping then list", early, r)
 			}
 		})
 	}
@@ -514,6 +515,46 @@ func TestFetchUnreachableRetriesEveryTenTicks(t *testing.T) {
 			t.Fatalf("at %v: requests = %q, want %q", at, r, want)
 		}
 		clk.add(beat)
+	}
+}
+
+// TestFetchRetryOnJitteredBeat: the engine calls Fetch on a fixed 5 s ticker grid, and
+// each call starts a little after its beat by however long the goroutine took to wake.
+// When the failing beat woke late and the beat 10 ticks later wakes early, the retry
+// still happens on that beat, not the next one (PR #46 review: 25 s instead of 20 s).
+func TestFetchRetryOnJitteredBeat(t *testing.T) {
+	for _, tc := range []struct {
+		tick  time.Duration
+		retry time.Duration // the beat nominally 10 ticks after the failure
+	}{
+		{testTick, 20 * time.Second},
+		{500 * time.Millisecond, 5 * time.Second},
+	} {
+		t.Run(tc.tick.String(), func(t *testing.T) {
+			e := newEngine(t, dockerBody)
+			e.set(func(e *engine) { e.down = true })
+			s, clk := newSourceTick(e.ep, tc.tick)
+			grid := clk.t
+			lag := func(beatAt, late time.Duration) { clk.t = grid.Add(beatAt + late) }
+
+			lag(0, 300*time.Millisecond) // the failing beat woke 300 ms late
+			fetch(t, s)
+			if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+				t.Fatalf("failing beat: requests = %q, want a ping", r)
+			}
+			for at := beat; at < tc.retry; at += beat {
+				lag(at, 900*time.Millisecond) // even a very late earlier beat is not the retry
+				fetch(t, s)
+				if r := e.take(); len(r) != 0 {
+					t.Fatalf("beat %v: requests = %q, want none", at, r)
+				}
+			}
+			lag(tc.retry, time.Millisecond) // the retry beat woke only 1 ms late
+			fetch(t, s)
+			if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+				t.Fatalf("beat %v: requests = %q, want the retry's ping", tc.retry, r)
+			}
+		})
 	}
 }
 

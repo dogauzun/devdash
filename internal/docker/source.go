@@ -43,7 +43,9 @@ func (s *Source) Endpoint() Endpoint { return s.ep }
 // Fetch returns the containers to use now and a warning when Docker is present but not
 // answering (nil otherwise). It pings once at start and after each failure; after a failure
 // or a missing socket it makes no request until RetryAfter has passed since the start of the
-// call that failed, so the retry is the first call at or after that time. ctx bounds the
+// call that failed, so the retry is the first call at or after that time; a call up to
+// retrySlack (1 s) early counts, so the engine's beat that is nominally RetryAfter later
+// retries even when it wakes sooner after its beat than the failing call did. ctx bounds the
 // whole call.
 //
 // A unix socket that does not exist (ENOENT on the dial, at the ping or the list) is no
