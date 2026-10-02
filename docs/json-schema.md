@@ -29,7 +29,7 @@ The top-level object.
 | `host` | host | always | The machine and the user devdash ran as. |
 | `projects` | project array | always | Git repositories with at least one process. |
 | `processes` | process array | always | Every process, then the unknown-owner entries. |
-| `containers` | container array | always | Docker containers; `[]` until Docker support lands, or with `--no-docker`. |
+| `containers` | container array | always | Running Docker or Podman containers; `[]` with `--no-docker`, when no engine is found or while it does not answer. |
 | `warnings` | warning array | always | Degraded-mode conditions, one per code. |
 | `timing_ms` | timing_ms | always | Per-source durations of the second sample. |
 
@@ -69,9 +69,9 @@ The top-level object.
 | `cpu_percent` | number or null | always | See Conventions, CPU. `null` when unreadable or when the process was not in the first sample (`cpu` in `unknown`). |
 | `rss_bytes` | integer or null | always | Resident memory in bytes; `null` when unreadable (`mem` in `unknown`). |
 | `listeners` | listener array | always | Listening TCP sockets this process owns; `[]` for none. |
-| `kind` | string | always | One of `other`, `server`, `container`, `agent`, `test`, `watcher`, `shell`, `editor`. `other` for `pid: 0`. |
+| `kind` | string | always | One of `other`, `server`, `container`, `agent`, `test`, `watcher`, `shell`, `editor`. `other` for `pid: 0`, or `container` when its socket matched a container's published port. |
 | `project` | string or null | always | `id` of the project the process belongs to, `null` for none. |
-| `container` | string or null | always | Id of the container whose published port this process holds; `null` otherwise. |
+| `container` | string or null | always | Id of the container whose published ports this process holds, when every socket matched to a container is that one container's; `null` otherwise, including for a proxy holding several containers' ports (see the listener's `container`). |
 | `unknown` | string array | always | Fields that could not be read, in this order: `owner`, `argv`, `cwd`, `cpu`, `mem`. `[]` when everything was read. `pid: 0` entries have all five. |
 
 ## listener
@@ -81,6 +81,7 @@ The top-level object.
 | `proto` | string | always | `tcp4` or `tcp6`. A dual-stack socket is one `tcp6` listener on `::`; a v4-mapped bind is `tcp4`. |
 | `addr` | string | always | Bind address; `0.0.0.0` or `::` means every interface. A scoped IPv6 address (link-local) carries its zone on macOS: `fe80::1%lo0`. |
 | `port` | integer | always | TCP port, 1 to 65535. |
+| `container` | string or null | always | Id of the container whose published port this socket is (matched against Docker's port list); `null` otherwise. Set on each socket of a proxy that holds several containers' ports (Docker Desktop's `com.docker.backend`), whose process `container` is `null`. |
 
 ## container
 
@@ -120,7 +121,8 @@ The top-level object.
 | `listeners` | number | always | Listening sockets and their owners. |
 | `pcblist` | number | on macOS | Part of `listeners`: the `net.inet.tcp.pcblist_n` read. |
 | `projects` | number | always | Project resolution. |
-| `total` | number | always | Wall time of the second sample: collection, building the snapshot and naming users. |
+| `docker` | number | when Docker is configured | The Docker fetch the snapshot used, run alongside collection. Absent with `--no-docker` or when no endpoint was found. |
+| `total` | number | always | Wall time of the second sample: collection, waiting for the Docker fetch, building the snapshot and naming users. |
 
 ## Warning codes
 
@@ -130,3 +132,5 @@ The top-level object.
 | `process_fields_unreadable` | both | Processes of other users with fields in `unknown`; `count` is the number of processes. |
 | `pcblist_unavailable` | macOS | The kernel withheld other processes' sockets from the PCB list; other users' listeners may be missing. |
 | `proc_hidepid` | Linux | `/proc` is mounted with `hidepid`; other users' processes are invisible. |
+| `docker_endpoint_invalid` | both | `DOCKER_HOST` or the docker context names an endpoint devdash cannot use. |
+| `docker_unreachable` | both | A Docker socket exists but does not answer. |

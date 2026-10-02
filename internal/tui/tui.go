@@ -64,9 +64,12 @@ type Model struct {
 	sel    model.RowKey // selected row; never an index (rows.go)
 	selIdx int          // index of sel in rows, -1 when rows is empty
 	top    int          // first table row on screen (table.go)
+	tcache tableCache   // derived from all rows, per rebuild (table.go)
 
 	filter    string // active filter query (rows.go)
 	filtering bool   // the filter prompt has the keyboard
+
+	fsel filterSel // the row chosen before the filter hid it (rows.go)
 
 	detail bool // detail pane open (detail.go)
 	help   bool // help overlay open (help.go)
@@ -153,6 +156,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		m.status = ""
 		return m, m.key(msg)
+	case tea.PasteMsg:
+		m.paste(msg.Content)
 	case action:
 		return m, msg.apply(m)
 	}
