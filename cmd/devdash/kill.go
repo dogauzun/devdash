@@ -112,7 +112,8 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	var survivors []string
 	var groups []int
-	signalled := map[int]bool{}
+	// Keyed by (pid, start time): a pid reused by a new holder within the wait was not signalled.
+	signalled := map[model.RowKey]bool{}
 	ran := false // some plan reached kill(2): the code is then its result, not "nothing signalled"
 	for _, p := range plans {
 		r, err := killFn(p, o.Timeout)
@@ -128,7 +129,7 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 		}
 		for _, oc := range r.Outcomes {
 			fmt.Fprintf(tw, "%d\t%s\t%s\n", oc.Process.PID, oc.Process.Name, outcome(oc))
-			signalled[oc.Process.PID] = oc.Signalled
+			signalled[oc.Process.Key()] = oc.Signalled
 		}
 		for _, sv := range r.Survivors() {
 			survivors = append(survivors, fmt.Sprintf("%d %s", sv.PID, sv.Name))
@@ -161,7 +162,7 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 		other := false // a holder that was not signalled
 		for _, t := range held {
 			who = append(who, describe(after, t))
-			other = other || !signalled[t.key.PID]
+			other = other || !signalled[t.key]
 		}
 		fmt.Fprintf(&b, "port %d is still held by %s", port, strings.Join(who, ", "))
 		if other && !o.Tree {

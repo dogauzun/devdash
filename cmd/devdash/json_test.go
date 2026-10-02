@@ -64,9 +64,19 @@ func goldenSnapshot(t *testing.T, dir string) model.Snapshot {
 			Timings:  model.Timing{"proctable": 1500 * time.Microsecond, "argv_cwd": 2250 * time.Microsecond, "listeners": 750 * time.Microsecond},
 		}}
 	}
+	// A fixed table instead of the OS lookup, so the output does not depend on this machine's
+	// accounts: uid 54321 has none, so it is named by its number, as the OS lookup would.
+	users := map[int]string{0: "root", 54321: "54321"}
 	o := engine.Options{
 		Collector: &collector.Fake{Steps: []collector.Step{sample(0, 0, false), sample(200*time.Millisecond, 300*time.Millisecond, true)}},
 		Resolver:  model.NewResolver("", nil),
+		LookupUser: func(uid int) string {
+			n, ok := users[uid]
+			if !ok {
+				t.Errorf("uid %d not in the golden user table", uid)
+			}
+			return n
+		},
 	}
 	first, err := engine.Snapshot(context.Background(), o)
 	if err != nil {
