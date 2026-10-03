@@ -471,6 +471,9 @@ func TestDetailUnknownOwner(t *testing.T) {
 	} {
 		hasLine(t, m, want)
 	}
+	if !warned(t, m, "hint      run", "run with sudo to see owners") {
+		t.Error("the hint is not in the warning colour (DEV-108)")
+	}
 }
 
 func TestDetailNothingSelected(t *testing.T) {

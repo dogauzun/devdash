@@ -288,7 +288,11 @@ func (m *Model) killView(w, h int) string {
 				exited++
 				continue
 			}
-			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, clean(o.Process.Name), clean(killOutcome(o))))
+			outcome := clean(killOutcome(o))
+			if errors.Is(o.Err, engine.ErrPermission) {
+				outcome = styleWarn.Render(outcome) // the last column: tabwriter does not pad it
+			}
+			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, clean(o.Process.Name), outcome))
 		}
 		title += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
 		list = killTable(rows)
