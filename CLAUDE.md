@@ -1,7 +1,8 @@
 # devdash
 
 Terminal dashboard: what is running on this machine, grouped by git repository.
-Spec: `docs/SPEC.md` (the authority). Work is tracked in Jira project DEV.
+Spec: `docs/SPEC.md` (the authority). Work is tracked in the maintainer's private Jira project DEV;
+`DEV-n` keys in code, commits and `DECISIONS.md` refer to its tickets.
 Non-obvious choices go in `DECISIONS.md`, one dated line each.
 
 ## Commands
