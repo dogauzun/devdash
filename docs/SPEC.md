@@ -269,7 +269,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `↑` `↓` `j` `k` | move the selection |
 | `←` `→` `h` `l` | collapse or expand a project group or a tree node |
 | `enter` | open or close the detail pane |
-| `/` | filter by port, name, argv, project or container; `esc` clears |
+| `/` | filter by port, name, argv, project, container or tag (Release 1.0); `esc` clears |
 | `x` | kill modal: `p` process, `t` tree, `f` force, `esc` cancel |
 | `o` | open `http://localhost:<port>` |
 | `a` | show or hide shells and editors |
@@ -363,7 +363,7 @@ Non-goals for Release 1.0: an idle tag (a dev server without traffic is idle and
 
 `orphaned` is set only on a process that belongs to a project or carries `cwd deleted`. System services and user-session agents (sshd, cron, pipewire, every macOS launch agent) also have init, launchd or a subreaper as their parent, and tagging them would bury the signal. A process whose worktree was removed often resolves to no project, because the walk starts from a directory that no longer exists; its port answer shows the old cwd instead of a project.
 
-**The port answer.** When stdout is a terminal, each process holder's v1 line is followed by up to three lines indented by seven spaces:
+**The port answer.** When stdout is a terminal, each process holder gets up to three lines after its last v1 line (once per process, even when it holds N on two sockets), indented by seven spaces:
 
 ```console
 $ devdash port 5173
@@ -385,11 +385,11 @@ Container lines and the PID 0 unknown-owner line keep their v1 form and get no e
 **Free port.** `devdash free N` (1 ≤ N ≤ 65535) takes one snapshot and tries the ports N, N+1, … up to N+99 or 65535, whichever comes first. It prints the first port that passes both checks and exits 0, or prints nothing and exits 1 when none does.
 
 1. Nothing in the snapshot holds it: no listener on any address, and no container publishes it on any host address. A port published only by iptables (Docker without its userland proxy) has no socket, so the bind below would not see it.
-2. This user can bind it: devdash creates a TCP socket with `golang.org/x/sys/unix`, leaves `SO_REUSEADDR` off, binds `0.0.0.0:P`, then an `IPV6_V6ONLY` socket on `[::]:P`, and closes both at once. Go's `net.Listen` is not used because it sets `SO_REUSEADDR`, which on macOS lets a wildcard bind succeed beside another socket's specific-address bind. The bind catches listeners of other users that a snapshot without root cannot see. A failed IPv6 socket or bind with `EAFNOSUPPORT` or `EADDRNOTAVAIL` (no IPv6 on the host) skips the IPv6 check. A bind that fails with `EADDRINUSE` or `EACCES` (below 1024) means the port is not free. Any other failure of `socket`, `setsockopt` or `bind` (`EMFILE`, `ENFILE`, `EPERM` under a sandbox) means devdash could not look: `free` exits 5 with the error on stderr and nothing on stdout, and so does `port N` when the probe for its `next free` line or `next_free` field fails, so exit 1 never stands in for a failed probe.
+2. This user can bind it: devdash creates a TCP socket with `golang.org/x/sys/unix`, sets `SO_REUSEADDR` on Linux only (where it allows a port in TIME_WAIT, as a dev server's own bind would, and still fails beside any listener), binds `0.0.0.0:P`, then an `IPV6_V6ONLY` socket on `[::]:P`, and closes both at once. Go's `net.Listen` is not used because it sets `SO_REUSEADDR` everywhere, and on macOS that lets a wildcard bind succeed beside another socket's specific-address bind. The bind catches listeners of other users that a snapshot without root cannot see. A failed IPv6 socket or bind with `EAFNOSUPPORT` or `EADDRNOTAVAIL` (no IPv6 on the host) skips the IPv6 check. A bind that fails with `EADDRINUSE` or `EACCES` (below 1024) means the port is not free. Any other failure of `socket`, `setsockopt` or `bind` (`EMFILE`, `ENFILE`, `EPERM` under a sandbox) means devdash could not look: `free` exits 5 with the error on stderr and nothing on stdout, and so does `port N` when the probe for its `next free` line or `next_free` field fails, so exit 1 never stands in for a failed probe.
 
 The answer means free at the moment of the check, not reserved: another process can take the port before the developer's server starts, and the README says so.
 
-**TUI.** The dashboard shows the same facts with no new keys. The `Here` project's header ends in `(here)` and is sorted first, ahead of the activity order. A row with tags shows them dimmed after its name (`uvicorn  orphaned`), shortened to one `!` below 90 columns. The detail pane lists each tag with what it means ("parent exited; now a child of launchd", "working directory deleted"). The `/` filter also matches tag names, so `/orphaned` lists every orphaned process.
+**TUI.** The dashboard shows the same facts with no new keys. The `Here` project's header ends in `(here)` and is sorted first, ahead of the activity order. A row with tags shows them dimmed after its name (`uvicorn  orphaned`), shortened to one `!` below 90 columns. The detail pane lists each tag with what it means ("parent exited; now a child of launchd", "working directory deleted"). The `/` filter also matches tags, written either way (`cwd deleted` or `cwd_deleted`), so `/orphaned` lists every orphaned process. On macOS a port in TIME_WAIT counts as taken for `free`, since the probe there runs without `SO_REUSEADDR`; the answer errs on the safe side.
 
 **JSON.** Schema v1 gains `processes[].tags` (an array of `"orphaned"` and `"cwd_deleted"`, empty when none applies) and `projects[].here` (a boolean). Both are always present, so `schema_version` stays 1.
 
