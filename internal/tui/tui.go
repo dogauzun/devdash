@@ -63,7 +63,7 @@ type Model struct {
 	have bool          // upd holds a good snapshot (SchemaVersion != 0)
 
 	view model.ViewOptions // ShowAll, HideContainers, Sort, Collapsed (table.go)
-	all  []model.Row       // m.upd.Snapshot flattened with m.view, nothing collapsed while a filter is set
+	all  []model.Row       // m.upd.Snapshot flattened with m.view; while a filter is set, nothing collapsed or hidden (rebuild)
 	rows []model.Row       // all, filtered: what the table shows
 
 	sel    model.RowKey // selected row; never an index (rows.go)
@@ -118,7 +118,10 @@ func New(o Options) *Model {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	m := &Model{o: o, selIdx: -1, view: model.ViewOptions{ShowAll: o.ShowAll, Collapsed: map[model.RowKey]bool{}}}
+	// The other group starts collapsed (Release 1.1): on a Mac it fills with system listeners
+	// that push down what the developer started. The fold is not remembered between runs.
+	collapsed := map[model.RowKey]bool{{Header: model.GroupOther}: true}
+	m := &Model{o: o, selIdx: -1, view: model.ViewOptions{ShowAll: o.ShowAll, Collapsed: collapsed}}
 	m.rebuild()
 	return m
 }

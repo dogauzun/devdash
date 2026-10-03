@@ -2,6 +2,7 @@ package tui
 
 import (
 	"maps"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -17,7 +18,10 @@ import (
 // the selected row again by its key. It runs after every snapshot, view change and filter
 // change. While a filter is set the rows are flattened as if nothing were collapsed, so a
 // match inside a folded group or under a folded tree node is found (DEV-126); the collapsed
-// keys are kept and apply again once the filter is cleared.
+// keys are kept and apply again once the filter is cleared. They are also flattened with
+// every row the view toggles hide shown (shells and editors without `a`, container rows with
+// `d`), so `/zsh` finds a shell the view hides (Release 1.1, "Search"); searchHidden then keeps
+// only the hidden rows the query reaches.
 //
 // When the key is gone the selection moves to the nearest row above it, in the rows as they
 // were, that is still shown (spec: "the nearest previous index"), wherever that row now is: a
@@ -30,10 +34,13 @@ func (m *Model) rebuild() {
 	m.pruneCollapsed()
 	view := m.view
 	if m.filter != "" {
-		view.Collapsed = nil
+		view.Collapsed, view.ShowAll, view.HideContainers = nil, true, false
 	}
 	m.all = model.Flatten(m.upd.Snapshot, view)
 	m.rows = model.Filter(m.all, m.filter)
+	if m.filter != "" && (!m.view.ShowAll || m.view.HideContainers) {
+		m.rows = searchHidden(m.rows, m.filter, m.view)
+	}
 	if len(m.rows) == 0 {
 		m.selIdx = -1
 		return
@@ -54,6 +61,50 @@ func (m *Model) rebuild() {
 		}
 	}
 	m.moveTo(0) // also replaces the stale key
+}
+
+// searchHidden takes rows flattened with every row shown and filtered by query, and draws
+// them as view would (Release 1.1, "Search"): a row view hides (hiddenBy) is kept when it
+// matches query itself, drawn normally, or when a kept row is below it, drawn dimmed as
+// Flatten dims a hidden row that connects a visible one; any other is left out, and so is a
+// header left with no row under it, as Flatten omits a group with nothing to show. So a query
+// that matches a group header shows that group without its idle shells. The rows are in
+// preorder, so a backward walk sees a row's descendants before the row.
+func searchHidden(rows []model.Row, query string, view model.ViewOptions) []model.Row {
+	keep := make([]bool, len(rows))
+	var below []bool // below[d]: a kept row at depth d since the last row at a smaller depth, walking back
+	for i := len(rows) - 1; i >= 0; i-- {
+		r := &rows[i]
+		below = append(below, make([]bool, max(r.Depth+1-len(below), 0))...)
+		desc := slices.Contains(below[r.Depth+1:], true)
+		clear(below[r.Depth+1:])
+		switch {
+		case r.Key.Header != model.GroupNone:
+			keep[i] = desc
+		case hiddenBy(*r, view) && !model.Match(*r, query):
+			keep[i], r.Dimmed = desc, true
+		default:
+			keep[i] = true
+		}
+		below[r.Depth] = below[r.Depth] || keep[i]
+	}
+	out := rows[:0:0]
+	for i, r := range rows {
+		if keep[i] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// hiddenBy reports whether view leaves row r out: a shell or editor without `a`
+// (model.Process.Hideable, Flatten's rule), or a container row with `d` (a container with no
+// process behind it, or a process holding a container's ports).
+func hiddenBy(r model.Row, view model.ViewOptions) bool {
+	if view.HideContainers && (r.Container != nil || r.Process != nil && r.Process.ContainerID != "") {
+		return true
+	}
+	return !view.ShowAll && r.Process != nil && r.Process.Hideable()
 }
 
 // pruneCollapsed drops the collapsed keys of rows that are no longer in the snapshot, so the

@@ -38,6 +38,7 @@ func TestOpenLowestPort(t *testing.T) {
 			rec := &openRecorder{}
 			m, _ := newTest(t, 80, 24, func(o *Options) { o.Open = rec.open })
 			feed(m, s)
+			openOther(m) // the unknown owner's row
 			detailSelect(t, m, tc.key)
 			cmd := press(m, "o")
 			if cmd == nil {

@@ -49,8 +49,10 @@ One screen: a header, a table grouped by project, and a footer with key hints an
 Each project header shows `name @ branch (worktree)`. Inside a group, processes form a tree by
 parent pid, and each has a kind: agent, test, watcher, editor, shell, server, container or
 other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
-Processes with no project go under `other`, and containers without a compose project under
-`containers`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
+Processes with no project go under `other`, which starts collapsed (its header still counts
+them; `→` opens it), and containers without a compose project under `containers`. The `/`
+filter searches every row, folded or hidden: a shell or editor that matches shows without `a`,
+and a container row with `d`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
 Typing a port number in the table, `5173` say, searches for it and selects the process or
 container holding it, even inside a collapsed group, so `x` then kills it; a line under the
 header says how many rows hold the port and which port is free next (the search
