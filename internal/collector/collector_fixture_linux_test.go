@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -51,6 +53,7 @@ type fixProc struct {
 	cmdline    string   // written instead of argv when set (rewritten argv, no NULs)
 	cwd        string   // link target
 	wantCwd    string   // expected Cwd when it differs from cwd
+	gone       bool     // cwd removed: fixtureStat reports no links for it (DEV-116)
 	fds        []string // link targets of fd/0, fd/1, ...
 	only       []string // write only these files: the process exits mid-read
 	drop       bool     // not expected in the result
@@ -111,7 +114,7 @@ func proc500() ([]fixProc, []fixListen) {
 	}
 
 	deleted := user(1141, 1001, "perl", "/home/dev/gone (deleted)", []string{"perl", "-e", "sleep 600"})
-	deleted.wantCwd = "/home/dev/gone" // DEV-44
+	deleted.wantCwd, deleted.gone = "/home/dev/gone", true // DEV-44, DEV-116
 	procs = append(procs,
 		user(1000, 1, "tmux: server", "/home/dev", []string{"tmux", "new", "-s", "dev"}),
 		user(1001, 1000, "zsh", src+"api", []string{"-zsh"}),
@@ -287,6 +290,22 @@ func copyProc500(t testing.TB) (dir string, denied bool) {
 	return dir, err != nil
 }
 
+// fixtureStat stands in for the stat of /proc/<pid>/cwd, whose checked-in link dangles: no
+// links for a gone process's cwd. Statting any other path fails the test, since the collector
+// should stat only a cwd that carries the " (deleted)" mark (DEV-116).
+func fixtureStat(t *testing.T, procs []fixProc) func(string, *unix.Stat_t) error {
+	return func(path string, st *unix.Stat_t) error {
+		pid, _ := strconv.Atoi(filepath.Base(filepath.Dir(path)))
+		i := slices.IndexFunc(procs, func(f fixProc) bool { return f.pid == pid })
+		if filepath.Base(path) != "cwd" || i < 0 || !procs[i].gone {
+			t.Errorf("stat %s: want only the cwd of a process whose cwd is gone", path)
+			return unix.ENOENT
+		}
+		*st = unix.Stat_t{Nlink: 0}
+		return nil
+	}
+}
+
 // wantProcs is what the collector should make of the fixture's processes.
 func wantProcs(procs []fixProc, denied bool) []Process {
 	var want []Process
@@ -303,6 +322,7 @@ func wantProcs(procs []fixProc, denied bool) []Process {
 		if f.wantCwd != "" {
 			p.Cwd = f.wantCwd
 		}
+		p.CwdDeleted = f.gone
 		if f.pid == fixDenied && denied {
 			p.Argv, p.RSSBytes, p.Unknown = nil, 0, model.FieldArgv|model.FieldMem
 		}
@@ -354,7 +374,7 @@ func TestCollectFixture(t *testing.T) {
 				}
 			}
 			c := newLinux(dir)
-			c.euid, c.ptrace = tt.euid, tt.ptrace
+			c.euid, c.ptrace, c.stat = tt.euid, tt.ptrace, fixtureStat(t, procs)
 			res, err := c.Collect(context.Background(), Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -487,7 +507,7 @@ func TestCollectFixtureLimitedArgv(t *testing.T) {
 		return in
 	}}
 	c := newLinux(dir)
-	c.euid = fixUser
+	c.euid, c.stat = fixUser, fixtureStat(t, procs)
 	res, err := c.Collect(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -533,6 +553,53 @@ func TestCollectFixtureLimitedArgv(t *testing.T) {
 	}
 	if !slices.Equal(codes, wantCodes) {
 		t.Errorf("warnings %q, want %q", codes, wantCodes)
+	}
+}
+
+// TestReadCwd: the kernel's " (deleted)" mark is stripped from Cwd, and CwdDeleted is set only
+// when a stat of the cwd link, made only for a marked link, shows no links left; a live
+// directory really named "x (deleted)" (DEV-44) and a failed stat leave it false (DEV-116).
+func TestReadCwd(t *testing.T) {
+	live := filepath.Join(t.TempDir(), "x (deleted)")
+	if err := os.Mkdir(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	noLinks := func(_ string, st *unix.Stat_t) error { *st = unix.Stat_t{Nlink: 0}; return nil }
+	tests := []struct {
+		name, link string
+		stat       func(string, *unix.Stat_t) error
+		cwd        string
+		deleted    bool
+		statted    bool
+	}{
+		{"removed", "/home/dev/gone (deleted)", noLinks, "/home/dev/gone", true, true},
+		{"live directory named x (deleted)", live, unix.Stat, strings.TrimSuffix(live, " (deleted)"), false, true},
+		{"stat fails", "/nonexistent/gone (deleted)", unix.Stat, "/nonexistent/gone", false, true},
+		{"no mark", filepath.Dir(live), noLinks, filepath.Dir(live), false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Symlink(tt.link, filepath.Join(dir, "cwd")); err != nil {
+				t.Fatal(err)
+			}
+			statted := false
+			c := newLinux(t.TempDir())
+			c.stat = func(path string, st *unix.Stat_t) error {
+				statted = true
+				if path != dir+"/cwd" {
+					t.Errorf("stat %q, want %q", path, dir+"/cwd")
+				}
+				return tt.stat(path, st)
+			}
+			var p Process
+			if !c.readCwd(dir, &p) {
+				t.Fatal("readCwd: process gone")
+			}
+			if p.Cwd != tt.cwd || p.CwdDeleted != tt.deleted || statted != tt.statted {
+				t.Errorf("cwd %q deleted %v statted %v; want %q, %v, %v", p.Cwd, p.CwdDeleted, statted, tt.cwd, tt.deleted, tt.statted)
+			}
+		})
 	}
 }
 
