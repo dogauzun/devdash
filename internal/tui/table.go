@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -127,6 +128,7 @@ func (m *Model) tableView(w, h int) string {
 	for i := m.top; i < min(len(m.rows), m.top+rh); i++ {
 		r := m.rows[i]
 		var l string
+		tags := [2]int{} // the cells the tags take, cut to the name column
 		if r.Key.Header != model.GroupNone {
 			l = pad(m.nameCell(i)+c.counts[r.Key].text(r.Key.Header), w, false)
 		} else {
@@ -135,14 +137,25 @@ func (m *Model) tableView(w, h int) string {
 				cells[j] = pad(m.cell(i, c), widths[j], colSpecs[c].right)
 			}
 			l = pad(strings.Join(cells, " "), w, false)
+			if t := ansi.StringWidth(tagText(r, c.short)); t > 0 {
+				end := ansi.StringWidth(m.nameCell(i))
+				tags = [2]int{min(end-t, widths[0]), min(end, widths[0])}
+			}
 		}
+		st := lipgloss.NewStyle()
 		switch {
 		case i == m.selIdx:
-			l = styleSel.Render(l)
+			st = styleSel
 		case r.Key.Header != model.GroupNone:
-			l = styleBold.Render(l)
+			st = styleBold
 		case r.Dimmed:
-			l = styleDim.Render(l)
+			st = styleDim
+		}
+		if tags[0] < tags[1] { // in three pieces, since a style rendered inside another ends it
+			l = st.Render(ansi.Cut(l, 0, tags[0])) + st.Faint(true).Render(ansi.Cut(l, tags[0], tags[1])) +
+				st.Render(ansi.Cut(l, tags[1], w))
+		} else {
+			l = st.Render(l)
 		}
 		lines = append(lines, l)
 	}
@@ -198,16 +211,19 @@ const (
 	markNone   = "  "
 )
 
-// nameCell is row i's name: indented by depth, a marker when it has children, and its label,
-// cleaned (so the cached widest cell measures what is drawn).
+// nameCell is row i's name: indented by depth, a marker when it has children, its label,
+// cleaned, then `(here)` on the Here project's header or a process's tags (tagText), so the
+// cached widest cell measures what is drawn.
 // A row has children when the next row is deeper, or when it is collapsed and had children
 // in the expanded rows (its children may have exited since it was collapsed).
 func (m *Model) nameCell(i int) string {
-	return m.nameCellWith(i, m.cache().kids)
+	c := m.cache()
+	return m.nameCellWith(i, c.kids, c.short)
 }
 
-// nameCellWith is nameCell with the rows that have children when expanded given.
-func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool) string {
+// nameCellWith is nameCell with the rows that have children when expanded given, and whether
+// tags are shortened.
+func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool) string {
 	r := m.rows[i]
 	mark := markNone
 	switch {
@@ -216,7 +232,35 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool) string {
 	case i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth:
 		mark = markOpen
 	}
-	return strings.Repeat("  ", r.Depth) + mark + clean(rowLabel(r))
+	label := clean(rowLabel(r))
+	if r.Key.Header == model.GroupProject && r.Project != nil && r.Project.Here {
+		label += hereSuffix
+	}
+	return strings.Repeat("  ", r.Depth) + mark + label + tagText(r, short)
+}
+
+// hereSuffix ends the header of the project devdash was run from (spec "Release 1.0", TUI). It
+// is not part of rowLabel: the port answer shows that label without it and says "this repo".
+const hereSuffix = " (here)"
+
+// tagText is what follows a tagged process's name (spec "Release 1.0", TUI): two spaces and
+// its tags as people read them ("  orphaned, cwd deleted"), or "  !" when short; "" for a row
+// without tags. tableView draws it faint.
+func tagText(r model.Row, short bool) string {
+	switch {
+	case r.Process == nil || r.Process.Tags == 0:
+		return ""
+	case short:
+		return "  !"
+	}
+	return "  " + strings.Join(r.Process.Tags.Labels(), ", ")
+}
+
+// shortTags reports whether tags are shown as "!": below commandWidth columns of the terminal,
+// whatever the table's own width (the detail split narrows it from 120 columns).
+func (m *Model) shortTags() bool {
+	w, _ := m.size()
+	return w < commandWidth
 }
 
 // rowLabel is what the name column says about r: the group for a header, the container name
@@ -423,23 +467,34 @@ type tableCache struct {
 	counts  map[model.RowKey]groupCount // header counts
 	kids    map[model.RowKey]bool       // rows with children when expanded and unfiltered
 	longest int                         // widest name cell among the process and container rows
+	short   bool                        // tags shown as "!" (shortTags) when longest was measured
 }
 
 // cache returns the table cache for the current rows, computing it when they changed.
 func (m *Model) cache() *tableCache {
 	c := &m.tcache
+	short := m.shortTags()
 	if c.counts != nil && len(c.rows) == len(m.rows) && (len(m.rows) == 0 || &c.rows[0] == &m.rows[0]) {
+		if c.short != short { // a resize across commandWidth changes the tags drawn, not the rows
+			c.short = short
+			c.measure(m)
+		}
 		return c
 	}
-	c.rows = m.rows
+	c.rows, c.short = m.rows, short
 	c.counts, c.kids = m.groupCounts()
+	c.measure(m)
+	return c
+}
+
+// measure sets longest from the name cells as they are drawn.
+func (c *tableCache) measure(m *Model) {
 	c.longest = 0
 	for i, r := range m.rows {
 		if r.Key.Header == model.GroupNone {
-			c.longest = max(c.longest, ansi.StringWidth(m.nameCellWith(i, c.kids)))
+			c.longest = max(c.longest, ansi.StringWidth(m.nameCellWith(i, c.kids, c.short)))
 		}
 	}
-	return c
 }
 
 // groupCounts counts the rows and distinct ports of each group as the a and d toggles show

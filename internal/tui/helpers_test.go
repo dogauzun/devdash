@@ -161,8 +161,8 @@ func line(m *Model, s string) string {
 //	    node vite 101 (server, *:5173, 3 h)
 //	      esbuild 102
 //	  claude 103 (agent)
-//	api @ main                        /src/api
-//	  api 200 (server, 127.0.0.1:8080 and [::1]:8081)
+//	api @ main (here)                 /src/api, the project devdash was run from
+//	  api 200 (server, 127.0.0.1:8080 and [::1]:8081; orphaned, cwd deleted)
 //	  go test 201 (test)
 //	  nvim 202 (editor, hidden)
 //	shop (compose)
@@ -198,9 +198,10 @@ func fixture() model.Snapshot {
 	claude.CPUPercent = math.NaN() // first sample
 
 	api := proc(200, 1, at(26*time.Hour), "me", "api", apiID, apiID, model.KindServer, "/src/api/bin/api", "-addr", ":8080")
+	api.Tags = model.TagOrphaned | model.TagCwdDeleted
 	api.Listeners = []model.Listener{lis("tcp4", "127.0.0.1", 8080), lis("tcp6", "::1", 8081)}
-	gotest := proc(201, 1, at(30*time.Second), "me", "go", apiID, apiID, model.KindTest, "go", "test", "./...")
-	nvim := proc(202, 1, at(2*time.Hour), "me", "nvim", apiID, apiID, model.KindEditor, "nvim", "main.go")
+	gotest := proc(201, 90, at(30*time.Second), "me", "go", apiID, apiID, model.KindTest, "go", "test", "./...")
+	nvim := proc(202, 90, at(2*time.Hour), "me", "nvim", apiID, apiID, model.KindEditor, "nvim", "main.go")
 
 	proxy := proc(300, 1, at(4*time.Hour), "root", "docker-proxy", "", "", model.KindContainer,
 		"/usr/bin/docker-proxy", "-proto", "tcp", "-host-ip", "0.0.0.0", "-host-port", "5432")
@@ -222,7 +223,7 @@ func fixture() model.Snapshot {
 		Processes:     []model.Process{zsh, vite, esbuild, claude, api, gotest, nvim, proxy, sshd, unknown},
 		Projects: []model.Project{
 			{ID: shopID, Root: shopID, Name: "shop", Branch: "feat/cart", Worktree: true, MainRepo: "/src/shop-main"},
-			{ID: apiID, Root: apiID, Name: "api", Branch: "main"},
+			{ID: apiID, Root: apiID, Name: "api", Branch: "main", Here: true},
 		},
 		Containers: []model.Container{
 			{ID: "9f1c2a7b0d3e", Name: "shop-db-1", Image: "postgres:16", State: "running", ComposeProject: "shop",

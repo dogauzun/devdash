@@ -36,6 +36,15 @@ func drop(s model.Snapshot, pids ...int) model.Snapshot {
 	return s
 }
 
+// notHere returns s with no Here project, so the groups follow the activity order alone.
+func notHere(s model.Snapshot) model.Snapshot {
+	s.Projects = slices.Clone(s.Projects)
+	for i := range s.Projects {
+		s.Projects[i].Here = false
+	}
+	return s
+}
+
 // withoutAPI returns s without the api project and its processes.
 func withoutAPI(s model.Snapshot) model.Snapshot {
 	s = drop(s, 200, 201, 202)
@@ -109,8 +118,9 @@ func TestSelectionHoldsAcrossRefresh(t *testing.T) {
 	feed(m, s)
 	wantSel(t, m, goTest, 3)
 
-	// shop becomes the most recently active group and moves above api.
-	s = fixture()
+	// shop becomes the most recently active group and moves above api, once api is not the
+	// here project.
+	s = notHere(fixture())
 	s.Processes[3].StartTime = at(time.Second) // claude
 	feed(m, s)
 	if m.rows[0].Key != rowsShopHeader {
@@ -136,7 +146,7 @@ func TestSelectedProcessExits(t *testing.T) {
 		{"its whole group exits: the last row of the group above", keyOf(s, 103), dropShop(fixture()), 7, keyOf(s, 201), 2},
 		{"a header whose group exits: nothing above, the first row", rowsAPIHeader, withoutAPI(fixture()), 0, rowsShopHeader, 0},
 		// api loses its newest process and shop sorts first: the selection stays in api.
-		{"the group order changes: its sibling, now further down", keyOf(s, 201), drop(fixture(), 201), 2, keyOf(s, 200), 6},
+		{"the group order changes: its sibling, now further down", keyOf(s, 201), notHere(drop(fixture(), 201)), 2, keyOf(s, 200), 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
@@ -193,7 +203,7 @@ func TestSelectionPIDReuse(t *testing.T) {
 	rowsSelect(t, m, old)
 	m.view.Collapsed[old] = true
 
-	s = fixture()
+	s = notHere(fixture())
 	reused := &s.Processes[5] // go test 201
 	reused.StartTime, reused.ProjectID, reused.Cwd, reused.Argv = at(time.Second), shopID, shopID, []string{"go", "run", "."}
 	feed(m, s)
@@ -465,5 +475,21 @@ func TestFilterPaste(t *testing.T) {
 	m.Update(tea.PasteMsg{Content: "it\r\ne\n"})
 	if m.filter != "vite" || line(m, "· /vite_") == "" {
 		t.Errorf("filter %q after paste, want %q:\n%s", m.filter, "vite", screen(m))
+	}
+}
+
+func TestFilterTags(t *testing.T) {
+	m, _ := newTest(t, 120, 30)
+	s := fixture()
+	feed(m, s)
+	api := []model.RowKey{rowsAPIHeader, keyOf(s, 200)} // api 200 is orphaned and its cwd deleted
+	for _, q := range []string{"orphaned", "cwd deleted", "cwd_deleted"} {
+		press(m, "/")
+		typeText(m, q)
+		press(m, "enter")
+		if got := rowsKeys(m); !slices.Equal(got, api) {
+			t.Errorf("/%s: rows %+v, want %+v", q, got, api)
+		}
+		press(m, "/", "esc")
 	}
 }

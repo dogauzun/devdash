@@ -122,8 +122,8 @@ func engineModel(t *testing.T, w, h int) *Model {
 			proc(102, 101, now.Add(-3*time.Hour+time.Second), 501, shop,
 				"node_modules/@esbuild/darwin-arm64/bin/esbuild", "--service=0.21.5", "--ping"),
 			proc(200, 1, now.Add(-26*time.Hour), 501, api, "bin/api", "-addr", ":8080"),
-			proc(201, 1, now.Add(-30*time.Second), 501, api, "go", "test", "./..."),
-			proc(202, 1, now.Add(-2*time.Hour), 501, api, "nvim", "main.go"),
+			proc(201, 90, now.Add(-30*time.Second), 501, api, "go", "test", "./..."),
+			proc(202, 90, now.Add(-2*time.Hour), 501, api, "nvim", "main.go"),
 			proxy,
 			sshd,
 		}
@@ -222,8 +222,9 @@ func TestGoldenTable(t *testing.T) {
 
 func sizeName(w, h int) string { return strconv.Itoa(w) + "x" + strconv.Itoa(h) }
 
-// TestGoldenViews: the detail pane, the filter and the kill modal over fixture(), whose
-// processes, projects and containers the engine scenario above mirrors. Plans come from
+// TestGoldenViews: the detail pane, the filter, the kill modal and tags over fixture(), whose
+// processes, projects and containers the engine scenario above mirrors, but for api's Here and
+// api 200's tags, which the engine scenario has no input for. Plans come from
 // fakePlanner and kills go to fakeKiller, which must stay unused: no view confirms.
 func TestGoldenViews(t *testing.T) {
 	type view struct {
@@ -249,8 +250,12 @@ func TestGoldenViews(t *testing.T) {
 	for _, v := range []view{
 		{name: "detail-80x24", w: 80, h: 24, do: selectPID(101, "enter")},               // full-screen overlay
 		{name: "detail-120x40", w: 120, h: 40, do: selectPID(101, "enter"), ansi: true}, // right split
-		{name: "filter-80x24", w: 80, h: 24, do: filter("vite", "enter")},               // applied
-		{name: "filter-120x40", w: 120, h: 40, do: filter("sh")},                        // prompt still open
+		// api is the here project and api 200 is tagged: "!" below 90 columns, the labels and
+		// what they mean in the detail pane from there.
+		{name: "tags-80x24", w: 80, h: 24, do: selectPID(200), ansi: true},
+		{name: "tags-120x40", w: 120, h: 40, do: selectPID(200, "enter"), ansi: true},
+		{name: "filter-80x24", w: 80, h: 24, do: filter("vite", "enter")}, // applied
+		{name: "filter-120x40", w: 120, h: 40, do: filter("sh")},          // prompt still open
 		{name: "kill-80x24", w: 80, h: 24, do: selectPID(101, "x", "t"), ansi: true, ascii: true},
 		{name: "kill-120x40", w: 120, h: 40, do: selectPID(101, "x", "t")},
 		// The second confirmation; postgres rather than sshd, since the engine refuses pid 1.
