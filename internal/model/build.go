@@ -13,7 +13,7 @@ import (
 
 // Raw is one collector sample, as produced by collector.Collector (collector.Result is an alias).
 // Processes carry only the collected fields: PID, PPID, UID, StartTime, Name, Argv, Cwd,
-// CPUTime, RSSBytes and the argv/cwd/cpu/mem bits of Unknown; Build derives the rest.
+// CwdDeleted, CPUTime, RSSBytes and the argv/cwd/cpu/mem bits of Unknown; Build derives the rest.
 type Raw struct {
 	TakenAt   time.Time // when sampling started; the wall clock for CPUPercent
 	Host      Host
@@ -69,7 +69,7 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 	procs := make([]Process, len(raw.Processes), len(raw.Processes)+len(raw.Listeners))
 	byPID := make(map[int]int, len(raw.Processes))
 	for i, p := range raw.Processes {
-		p.Listeners, p.Kind, p.ProjectID, p.ContainerID = nil, KindOther, "", ""
+		p.Listeners, p.Kind, p.ProjectID, p.ContainerID, p.Tags = nil, KindOther, "", "", 0
 		p.Name = fullName(p)
 		procs[i] = p
 		byPID[p.PID] = i

@@ -37,6 +37,7 @@ type Process struct {
 	Name        string // comm on Linux, p_comm on macOS; Build replaces a cut-short one with argv[0]'s basename
 	Argv        []string
 	Cwd         string        // "" when unreadable
+	CwdDeleted  bool          // the cwd was removed (collected; spec "Release 1.0", Tags); false when unknown
 	CPUTime     time.Duration // cumulative user+system, as collected; input to CPUPercent
 	CPUPercent  float64       // delta between consecutive samples of the same identity; NaN on the first
 	RSSBytes    uint64
@@ -45,6 +46,7 @@ type Process struct {
 	ProjectID   string   // Project.ID or ""
 	ContainerID string   // set when every listener this process holds is the same container's (Reconcile)
 	Unknown     FieldSet // fields that could not be read
+	Tags        TagSet   // facts that suggest a leftover, computed per snapshot by Build
 }
 
 // Listener is one listening TCP socket.
@@ -64,6 +66,7 @@ type Project struct {
 	ShortSHA string
 	Worktree bool
 	MainRepo string // for linked worktrees only
+	Here     bool   // the repository devdash was run from (spec "Release 1.0", Here)
 }
 
 // Container is one Docker container as reported by the Engine API.
@@ -141,4 +144,36 @@ func (s FieldSet) Names() []string {
 		}
 	}
 	return names
+}
+
+// TagSet is a set of facts that suggest a process was left over (spec "Release 1.0", Tags).
+// Tags state facts; none of them says a process is safe to kill.
+type TagSet uint8
+
+// Tags, in the order Names and Labels list them (the spec's tag table).
+const (
+	TagOrphaned   TagSet = 1 << iota // its parent exited
+	TagCwdDeleted                    // its working directory is gone
+)
+
+var (
+	tagNames  = [...]string{"orphaned", "cwd_deleted"}
+	tagLabels = [...]string{"orphaned", "cwd deleted"}
+)
+
+// Names lists the set tags by their JSON name (orphaned, cwd_deleted); never nil, so an
+// empty set encodes as [].
+func (s TagSet) Names() []string { return s.list(tagNames[:]) }
+
+// Labels lists the set tags as people read them (orphaned, cwd deleted), in the same order.
+func (s TagSet) Labels() []string { return s.list(tagLabels[:]) }
+
+func (s TagSet) list(words []string) []string {
+	out := []string{}
+	for i, w := range words {
+		if s&(1<<i) != 0 {
+			out = append(out, w)
+		}
+	}
+	return out
 }
