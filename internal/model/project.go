@@ -20,6 +20,7 @@ var lstat = os.Lstat
 type Resolver struct {
 	home  string
 	roots []string
+	here  string             // devdash's own working directory, resolved; "" for none (SetHere)
 	cache map[string]cached  // directory → repository found by its walk; only hits, across ticks
 	tick  map[string]Project // directory → result for the current Resolve call, misses included
 }
@@ -45,6 +46,17 @@ func NewResolver(home string, roots []string) *Resolver {
 	return r
 }
 
+// SetHere records devdash's own working directory (spec "Release 1.0", Here): from then on,
+// Resolve marks the project of dir, found by steps 1-4 (no parent chain, no argv) under the
+// same $HOME and roots rules as a process cwd, with Here. dir is resolved through symlinks
+// once, here, like home and roots; "" or a relative dir (os.Getwd failed) means no Here.
+func (r *Resolver) SetHere(dir string) {
+	r.here = realPath(dir)
+	if !filepath.IsAbs(r.here) {
+		r.here = ""
+	}
+}
+
 func realPath(p string) string {
 	if p == "" {
 		return ""
@@ -58,7 +70,7 @@ func realPath(p string) string {
 // Resolve sets ProjectID on every element of procs in place (Build passes its own fresh
 // slice), "" for the "other" group, for PID 0 pseudo-processes and for container-runtime
 // processes (IsContainerRuntime), and returns each project referenced by at least one process,
-// once, in order of first reference.
+// once, in order of first reference, the one of the SetHere directory with Here set.
 //
 // Steps 1–5 of the spec: the nearest repository above the process cwd, else above the cwd of
 // its parent, grandparent and great-grandparent. Step 6, once every process has had steps
@@ -106,10 +118,14 @@ func (r *Resolver) Resolve(procs []Process) []Project {
 		}
 	}
 
+	// Looked up on every call, through the cache like any cwd, so the Here project's branch
+	// is the current one; devdash's own process has this cwd, so it is a tick-map hit.
+	hereID := r.dir(r.here).ID
 	var projects []Project
 	for _, p := range procs {
 		if p.ProjectID != "" {
 			if proj, ok := found[p.ProjectID]; ok {
+				proj.Here = hereID != "" && proj.ID == hereID
 				projects = append(projects, proj)
 				delete(found, p.ProjectID)
 			}

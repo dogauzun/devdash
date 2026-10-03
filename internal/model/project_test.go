@@ -490,6 +490,158 @@ func TestResolveCacheCap(t *testing.T) {
 	}
 }
 
+// hereIDs returns the IDs of the projects marked Here.
+func hereIDs(projects []Project) []string {
+	var ids []string
+	for _, p := range projects {
+		if p.Here {
+			ids = append(ids, p.ID)
+		}
+	}
+	return ids
+}
+
+// TestResolveHereGit: devdash's own directory marks its project, and only that one: in a
+// linked worktree, the worktree's project, not the main repository's.
+func TestResolveHereGit(t *testing.T) {
+	base := needGit(t)
+	shop := filepath.Join(base, "shop")
+	wt := filepath.Join(base, "shop-wt")
+	lib := filepath.Join(shop, "vendor/lib")
+	for _, tc := range []struct {
+		name, here string
+		want       []string
+	}{
+		{"main repo root", shop, []string{shop}},
+		{"main repo subdirectory", filepath.Join(shop, "sub/deep"), []string{shop}},
+		{"nested repo", lib, []string{lib}},
+		{"linked worktree", wt, []string{wt}},
+		{"outside any repo", base, nil},
+		{"no working directory", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewResolver("", nil)
+			r.SetHere(tc.here)
+			procs := []Process{inDir(10, shop), inDir(11, wt), inDir(12, lib), inDir(13, base)}
+			for tick := range 2 { // every snapshot, not only the first
+				projects := r.Resolve(procs)
+				if len(projects) != 3 {
+					t.Fatalf("tick %d: projects %+v, want shop, its worktree and lib", tick, projects)
+				}
+				if got := hereIDs(projects); !slices.Equal(got, tc.want) {
+					t.Errorf("tick %d: Here on %q, want %q", tick, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestResolveHereLayouts: the Here directory follows the rules for a process cwd (steps 2-4):
+// the $HOME rule, --roots, symlinks resolved.
+func TestResolveHereLayouts(t *testing.T) {
+	base := tmp(t)
+	home := mkrepo(t, base, "home", "dotfiles") // dotfiles repository at $HOME
+	notes := mkdir(t, home, "notes")
+	code := mkrepo(t, home, "code/app", "main")
+	src := mkdir(t, code, "src")
+	outside := mkrepo(t, base, "elsewhere/x", "main")
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(src, link); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, here string
+		roots      []string
+		want       []string
+	}{
+		{"repo below home", src, nil, []string{code}},
+		{"dotfiles repo at home is not a project", home, nil, nil},
+		{"below home, no repo", notes, nil, nil},
+		{"outside home", outside, nil, []string{outside}},
+		{"symlinked directory", link, nil, []string{code}},
+		{"directory removed", filepath.Join(outside, "gone/dir"), nil, []string{outside}},
+		{"relative path", "elsewhere/x", nil, nil},
+		{"roots: inside", code, []string{filepath.Join(home, "code")}, []string{code}},
+		{"roots: here excluded", outside, []string{filepath.Join(home, "code")}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewResolver(home, tc.roots)
+			r.SetHere(tc.here)
+			// A process in each candidate, so that every project the Here directory could
+			// name is referenced (the dotfiles repository is never a project).
+			projects := r.Resolve([]Process{inDir(10, code), inDir(11, outside), inDir(12, home)})
+			if got := hereIDs(projects); !slices.Equal(got, tc.want) {
+				t.Errorf("Here on %q, want %q (projects %+v)", got, tc.want, projects)
+			}
+		})
+	}
+}
+
+// TestResolveHereBranchSwitch: the Here project carries the branch of the current snapshot
+// and stays Here across a switch.
+func TestResolveHereBranchSwitch(t *testing.T) {
+	base := tmp(t)
+	shop := mkrepo(t, base, "shop", "main")
+	r := NewResolver("", nil)
+	r.SetHere(shop)
+	if _, p := resolveOne(r, inDir(10, shop)); len(p) != 1 || !p[0].Here || p[0].Branch != "main" {
+		t.Fatalf("before: %+v", p)
+	}
+	mkfile(t, shop, ".git/HEAD", "ref: refs/heads/feat\n")
+	later := time.Now().Add(time.Second)
+	if err := os.Chtimes(filepath.Join(shop, ".git/HEAD"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	if _, p := resolveOne(r, inDir(10, shop)); len(p) != 1 || !p[0].Here || p[0].Branch != "feat" {
+		t.Errorf("after the switch: %+v, want branch feat and Here", p)
+	}
+}
+
+// TestResolveHereCached: with a process in the Here directory, as devdash itself always is,
+// marking Here costs no filesystem call: a warm tick is still one lstat.
+func TestResolveHereCached(t *testing.T) {
+	base := tmp(t)
+	shop := mkrepo(t, base, "shop", "main")
+	sub := mkdir(t, shop, "a/b")
+	r := NewResolver("", nil)
+	r.SetHere(sub)
+	resolveOne(r, inDir(10, sub))
+	n := countLstat(t)
+	if _, p := resolveOne(r, inDir(10, sub)); *n != 1 || len(p) != 1 || !p[0].Here {
+		t.Errorf("warm tick: %d lstat calls, want 1; projects %+v", *n, p)
+	}
+}
+
+// TestBuildHere: in a snapshot, the Here project referenced by devdash's own process is
+// marked and the other project is not, in every snapshot; a resolver without a Here
+// directory marks nothing.
+func TestBuildHere(t *testing.T) {
+	base := tmp(t)
+	shop := mkrepo(t, base, "shop", "main")
+	other := mkrepo(t, base, "other", "main")
+	r := NewResolver("", nil)
+	r.SetHere(filepath.Join(shop, "cmd"))
+	raw := Raw{TakenAt: t0, Processes: []Process{
+		{PID: 10, PPID: 1, Name: "vite", Argv: []string{"vite"}, Cwd: other},
+		{PID: 11, PPID: 1, Name: "devdash", Argv: []string{"devdash"}, Cwd: shop},
+	}}
+	here := project(shop, "main")
+	here.Here = true
+	want := []Project{project(other, "main"), here}
+
+	s := Build(raw, Snapshot{}, nil, r)
+	if !slices.Equal(s.Projects, want) || s.Processes[1].ProjectID != shop {
+		t.Errorf("projects %+v, devdash in %q; want %+v, devdash in %q", s.Projects, s.Processes[1].ProjectID, want, shop)
+	}
+	if next := Build(raw, s, nil, r); !slices.Equal(next.Projects, want) {
+		t.Errorf("next snapshot: projects %+v, want %+v", next.Projects, want)
+	}
+	if got := hereIDs(Build(raw, s, nil, NewResolver("", nil)).Projects); got != nil {
+		t.Errorf("no Here directory: Here on %q", got)
+	}
+}
+
 // BenchmarkResolve: 500 processes over 5 repositories with 20 directories each, warm cache.
 func BenchmarkResolve(b *testing.B) {
 	base, err := filepath.EvalSymlinks(b.TempDir())

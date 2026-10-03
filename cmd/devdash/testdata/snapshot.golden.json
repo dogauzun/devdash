@@ -58,7 +58,9 @@
       "project": "/TMP/shop",
       "container": null,
       "unknown": [],
-      "tags": []
+      "tags": [
+        "orphaned"
+      ]
     },
     {
       "pid": 101,

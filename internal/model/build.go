@@ -14,6 +14,7 @@ import (
 // Raw is one collector sample, as produced by collector.Collector (collector.Result is an alias).
 // Processes carry only the collected fields: PID, PPID, UID, StartTime, Name, Argv, Cwd,
 // CwdDeleted, CPUTime, RSSBytes and the argv/cwd/cpu/mem bits of Unknown; Build derives the rest.
+// Host.OS picks the platform's orphaned rule (Tag).
 type Raw struct {
 	TakenAt   time.Time // when sampling started; the wall clock for CPUPercent
 	Host      Host
@@ -63,7 +64,7 @@ const unknownOwner = FieldOwner | FieldArgv | FieldCwd | FieldCPU | FieldMem
 //
 // Steps: copy processes; attach each listener to its owner, once per (proto, addr, port); give every distinct listener with
 // no owner in raw.Processes its own PID 0 "unknown" process; compute CPUPercent; merge
-// warnings by Code; call r.Resolve, Classify and Reconcile, in that order; then add one
+// warnings by Code; call r.Resolve, Classify, Reconcile and Tag, in that order; then add one
 // listener_owner_unreadable warning counting the PID 0 rows no container explains.
 func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot {
 	procs := make([]Process, len(raw.Processes), len(raw.Processes)+len(raw.Listeners))
@@ -132,6 +133,7 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 		procs[i].Kind = Classify(procs[i])
 	}
 	procs = Reconcile(procs, containers)
+	Tag(procs, raw.Host.OS)
 	// The PID 0 rows are the ones appended above, one listener each. A row Reconcile matched to
 	// a container (root's docker-proxy seen by a user) is explained, and sudo would only show
 	// the proxy, so only the others count (DEV-77).
