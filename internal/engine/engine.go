@@ -130,8 +130,9 @@ func (e *Engine) Refresh() {
 // Fetch returns) and never waits for a Fetch. Run returns after that goroutine has stopped.
 //
 // After a good tick with more than 5000 processes, each Collect reads argv only for processes
-// in a project or with a listener (collector.Options.InProject, answered by inProject);
-// Snapshot and SnapshotAfter always read every argv.
+// in a project or with a listener, plus the few the collector adds by name (long, runtime or
+// systemd; collector.Options.InProject, answered by inProject); Snapshot and SnapshotAfter
+// always read every argv.
 func (e *Engine) Run(ctx context.Context) {
 	defer close(e.updates)
 	if e.o.Docker != nil {
