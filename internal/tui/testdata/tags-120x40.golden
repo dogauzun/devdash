@@ -5,7 +5,7 @@ NAME                                          KIND      PORTS           PID   UP
     go                                        test                      201  30s|           a child of launchd
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            |           cwd deleted: working
   ▾ zsh                                       shell                     100   5h|           directory deleted
-    ▾ node                                    server    *5173           101   3h| cwd       /src/api
+    ▾ vite (node)                             server    *5173           101   3h| cwd       /src/api
         esbuild                               other                     102   2h| project   api @ main
     claude                                    agent                     103  20m| root      /src/api
 ▾ shop (compose) · 2 containers · 2 ports                                       | listeners tcp4 127.0.0.1:8080

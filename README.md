@@ -53,7 +53,9 @@ Processes with no project go under `other`, which starts collapsed (its header s
 them; `→` opens it), and containers without a compose project under `containers`. The `/`
 filter searches every row, folded or hidden: a shell or editor that matches shows without `a`,
 and a container row with `d`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
-It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
+A process run by an interpreter is named by its tool, as in `vite (node)` or `pytest (python3)`,
+and below 90 columns, where the command column does not fit, its arguments follow the name in
+faint text. It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
 [Keybindings](#keybindings)) and `q` quits.
 
 ### `devdash --json`

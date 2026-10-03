@@ -28,14 +28,14 @@ const evilShown = "a?[31mb?]0;pwned?c?2Jd?e?f?g?h?i"
 // the header on screen at 80 columns.
 const evilHost = "mbp\x1b]0;x\x07\u009b"
 
-// evilSnapshot is the fixture with evil in every string the TUI draws: node vite's name, argv,
-// cwd and user, shop's name, branch and main repo, the compose project, shop-db-1's name and
+// evilSnapshot is the fixture with evil in every string the TUI draws: node vite's name, argv
+// (its tool, so its label, among them), cwd and user, shop's name, branch and main repo, the compose project, shop-db-1's name and
 // image and the warning hint; the hostname is evilHost.
 func evilSnapshot() model.Snapshot {
 	s := fixture()
 	vite := &s.Processes[1]
 	vite.Name = "node" + evil
-	vite.Argv = []string{"node", evil, "--port\n5173"}
+	vite.Argv = []string{"node", "vite" + evil, "--port\n5173"}
 	vite.Cwd = shopID + evil
 	vite.User = "me" + evil
 	s.Projects[0].Name = "shop" + evil
@@ -108,7 +108,7 @@ func TestCleanTable(t *testing.T) {
 		where := fmt.Sprintf("table %dx%d", w, h)
 		assertNoControl(t, m, where)
 		// Cells are cut at 100 columns, so the name cells are checked up to the cut.
-		for _, want := range []string{"node" + evilShown[:12], "shop" + evilShown + " @ feat/" + evilShown, "shop-db" + evilShown[:12]} {
+		for _, want := range []string{"vite" + evilShown[:12], "shop" + evilShown + " @ feat/" + evilShown, "shop-db" + evilShown[:12]} {
 			if line(m, want) == "" {
 				t.Errorf("%s: no line shows %q:\n%s", where, want, screen(m))
 			}
@@ -157,8 +157,10 @@ func TestCleanDetail(t *testing.T) {
 	feed(m, s)
 	detailSelect(t, m, keyOf(s, 101))
 	press(m, "enter")
-	if want := `"nodea\x1b[31mb`; !strings.Contains(screen(m), want) {
-		t.Errorf("the detail pane does not quote the name (%q):\n%s", want, screen(m))
+	for _, want := range []string{`"vitea\x1b[31mb`, ` (nodea\x1b[31mb`} {
+		if !strings.Contains(screen(m), want) {
+			t.Errorf("the detail pane does not quote the label (%q):\n%s", want, screen(m))
+		}
 	}
 }
 
@@ -171,7 +173,7 @@ func TestCleanKill(t *testing.T) {
 		selectRow(t, m, keyOf(s, 101))
 		press(m, "x")
 		assertNoControl(t, m, where("confirm"))
-		if line(m, "kill node"+evilShown) == "" {
+		if line(m, "kill vite"+evilShown) == "" {
 			t.Errorf("%s: no title with the cleaned name:\n%s", where("confirm"), screen(m))
 		}
 		press(m, "t") // tree mode: esbuild too, under shop's project name
@@ -211,7 +213,7 @@ func TestCleanKill(t *testing.T) {
 		fp.refuse = func(engine.KillOptions) error { return errors.New("plan " + evil) }
 		press(m, "esc", "x")
 		assertNoControl(t, m, where("status"))
-		if !strings.Contains(m.status, evil) || line(m, "cannot kill node"+evilShown+": plan a?[31m") == "" {
+		if !strings.Contains(m.status, evil) || line(m, "cannot kill vite"+evilShown) == "" {
 			t.Errorf("%s: the footer does not show the cleaned status:\n%s", where("status"), screen(m))
 		}
 
@@ -223,7 +225,7 @@ func TestCleanKill(t *testing.T) {
 		selectRow(t, m, keyOf(out, 101))
 		press(m, "x", "enter")
 		assertNoControl(t, m, where("outside"))
-		if line(m, "node"+evilShown[:12]) == "" || m.kill.stage != killOutside {
+		if line(m, "vite"+evilShown[:12]) == "" || m.kill.stage != killOutside {
 			t.Errorf("%s: not the second confirmation for the cleaned name:\n%s", where("outside"), screen(m))
 		}
 	}

@@ -146,7 +146,7 @@ func TestDetailProcess(t *testing.T) {
 	detailSelect(t, m, keyOf(s, 101))
 	press(m, "enter")
 	for _, want := range []string{
-		"node 101 · server",
+		"vite (node) 101 · server",
 		"command   node node_modules/.bin/vite --port 5173",
 		"cwd       /src/shop",
 		"project   shop @ feat/cart (worktree)",
