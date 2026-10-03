@@ -833,20 +833,34 @@ func TestKillResultPorts(t *testing.T) {
 		t.Errorf("status %q, want %q", got, want)
 	}
 
-	// A process that was gone before the signal counts: it was in the kill, and its port is the
-	// one the user wanted.
-	m, _, _, fk := newKillTest(t, 120, 40, s)
-	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
-		return outcomes(p, func(proc model.Process) engine.Outcome {
-			return engine.Outcome{Signalled: proc.PID != 101, Exited: true}
-		}), nil
-	})
-	selectRow(t, m, keyOf(s, 101))
-	press(m, "x", "t")
-	run(t, m, press(m, "enter"))
-	feed(m, afterKill(without(s, 101, 102), time.Second))
-	if got, want := status(m), "killed 1 process, 1 already gone · 5173 free"; got != want {
-		t.Errorf("status %q, want %q", got, want)
+	// Only the processes the kill signalled count: one gone before the signal adds no port, and
+	// a kill that signalled nothing reports none.
+	withPort := fixture()
+	withPort.Processes[2].Listeners = []model.Listener{lis("tcp4", "127.0.0.1", 5174)} // esbuild
+	for _, c := range []struct {
+		name      string
+		signalled func(pid int) bool
+		want      string
+	}{
+		{"vite signalled, esbuild gone", func(pid int) bool { return pid == 101 }, "killed 1 process, 1 already gone · 5173 free"},
+		{"vite gone, esbuild signalled", func(pid int) bool { return pid == 102 }, "killed 1 process, 1 already gone · 5174 free"},
+		{"nothing signalled", func(int) bool { return false }, "killed 0 processes, 2 already gone"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, _, fk := newKillTest(t, 120, 40, withPort)
+			fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+				return outcomes(p, func(proc model.Process) engine.Outcome {
+					return engine.Outcome{Signalled: c.signalled(proc.PID), Exited: true}
+				}), nil
+			})
+			selectRow(t, m, keyOf(withPort, 101))
+			press(m, "x", "t")
+			run(t, m, press(m, "enter"))
+			feed(m, afterKill(without(withPort, 101, 102), time.Second))
+			if got := status(m); got != c.want {
+				t.Errorf("status %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

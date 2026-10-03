@@ -69,7 +69,7 @@ func (msg killDoneMsg) apply(m *Model) tea.Cmd { return m.killDone(msg.result, m
 // killAfter is a finished kill's ports, waiting for the first snapshot taken after it to say
 // whether each is free (spec "Release 1.1", Kill result); the zero value waits for nothing.
 type killAfter struct {
-	ports []uint16  // the killed processes' TCP ports, ascending, without repeats
+	ports []uint16  // the signalled processes' TCP ports, ascending, without repeats
 	done  time.Time // when Kill returned: a snapshot taken before may still list them
 }
 
@@ -233,6 +233,9 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	m.kill = killState{}
 	var ports []uint16
 	for _, o := range r.Outcomes {
+		if !o.Signalled { // gone before the signal: not one of the processes this kill stopped
+			continue
+		}
 		for _, l := range o.Process.Listeners {
 			if !strings.HasPrefix(l.Proto, "udp") {
 				ports = append(ports, l.Port)

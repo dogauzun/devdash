@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -466,6 +468,92 @@ func TestPortLineShown(t *testing.T) {
 // TestPortProbeRuns: the probe runs in a command when the query changes to a port number and
 // on each new snapshot while it is one; an answer for an older query or snapshot is dropped,
 // and the last answer stays until the next one arrives.
+// overlapProbe is a Prober that notices two calls in flight at once: each call waits up to
+// 50 ms for another to start before it answers free. Every port binds.
+type overlapProbe struct {
+	in      atomic.Int32
+	overlap atomic.Bool
+	calls   atomic.Int32
+}
+
+func (o *overlapProbe) probe(uint16) (bool, error) {
+	o.calls.Add(1)
+	if o.in.Add(1) > 1 {
+		o.overlap.Store(true)
+	}
+	for deadline := time.Now().Add(50 * time.Millisecond); time.Now().Before(deadline) && !o.overlap.Load(); {
+		time.Sleep(time.Millisecond)
+	}
+	o.in.Add(-1)
+	return true, nil
+}
+
+// runConcurrently runs cmd as the program does, each command of a batch on its own goroutine,
+// and returns the messages once every command has finished.
+func runConcurrently(cmd tea.Cmd) []tea.Msg {
+	var (
+		mu    sync.Mutex
+		msgs  []tea.Msg
+		wg    sync.WaitGroup
+		start func(tea.Cmd)
+	)
+	start = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		wg.Go(func() {
+			msg := c()
+			if b, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range b {
+					start(c)
+				}
+				return
+			}
+			mu.Lock()
+			msgs = append(msgs, msg)
+			mu.Unlock()
+		})
+	}
+	start(cmd)
+	wg.Wait()
+	return msgs
+}
+
+// TestProbeSerialized: the port line's and the detail pane's searches run concurrently, but the
+// probe never binds for both at once (on macOS two binds of one port collide, so one search
+// would skip a free port or read it as refused).
+func TestProbeSerialized(t *testing.T) {
+	op := &overlapProbe{}
+	m, src := newTest(t, 100, 40, func(o *Options) { o.Probe = op.probe })
+	feed(m, fixture())
+	close(src.ch)
+	search(m, "5173")
+	press(m, "enter")            // apply the query; vite is selected
+	runAll(m, press(m, "enter")) // open the pane on it
+	if !m.detail || m.sel != keyOf(fixture(), 101) {
+		t.Fatalf("pane open %v on %+v", m.detail, m.sel)
+	}
+	before := op.calls.Load()
+	s := fixture()
+	s.TakenAt = now
+	_, cmd := m.Update(updateMsg(engine.Update{Snapshot: s, Interval: 2 * time.Second}))
+	for _, msg := range runConcurrently(cmd) {
+		if _, closed := msg.(closedMsg); !closed {
+			m.Update(msg)
+		}
+	}
+	if n := op.calls.Load() - before; n != 2 {
+		t.Fatalf("%d probe calls on the snapshot, want 2 (the port line's and the pane's)", n)
+	}
+	if op.overlap.Load() {
+		t.Error("two probe calls were in flight at once")
+	}
+	if got := portLine(m); got != "port 5173 · 1 holder · next free 5174" {
+		t.Errorf("port line %q", got)
+	}
+	hasLine(t, m, "next free 5174")
+}
+
 func TestPortProbeRuns(t *testing.T) {
 	fp := &fakeProbe{}
 	m := newPortTest(t, 80, 24, fixture(), fp)

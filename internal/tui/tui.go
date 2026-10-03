@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -117,6 +118,7 @@ func New(o Options) *Model {
 	if o.Probe == nil {
 		o.Probe = freeport.Probe
 	}
+	o.Probe = serialProbe(o.Probe)
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -126,6 +128,20 @@ func New(o Options) *Model {
 	m := &Model{o: o, selIdx: -1, view: model.ViewOptions{ShowAll: o.ShowAll, Collapsed: collapsed}}
 	m.rebuild()
 	return m
+}
+
+// serialProbe returns probe with its calls one at a time. The port line's and the detail
+// pane's searches run in commands at once (both on each snapshot), and freeport.Probe binds
+// the port it is asked: on macOS, without SO_REUSEADDR, two binds of one port collide, so one
+// search would skip a free port or read it as refused. Each call closes its sockets before it
+// returns, so one call at a time is enough.
+func serialProbe(probe freeport.Prober) freeport.Prober {
+	var mu sync.Mutex
+	return func(port uint16) (bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return probe(port)
+	}
 }
 
 // Run starts the dashboard on the terminal and blocks until the user quits, ctx is done or
