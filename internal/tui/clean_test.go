@@ -145,6 +145,7 @@ func TestCleanDetail(t *testing.T) {
 		for name, k := range rows {
 			m, _ := newTest(t, size[0], size[1])
 			feed(m, s)
+			openOther(m) // the unknown owner's row
 			detailSelect(t, m, k)
 			press(m, "enter")
 			where := fmt.Sprintf("detail %s %dx%d", name, size[0], size[1])
@@ -218,6 +219,7 @@ func TestCleanKill(t *testing.T) {
 		out := evilSnapshot()
 		out.Processes[1].ProjectID = ""
 		m, _, _, _ = newKillTest(t, size[0], size[1], out)
+		openOther(m) // node vite is in other now
 		selectRow(t, m, keyOf(out, 101))
 		press(m, "x", "enter")
 		assertNoControl(t, m, where("outside"))

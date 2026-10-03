@@ -271,6 +271,9 @@ func TestGoldenViews(t *testing.T) {
 				s, _ = withPostgres(s)
 			}
 			m, _, _, fk := newKillTest(t, v.w, v.h, s)
+			if v.postgres {
+				openOther(m)
+			}
 			v.do(t, m, s)
 			golden(t, v.name+".golden", screen(m))
 			if v.ansi {

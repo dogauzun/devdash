@@ -58,7 +58,7 @@ type Row struct {
 	// so a row's ancestors are the nearest preceding rows with a smaller Depth; a filter over
 	// []Row keeps ancestors of a match by walking back.
 	Depth  int
-	Dimmed bool // hidden by the view (shell, editor) but drawn to keep a visible descendant connected
+	Dimmed bool // hidden by the view (shell, editor; the TUI's search also container rows with `d`) but drawn to keep a visible descendant connected
 }
 
 // SortMode orders the roots within each group (the `s` key cycles through them).
@@ -125,7 +125,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 			continue
 		}
 		n := &node{row: Row{Key: p.Key(), Process: p}, start: p.StartTime, cpu: p.CPUPercent, port: noPort,
-			hidden: !opts.ShowAll && len(p.Listeners) == 0 && (p.Kind == KindShell || p.Kind == KindEditor)} // a listener is never hidden
+			hidden: !opts.ShowAll && p.Hideable()}
 		for _, l := range p.Listeners {
 			n.port = min(n.port, int(l.Port))
 		}
@@ -187,6 +187,12 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 		}
 	}
 	return rows
+}
+
+// Hideable reports whether Flatten hides p unless ShowAll: a shell or an editor with no
+// listener (a listener is never hidden).
+func (p *Process) Hideable() bool {
+	return len(p.Listeners) == 0 && (p.Kind == KindShell || p.Kind == KindEditor)
 }
 
 // group is one header and the rows under it, before the tree is built.
@@ -334,23 +340,19 @@ func (n *node) emit(rows []Row, depth int, collapsed map[RowKey]bool) []Row {
 }
 
 // Filter returns the rows that match query plus the ancestors of each, in order (spec "TUI
-// design"). A row matches when query is a case-insensitive substring of a process's name,
-// argv or one of its tags (as label or JSON name: "cwd deleted" or "cwd_deleted"), a
-// container's name or image, or a header's project or compose name; a matching
-// header keeps its whole group. A query of digits only matches listener and published ports
-// by prefix ("30" finds 3000 and 3001) and nothing else. An empty query returns rows.
+// design"). A row matches as Match says; a matching header keeps its whole group. An empty
+// query returns rows.
 func Filter(rows []Row, query string) []Row {
 	if query == "" {
 		return rows
 	}
-	q := strings.ToLower(query)
-	digits := strings.Trim(q, "0123456789") == ""
+	match := matcher(query)
 	keep := make([]bool, len(rows))
 	var path []int // path[d] is the index of the latest row at depth d
 	group := false
 	for i, r := range rows {
 		path = append(path[:min(r.Depth, len(path))], i)
-		m := matches(r, q, digits)
+		m := match(r)
 		if r.Depth == 0 {
 			group = m
 		}
@@ -368,6 +370,26 @@ func Filter(rows []Row, query string) []Row {
 		}
 	}
 	return out
+}
+
+// Match reports whether row r itself matches query, as Filter tests each row (Filter adds
+// the ancestors of a match and the rows under a matching header). A row matches when query
+// is a case-insensitive substring of a process's name, argv or one of its tags (as label or
+// JSON name: "cwd deleted" or "cwd_deleted"), a container's name or image, or a header's
+// project or compose name. A query of digits only matches listener and published ports by
+// prefix ("30" finds 3000 and 3001) and nothing else. An empty query matches every row.
+func Match(r Row, query string) bool {
+	if query == "" {
+		return true
+	}
+	return matcher(query)(r)
+}
+
+// matcher returns Match for a non-empty query, with the query lower-cased once.
+func matcher(query string) func(Row) bool {
+	q := strings.ToLower(query)
+	digits := strings.Trim(q, "0123456789") == ""
+	return func(r Row) bool { return matches(r, q, digits) }
 }
 
 func matches(r Row, q string, digits bool) bool {

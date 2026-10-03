@@ -84,6 +84,7 @@ func TestTableWidths(t *testing.T) {
 	for _, c := range cases {
 		m, _ := newTest(t, c.w, 24)
 		feed(m, fixture())
+		openOther(m) // sshd's USER cell
 		got := strings.Fields(titles(m))
 		if !strings.HasPrefix(titles(m), "NAME") || strings.Join(got[len(got)-len(c.want)+1:], " ") != strings.Join(c.want[1:], " ") {
 			t.Errorf("w=%d: titles %q, want %v", c.w, titles(m), c.want)
@@ -163,6 +164,7 @@ func lipglossHeight(s string) int {
 func TestTableCells(t *testing.T) {
 	m, _ := newTest(t, 140, 30)
 	feed(m, fixture())
+	openOther(m) // sshd and the unknown owner
 	cases := []struct {
 		find string
 		want []string
@@ -203,6 +205,7 @@ func TestTableHeaders(t *testing.T) {
 	s.Containers = append(s.Containers, model.Container{ID: "77", Name: "redis", Image: "redis:7",
 		Ports: []model.PortMapping{{HostPort: 6379, ContainerPort: 6379, Proto: "tcp"}}})
 	feed(m, s)
+	openOther(m) // folded, its header reads ▸ other with the same counts (TestOtherStartsCollapsed)
 	for _, want := range []string{
 		"▾ api @ main (here) · 2 processes · 2 ports",
 		"▾ shop @ feat/cart (worktree) · 4 processes · 1 port",
@@ -319,6 +322,7 @@ func TestTableScroll(t *testing.T) {
 	// 80x8: header, two footer lines, the title: four rows of table.
 	m, _ := newTest(t, 80, 8)
 	feed(m, fixture())
+	openOther(m) // the unknown owner is the last row
 	rows := len(m.rows)
 	for i := 1; i < rows; i++ {
 		press(m, "j")
@@ -355,6 +359,7 @@ func TestTableCollapse(t *testing.T) {
 	m, _ := newTest(t, 120, 30)
 	s := fixture()
 	feed(m, s)
+	openOther(m) // nothing collapsed
 
 	// left on an expanded header collapses it; right expands it.
 	selectKey(t, m, shopHeader)

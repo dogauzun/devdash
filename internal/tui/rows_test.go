@@ -10,7 +10,7 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// Fixture rows in display order (80x24, default view):
+// Fixture rows in display order (80x24, default view, with other opened: it starts collapsed):
 //
 //	0 api            7   claude
 //	1   api 200      8 shop (compose)
@@ -151,6 +151,7 @@ func TestSelectedProcessExits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
 			feed(m, fixture())
+			openOther(m)
 			rowsSelect(t, m, tc.sel)
 			if m.selIdx != tc.idx {
 				t.Fatalf("fixture changed: %+v at %d, want %d", tc.sel, m.selIdx, tc.idx)
@@ -548,6 +549,114 @@ func TestFilterSeesCollapsed(t *testing.T) {
 	}
 }
 
+// rowsNotes is the header of the notes project, which only an editor references.
+var rowsNotes = model.RowKey{Header: model.GroupProject, Group: "/src/notes"}
+
+// withHidden returns the fixture with an idle shell in shop (zsh 104, no children) and a notes
+// project whose only process is an editor (nvim 400), so neither shows in the default view.
+func withHidden() model.Snapshot {
+	s := fixture()
+	idle := s.Processes[0] // zsh 100
+	idle.PID, idle.StartTime, idle.Argv = 104, at(time.Hour), []string{"-zsh"}
+	notes := s.Processes[6] // nvim 202
+	notes.PID, notes.ProjectID, notes.Cwd, notes.Argv = 400, "/src/notes", "/src/notes", []string{"nvim", "todo.md"}
+	s.Processes = append(slices.Clone(s.Processes), idle, notes)
+	s.Projects = append(slices.Clone(s.Projects), model.Project{ID: "/src/notes", Root: "/src/notes", Name: "notes", Branch: "main"})
+	return s
+}
+
+// The filter searches the rows the view hides (Release 1.1, "Search"): shells and editors
+// without `a`, container rows with `d`. One that matches is drawn normally, one that leads to
+// a match is dimmed, and the others are left out, along with a group left with no row; with
+// `a` on and `d` off every row is drawn as the view draws it.
+func TestFilterSeesHiddenKinds(t *testing.T) {
+	s := withHidden()
+	zsh, idle, nvim, notesNvim, proxy := keyOf(s, 100), keyOf(s, 104), keyOf(s, 202), keyOf(s, 400), keyOf(s, 300)
+	shopRows := []model.RowKey{rowsShopHeader, zsh, keyOf(s, 101), keyOf(s, 102), keyOf(s, 103)}
+	for _, tc := range []struct {
+		name   string
+		keys   []string // view toggles pressed before the search
+		query  string
+		want   []model.RowKey
+		dimmed []model.RowKey // the rows drawn dimmed; every other row is drawn normally
+	}{
+		{"a shell", nil, "zsh", []model.RowKey{rowsShopHeader, zsh, idle}, nil},
+		{"an editor", nil, "nvim", []model.RowKey{rowsAPIHeader, nvim, rowsNotes, notesNvim}, nil},
+		{"an editor by argv", nil, "todo", []model.RowKey{rowsNotes, notesNvim}, nil},
+		{"a shell that leads to a match", nil, "5173", []model.RowKey{rowsShopHeader, zsh, keyOf(s, 101)}, []model.RowKey{zsh}},
+		// The project name matches: the group as the view shows it, the idle shell left out.
+		{"a group", nil, "shop", append(slices.Clone(shopRows), rowsComposeHeader, webKey, proxy), []model.RowKey{zsh}},
+		// A group whose only rows are hidden is left out, as the view leaves it out.
+		{"a group of hidden rows", nil, "notes", nil, nil},
+		{"a on: a group", []string{"a"}, "shop",
+			[]model.RowKey{rowsShopHeader, zsh, keyOf(s, 101), keyOf(s, 102), idle, keyOf(s, 103), rowsComposeHeader, webKey, proxy}, nil},
+		{"a on: a group of hidden rows", []string{"a"}, "notes", []model.RowKey{rowsNotes, notesNvim}, nil},
+		{"a on: a shell", []string{"a"}, "zsh", []model.RowKey{rowsShopHeader, zsh, idle}, nil},
+		{"d on: a published port", []string{"d"}, "8000", []model.RowKey{rowsComposeHeader, webKey}, nil},
+		{"d on: a container's process", []string{"d"}, "5432", []model.RowKey{rowsComposeHeader, proxy}, nil},
+		{"d on: an image", []string{"d"}, "nginx", []model.RowKey{rowsComposeHeader, webKey}, nil},
+		{"d on: a shell", []string{"d"}, "zsh", []model.RowKey{rowsShopHeader, zsh, idle}, nil},
+		{"a and d on: a group", []string{"a", "d"}, "shop",
+			[]model.RowKey{rowsShopHeader, zsh, keyOf(s, 101), keyOf(s, 102), idle, keyOf(s, 103), rowsComposeHeader, webKey, proxy}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newTest(t, 120, 30)
+			feed(m, s)
+			press(m, tc.keys...)
+			press(m, "/")
+			typeText(m, tc.query)
+			if got := rowsKeys(m); !slices.Equal(got, tc.want) {
+				t.Fatalf("/%s: rows %+v, want %+v\n%s", tc.query, got, tc.want, screen(m))
+			}
+			for _, r := range m.rows {
+				if want := slices.Contains(tc.dimmed, r.Key); r.Dimmed != want {
+					t.Errorf("/%s: %+v dimmed %v, want %v", tc.query, r.Key, r.Dimmed, want)
+				}
+			}
+			if tc.want == nil && line(m, "nothing to show") == "" {
+				t.Errorf("/%s: no rows, want the empty message:\n%s", tc.query, screen(m))
+			}
+			// Clearing the filter hides them again.
+			press(m, "esc")
+			for _, k := range []model.RowKey{idle, nvim, webKey, proxy} {
+				if hidden := (k == idle || k == nvim) && !m.view.ShowAll || (k == webKey || k == proxy) && m.view.HideContainers; hidden && slices.Contains(rowsKeys(m), k) {
+					t.Errorf("filter cleared: hidden row %+v still shown: %+v", k, rowsKeys(m))
+				}
+			}
+		})
+	}
+}
+
+// The other group starts collapsed (Release 1.1): its header still counts its rows, → opens
+// it, and a search finds the rows inside it and leaves it folded once cleared.
+func TestOtherStartsCollapsed(t *testing.T) {
+	m, _ := newTest(t, 80, 24)
+	s := fixture()
+	feed(m, s)
+	if got := rowsKeys(m); got[len(got)-1] != rowsOtherHeader {
+		t.Fatalf("other is not a folded last row: %+v", got)
+	}
+	if line(m, "▸ other · 2 processes · 2 ports") == "" || line(m, "sshd") != "" || line(m, "*631") != "" {
+		t.Errorf("other is not drawn folded with its counts:\n%s", screen(m))
+	}
+
+	press(m, "/")
+	typeText(m, "sshd")
+	if got, want := rowsKeys(m), []model.RowKey{rowsOtherHeader, keyOf(s, 1)}; !slices.Equal(got, want) {
+		t.Errorf("/sshd: rows %+v, want %+v", got, want)
+	}
+	press(m, "esc")
+	if line(m, "▸ other") == "" || line(m, "sshd") != "" {
+		t.Errorf("filter cleared: other is not folded again:\n%s", screen(m))
+	}
+
+	rowsSelect(t, m, rowsOtherHeader)
+	press(m, "right")
+	if m.view.Collapsed[rowsOtherHeader] || line(m, "▾ other · 2 processes · 2 ports") == "" || line(m, "sshd") == "" || line(m, "*631") == "" {
+		t.Errorf("→ did not open other:\n%s", screen(m))
+	}
+}
+
 // While a filter is set ← only moves to the parent row and → does nothing: a fold would not
 // show until the filter is cleared (DEV-126).
 func TestFilterNoFolding(t *testing.T) {
@@ -567,8 +676,8 @@ func TestFilterNoFolding(t *testing.T) {
 	press(m, "left", "left")
 	wantSel(t, m, rowsShopHeader, 0)
 	press(m, "right", "down", "right")
-	if len(m.view.Collapsed) != 1 || !m.view.Collapsed[rowsShopHeader] {
-		t.Errorf("collapsed under a filter: %v, want only the shop header", m.view.Collapsed)
+	if len(m.view.Collapsed) != 2 || !m.view.Collapsed[rowsShopHeader] || !m.view.Collapsed[rowsOtherHeader] {
+		t.Errorf("collapsed under a filter: %v, want only the shop header and other (folded at start)", m.view.Collapsed)
 	}
 	if got := len(m.rows); got != 4 {
 		t.Errorf("%d rows, want shop, zsh, node and esbuild:\n%s", got, screen(m))
