@@ -68,3 +68,19 @@ func Clean(s string) string {
 	}
 	return b.String()
 }
+
+// Location places project pr relative to the Here project (spec "Release 1.0", Here): "this
+// repo" when it is Here, "this repo, other worktree" when the two differ but share a main
+// repository (a linked worktree's MainRepo, a main repository's Root), else "". Either may be
+// nil.
+func Location(pr, here *Project) string {
+	switch {
+	case pr == nil || here == nil:
+		return ""
+	case pr.ID == here.ID:
+		return "this repo"
+	case cmp.Or(pr.MainRepo, pr.Root) == cmp.Or(here.MainRepo, here.Root):
+		return "this repo, other worktree"
+	}
+	return ""
+}
