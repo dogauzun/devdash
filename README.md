@@ -116,6 +116,28 @@ free
 Exit 1 only ever means "free", so `devdash port 3000 || npm run dev` never starts a second
 server because devdash failed.
 
+### `devdash free N`
+
+Prints the first TCP port from N to N+99 (at most 65535) that nothing listens on, on any
+address, and that you can bind, so a dev server can start on another port:
+
+```sh
+PORT=$(devdash free 3000) npm run dev
+```
+
+A port counts as taken when a listener or a container's published port holds it, or when a
+test bind fails, which also catches other users' listeners that devdash cannot see without
+root. The answer means free at the moment of the check, not reserved: another process can take
+the port before your server starts. On macOS a port in TIME_WAIT (just after a server exited
+with open connections) counts as taken.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | the port is printed |
+| 1 | nothing is free from N to N+99; nothing is printed |
+| 2 | usage error |
+| 5 | devdash failed, so it could not look; nothing is printed |
+
 ### `devdash kill N`
 
 ```sh
@@ -236,8 +258,8 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   the first socket it finds among Docker Desktop's, OrbStack's, Colima's, `/var/run/docker.sock`
   and Podman's. With no socket there are no container rows and no warning, and the dashboard
   looks again every 10 ticks, rounded up to whole 5 s steps (20 s by default), so Docker
-  started after devdash shows up within that time; `port`, `kill` and `--json` look once. An
-  unreachable or slow engine gives a warning and the last container list. Only plain
+  started after devdash shows up within that time; `port`, `free`, `kill` and `--json` look
+  once. An unreachable or slow engine gives a warning and the last container list. Only plain
   `unix://` and `tcp://` endpoints are supported, not TLS. With the userland proxy disabled
   (`--userland-proxy=false`), Docker 28+ holds each published port in `dockerd`, which shows
   as the container when devdash runs as root and as an unknown owner reconciled to the
