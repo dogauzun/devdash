@@ -30,7 +30,7 @@ type Collector interface {
 // Options adjusts one Collect. The zero value reads everything.
 type Options struct {
 	// InProject, when set, limits argv reads (spec "Performance and degraded modes": over
-	// 5000 processes, argv only for processes in a project or with a listener). Collect then
+	// 5000 processes, argv mostly for processes in a project or with a listener). Collect then
 	// reads every other field and the listeners first, calls InProject once with the processes
 	// it kept (cwd read, Argv still nil) and reads argv only for those InProject marks, those
 	// holding a listener, those whose name may be a runtime's and those named systemd (see
