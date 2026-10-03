@@ -1,6 +1,6 @@
 # devdash — Technical Specification
 
-> The spec of record for devdash v1 (Release 0.1). Rulings made while building it are in [DECISIONS.md](../DECISIONS.md); `DEV-n` keys refer to the maintainer's private Jira tickets.
+> The spec of record for devdash v1 (Release 0.1) and for Release 1.0, the port answer, which adds to it (see [Release 1.0: the port answer](#release-10-the-port-answer)). Rulings made while building it are in [DECISIONS.md](../DECISIONS.md); `DEV-n` keys refer to the maintainer's private Jira tickets.
 
 2026-09-28 · Doga · Status: v1
 
@@ -82,6 +82,7 @@ type Process struct {
     ProjectID   string     // Project.ID or ""
     ContainerID string     // set when every listener this process holds is the same container's
     Unknown     FieldSet   // which fields could not be read (argv, cwd, cpu, mem, owner)
+    Tags        TagSet     // Release 1.0: facts that suggest a leftover (orphaned, cwd_deleted)
 }
 
 type Listener struct {
@@ -99,6 +100,7 @@ type Project struct {
     ShortSHA string
     Worktree bool
     MainRepo string  // for linked worktrees only
+    Here     bool    // Release 1.0: the project of the directory devdash was run from
 }
 
 type Container struct {
@@ -211,10 +213,12 @@ The CLI exposes the same snapshot the TUI shows, and its exit codes are the cont
 | `devdash` | the TUI | 0 |
 | `devdash --json` | one snapshot as a JSON document on stdout | 0; 5 devdash failed |
 | `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free, 5 devdash failed |
+| `devdash port 3000 --json` | Release 1.0: the same answer as one JSON object | as `port 3000` |
+| `devdash free 3000` | Release 1.0: the first free port from 3000 to 3099, or nothing | 0 found, 1 none free in range, 2 usage error, 5 devdash failed |
 | `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | the plan (mode, signal, every pid with name, project and ports), then what was signalled, survivors, and whether the port is free | 0 all exited (or nothing listens on the port), 2 usage error or no terminal to confirm on without `--yes`, 3 permission denied (or the owner is unknown), 4 survivors remain, 5 devdash failed before anything was signalled, 6 nothing signalled: a refused target or a declined confirmation |
 | `devdash version` | version, commit, build date | 0 |
 
-Global flags: `--roots <paths>` limits project scanning to repositories under those directories (comma-separated, and repeatable; a leading `~` is `$HOME`, `~user` is not supported, and a path that is not an existing directory is a usage error); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. Every command exits 5 when devdash itself fails (no snapshot could be taken, or the output could not be written), with the error on stderr and nothing on stdout; `kill` only before anything was signalled, since after that its code reports the signals; 1 is only ever "port free".
+Global flags: `--roots <paths>` limits project scanning to repositories under those directories (comma-separated, and repeatable; a leading `~` is `$HOME`, `~user` is not supported, and a path that is not an existing directory is a usage error); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. Every command exits 5 when devdash itself fails (no snapshot could be taken, or the output could not be written), with the error on stderr and nothing on stdout; `kill` only before anything was signalled, since after that its code reports the signals; 1 only ever answers the question asked (`port`: the port is free; `free`: no port in range is free) and never means devdash failed.
 
 The JSON document carries `schema_version`, and any field removal or rename bumps it. Additions do not. Times are RFC 3339 in UTC, sizes are bytes, durations are milliseconds, and unreadable fields are listed by name in `unknown` rather than filled with placeholders. Every key is always present; an absent or unreadable value is `null`. `--json` samples twice, 200 ms apart, so `cpu_percent` is a number (top-style: one core is 100). The full field reference is [`docs/json-schema.md`](json-schema.md); the example below follows it.
 
@@ -265,7 +269,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `↑` `↓` `j` `k` | move the selection |
 | `←` `→` `h` `l` | collapse or expand a project group or a tree node |
 | `enter` | open or close the detail pane |
-| `/` | filter by port, name, argv, project or container; `esc` clears |
+| `/` | filter by port, name, argv, project, container or tag (Release 1.0); `esc` clears |
 | `x` | kill modal: `p` process, `t` tree, `f` force, `esc` cancel |
 | `o` | open `http://localhost:<port>` |
 | `a` | show or hide shells and editors |
@@ -331,13 +335,67 @@ One static binary per target, built by goreleaser from a git tag, installable wi
 - Targets: `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`. Windows is a non-goal; the collector interface leaves room for it.
 - Dependencies, kept deliberately short: `charm.land/bubbletea/v2` (v2.0.0 shipped 24 February 2026 and the line is at v2.0.10 as of 24 September, per the [release page](https://github.com/charmbracelet/bubbletea/releases)), Lip Gloss and Bubbles at whichever line matches the Bubble Tea major in use, `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin only). No Docker SDK, no gopsutil in the build graph.
 - Release: goreleaser builds archives, checksums and a changelog from conventional commits, publishes a GitHub release, and updates a Homebrew cask in a `homebrew-tap` repository (a cask rather than a formula since goreleaser v2.16 deprecated formulas for prebuilt binaries; casks install on macOS and Linux). `go install github.com/<owner>/devdash/cmd/devdash@latest` works from the first tag.
-- Versioning: semver; `0.x` until the JSON schema and keybindings have been stable for two releases.
+- Versioning: semver. The port-answer release ships as 1.0.0 (Doga, 2026-10-03). From 1.0.0, JSON schema v1, the CLI exit codes and the keybindings are a compatibility promise: fields, commands and keys are added, never removed or renamed, without a new major version.
 - Signing: Go's linker ad-hoc signs darwin/arm64 binaries, which is enough to run; notarization is not needed for a CLI. macOS 27 withholds the PCB list from any process with an ad-hoc-signed ancestor, and devdash's own signature does not matter when it is launched from a shell. So the per-uid fd walk stays the primary source. The PCB list adds other users' listeners when the kernel serves it, an empty list is "unknown" with a footer hint, and there is no netstat fallback.
 - Repository contents on day one: `README.md` (install, keybindings, a short "why another port tool" comparison, demo GIF), `CLAUDE.md` (build, test and lint commands, conventions), `DECISIONS.md` (one line per non-obvious choice), `demo.tape` for [vhs](https://github.com/charmbracelet/vhs), `.goreleaser.yaml`, `.golangci.yml`, `LICENSE` (MIT).
 
+## Release 1.0: the port answer
+
+Release 1.0 makes `devdash port N` the place to decide what to do about a busy port, and gives both outcomes, killing the holder or moving to another port, one step each. The usual moment is a dev server failing with "address already in use": the developer asks what holds the port, then either kills it or starts on another port. v1 answers only who (`15669  python3  shop  0.0.0.0:5173`), which hides the real command and says nothing about whether the holder is the developer's own leftover. Only devdash knows the repository, worktree and branch of a process, so Release 1.0 uses that to help answer "should I kill it", and adds "which port can I use instead".
+
+Release 1.0 is done when these four goals hold on both operating systems without root, on top of the eight v1 goals:
+
+- `devdash port N` shows, for each holder, the full command, the project with branch or worktree, the uptime, and whether it is in the repository devdash was run from.
+- A holder carries a tag when a fact suggests it was left over: `orphaned` (its parent exited) or `cwd deleted` (its working directory is gone). Tags state facts; devdash never says a process is safe to kill.
+- `devdash free N` prints the first port at or above N that nothing listens on and that the OS lets this user bind, so `PORT=$(devdash free 3000) npm run dev` works.
+- Scripts written against v0.1 keep working: piped `port N` output is unchanged, and JSON only gains fields.
+
+Non-goals for Release 1.0: an idle tag (a dev server without traffic is idle and fine), killing a whole project at once, a separate "left running" view, jumping to the terminal a process runs in, and reserving a port. UDP and unix-domain sockets stay planned for v1.1.
+
+**Here.** At startup devdash resolves its own working directory with steps 1 to 4 of project resolution. The project found, if any, has `Here` set in every snapshot; when devdash runs outside any repository, no project has it. A process is in `this repo` when its project is the `Here` project, and in `this repo, other worktree` when the two projects differ but share a main repository (the `MainRepo` of a linked worktree, or the `Root` of a main repository).
+
+**Tags.** A tag is computed per snapshot. `orphaned` uses data the collector already reads; `cwd deleted` needs one new read that the collector records per process: an `lstat` of the cwd for every process whose cwd is known on macOS, and on Linux a `stat` of `/proc/<pid>/cwd` only for a process whose cwd link carried the ` (deleted)` suffix. Rows with PID 0 and container rows never carry tags.
+
+| Tag | Linux | macOS | Wrong when |
+| --- | --- | --- | --- |
+| `orphaned` | ppid is 1, or the parent is a `systemd --user` subreaper (name `systemd`, same uid, `--user` in argv) | ppid is 1 (launchd) | a server daemonized on purpose (a `--daemon` flag) is tagged too |
+| `cwd deleted` | the kernel's ` (deleted)` suffix on `/proc/<pid>/cwd` (which the collector strips from `Cwd`), confirmed by a `stat` of `/proc/<pid>/cwd` showing a link count of 0, so a live directory really named `x (deleted)` (DEV-44) is not tagged; the `stat` runs only when the suffix is present | `lstat` of the cwd from `PROC_PIDVNODEPATHINFO` fails with `ENOENT` | macOS: the directory was recreated at the same path, so the tag is missed; on both systems it is never invented |
+
+`orphaned` is set only on a process that belongs to a project or carries `cwd deleted`. System services and user-session agents (sshd, cron, pipewire, every macOS launch agent) also have init, launchd or a subreaper as their parent, and tagging them would bury the signal. A process whose worktree was removed often resolves to no project, because the walk starts from a directory that no longer exists; its port answer shows the old cwd instead of a project.
+
+**The port answer.** When stdout is a terminal, each process holder gets up to three lines after its last v1 line (once per process, even when it holds N on two sockets), indented by seven spaces:
+
+```console
+$ devdash port 5173
+15669  python3  shop  0.0.0.0:5173
+       uvicorn app:main --reload --port 5173
+       shop @ feat/login (worktree), up 3h, this repo
+       orphaned, cwd deleted
+next free: 5174
+```
+
+1. The command: argv joined with single spaces, cut to the terminal width with a trailing `…`. Omitted when argv is unknown.
+2. Where: the project as `name @ branch (worktree)` (the TUI's group header label, without the `(here)` suffix, which the location marker replaces), or the cwd when the process has no project, or `-` when that is unknown too; then the uptime in the TUI's format; then the location marker (`this repo` or `this repo, other worktree`) when one applies.
+3. Tags, comma-separated in the table's order, only when at least one applies.
+
+Container lines and the PID 0 unknown-owner line keep their v1 form and get no extra lines. Whenever `port N` exits 0 (a listener on N, or a container publishing N with no socket) and N is below 65535, the answer ends with `next free: <port>` from the same search as `devdash free N+1`, or `next free: none in <N+1>-<min(N+100, 65535)>`; for N = 65535 there is no `next free` line. When stdout is not a terminal, the output is byte-identical to v0.1.1. Exit codes do not change.
+
+`devdash port N --json` prints one object: `schema_version`, `taken_at`, `port`, `free` (boolean), `holders` (process objects exactly as in the snapshot's `processes`, the PID 0 unknown owner included), `containers` (container objects of containers publishing N), and `next_free` (a number, or `null` when the port is free, when N is 65535, or when nothing in range is). Like `--json`, it samples twice, 200 ms apart, so the holders are exactly the process objects `--json` would print (`cpu_percent` a number) and `taken_at` means what it means there; plain `port N` keeps its single sample. It is the one command `--json` combines with; every other command with `--json` stays a usage error. Exit codes are those of `port N`.
+
+**Free port.** `devdash free N` (1 ≤ N ≤ 65535) takes one snapshot and tries the ports N, N+1, … up to N+99 or 65535, whichever comes first. It prints the first port that passes both checks and exits 0, or prints nothing and exits 1 when none does.
+
+1. Nothing in the snapshot holds it: no listener on any address, and no container publishes it on any host address. A port published only by iptables (Docker without its userland proxy) has no socket, so the bind below would not see it.
+2. This user can bind it: devdash creates a TCP socket with `golang.org/x/sys/unix`, sets `SO_REUSEADDR` on Linux only (where it allows a port in TIME_WAIT, as a dev server's own bind would, and still fails beside any listener), binds `0.0.0.0:P`, then an `IPV6_V6ONLY` socket on `[::]:P`, and closes both at once. Go's `net.Listen` is not used because it sets `SO_REUSEADDR` everywhere, and on macOS that lets a wildcard bind succeed beside another socket's specific-address bind. The bind catches listeners of other users that a snapshot without root cannot see. A failed IPv6 socket or bind with `EAFNOSUPPORT` or `EADDRNOTAVAIL` (no IPv6 on the host) skips the IPv6 check. A bind that fails with `EADDRINUSE` or `EACCES` (below 1024) means the port is not free. Any other failure of `socket`, `setsockopt` or `bind` (`EMFILE`, `ENFILE`, `EPERM` under a sandbox) means devdash could not look: `free` exits 5 with the error on stderr and nothing on stdout, and so does `port N` when the probe for its `next free` line or `next_free` field fails, so exit 1 never stands in for a failed probe.
+
+On macOS a port in TIME_WAIT counts as taken, since the probe there runs without `SO_REUSEADDR`; the answer errs on the safe side. The answer means free at the moment of the check, not reserved: another process can take the port before the developer's server starts, and the README says so.
+
+**TUI.** The dashboard shows the same facts with no new keys. The `Here` project's header ends in `(here)` and is sorted first, ahead of the activity order. A row with tags shows them dimmed after its name (`python3  orphaned`), shortened to one `!` below 90 columns. The detail pane lists each tag with what it means ("parent exited; now a child of launchd", "working directory deleted"). The `/` filter also matches tags, written either way (`cwd deleted` or `cwd_deleted`), so `/orphaned` lists every orphaned process.
+
+**JSON.** Schema v1 gains `processes[].tags` (an array of `"orphaned"` and `"cwd_deleted"`, empty when none applies) and `projects[].here` (a boolean). Both are always present, so `schema_version` stays 1.
+
 ## Milestones
 
-Six phases in strict order, each closed by a gate that is a test or a measurement rather than a feeling; the spike comes first because everything else rests on the platform claims it checks.
+Six phases in strict order for v1, and three more for Release 1.0, each closed by a gate that is a test or a measurement rather than a feeling; the spike comes first because everything else rests on the platform claims it checks.
 
 | Phase | Scope | Gate |
 | --- | --- | --- |
@@ -347,6 +405,9 @@ Six phases in strict order, each closed by a gate that is a test or a measuremen
 | 3 · Docker | socket discovery, `/containers/json`, reconciliation | a compose service's published port shows its container name on both OSes |
 | 4 · TUI | table, filter, detail pane, kill modal | usable at 80x24, selection survives a refresh, golden views pass |
 | 5 · Release 0.1 | goreleaser, Homebrew tap, README, demo GIF | — |
+| 6 · Port answer: data | `Process.Tags`, `Project.Here`, the collector's cwd-deleted fact, JSON `tags` and `here` | tests create a server in a temporary worktree, remove the worktree and kill its parent, and see both tags on Linux CI and on a Mac; a manual run on the maintainer's Mac lists every tagged process and none is tagged wrongly |
+| 7 · Port answer: commands and TUI | `port N` detail lines, `port N --json`, `devdash free N`, `next free`, the TUI's `(here)` header, tag markers and filter | `free` skips a port held by another user's listener (Linux CI as root with a second user; macOS by hand); piped `port N` output is byte-identical to v0.1.1; golden views pass |
+| 8 · Release 1.0 | README, demo GIF, QA pass, tag v1.0.0 | QA finds no open bug |
 
 No phase starts until the previous gate passes; a failed gate sends the work back into the same phase, and a gate that cannot pass (for example the PCB list is empty on macOS 27) records the finding in DECISIONS.md and adjusts scope before moving on. Phases 0 to 2 are the first weekend of work with Claude Code; each phase is one or more small commits, with the plan for the phase written and approved before implementation.
 
