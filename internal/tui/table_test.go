@@ -205,7 +205,7 @@ func TestTableHeaders(t *testing.T) {
 		Ports: []model.PortMapping{{HostPort: 6379, ContainerPort: 6379, Proto: "tcp"}}})
 	feed(m, s)
 	for _, want := range []string{
-		"▾ api @ main · 2 processes · 2 ports",
+		"▾ api @ main (here) · 2 processes · 2 ports",
 		"▾ shop @ feat/cart (worktree) · 4 processes · 1 port",
 		"▾ shop (compose) · 2 containers · 2 ports",
 		"▾ containers · 1 container · 1 port",
@@ -230,18 +230,18 @@ func TestTableHeaders(t *testing.T) {
 	s = fixture()
 	s.Projects[1].Branch, s.Projects[1].ShortSHA = "", "1a2b3c4"
 	feed(m, s)
-	if line(m, "▾ api @ 1a2b3c4 · ") == "" {
+	if line(m, "▾ api @ 1a2b3c4 (here) · ") == "" {
 		t.Errorf("detached header missing:\n%s", screen(m))
 	}
 
 	// Counts follow a, not collapse or the filter.
 	press(m, "a")
-	if line(m, "api @ 1a2b3c4 · 3 processes · 2 ports") == "" {
+	if line(m, "api @ 1a2b3c4 (here) · 3 processes · 2 ports") == "" {
 		t.Errorf("with a, nvim counts:\n%s", screen(m))
 	}
 	selectKey(t, m, apiHeader)
 	press(m, "left")
-	if line(m, "▸ api @ 1a2b3c4 · 3 processes · 2 ports") == "" {
+	if line(m, "▸ api @ 1a2b3c4 (here) · 3 processes · 2 ports") == "" {
 		t.Errorf("collapsed header keeps its counts:\n%s", screen(m))
 	}
 }
@@ -577,4 +577,101 @@ func TestFormat(t *testing.T) {
 	if got := portsText(ports(c)); got != "*8000,8001" {
 		t.Errorf("container ports = %q", got)
 	}
+}
+
+// The here project's header ends in (here) and comes first, whatever the activity order: in
+// the fixture api is the here project and the most recently active, so shop takes its place.
+func TestTableHere(t *testing.T) {
+	m, _ := newTest(t, 120, 30)
+	s := fixture()
+	s.Projects[0].Here, s.Projects[1].Here = true, false
+	feed(m, s)
+	if got := m.rows[0]; got.Key != shopHeader {
+		t.Errorf("first row %+v, want the here project's header", got.Key)
+	}
+	if line(m, "▾ shop @ feat/cart (worktree) (here) · 4 processes · 1 port") == "" {
+		t.Errorf("no (here) header:\n%s", screen(m))
+	}
+	if line(m, "▾ api @ main · 2 processes · 2 ports") == "" {
+		t.Errorf("api's header still says (here):\n%s", screen(m))
+	}
+	// The label the port answer shares has no suffix: it says "this repo" instead.
+	if got := rowLabel(m.rows[0]); got != "shop @ feat/cart (worktree)" {
+		t.Errorf("rowLabel = %q, want no (here)", got)
+	}
+}
+
+func TestTableTags(t *testing.T) {
+	const full, short = "    api  orphaned, cwd deleted ", "    api  ! "
+	for _, tc := range []struct {
+		w     int
+		want  string
+		other string
+	}{
+		{80, short, full},
+		{89, short, full},
+		{90, full, short},
+		{120, full, short},
+	} {
+		m, _ := newTest(t, tc.w, 30)
+		feed(m, fixture())
+		l := line(m, "8080")
+		if !strings.Contains(l, tc.want) || strings.Contains(l, tc.other) {
+			t.Errorf("%d columns: api's row %q, want %q", tc.w, l, tc.want)
+		}
+		if l := line(m, "esbuild"); strings.Contains(l, "!") || strings.Contains(l, "orphaned") {
+			t.Errorf("%d columns: an untagged row shows tags: %q", tc.w, l)
+		}
+	}
+
+	// The labels are faint, and the rest of the row keeps the row's style: plain, or reverse
+	// video when selected.
+	m, _ := newTest(t, 120, 30)
+	s := fixture()
+	feed(m, s)
+	const faint = "\x1b[2m"
+	l := rawLine(m, "8080")
+	if !strings.Contains(l, faint+"  orphaned, cwd deleted") || strings.HasPrefix(l, faint) {
+		t.Errorf("only the tags are faint: %q", l)
+	}
+	selectKey(t, m, keyOf(s, 200))
+	l = rawLine(m, "8080")
+	for _, part := range []string{"api", "orphaned", "server", "bin/api"} {
+		if sgr := sgrBefore(l, part); !strings.Contains(sgr, "7") {
+			t.Errorf("selected row: %q drawn with %q, not in reverse video: %q", part, sgr, l)
+		}
+	}
+	if sgr := sgrBefore(l, "orphaned"); !strings.Contains(sgr, "2") {
+		t.Errorf("selected row: the tags are drawn with %q, not faint: %q", sgr, l)
+	}
+	if ansi.StringWidth(l) != 120 {
+		t.Errorf("selected row is %d cells wide, want 120", ansi.StringWidth(l))
+	}
+
+	// The widest name cell is measured as drawn, and measured again when the width crosses 90
+	// with the same rows.
+	if got, want := m.cache().longest, len(strings.TrimRight(full, " ")); got != want {
+		t.Errorf("120 columns: longest name cell %d, want %d", got, want)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 89, Height: 30})
+	if got, want := m.cache().longest, len("    shop-db-1 (postgres:16)"); got != want {
+		t.Errorf("89 columns: longest name cell %d, want %d", got, want)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if l := line(m, "8080"); !strings.Contains(l, full) {
+		t.Errorf("back at 120 columns: the name column does not fit the tags: %q", l)
+	}
+}
+
+// sgrBefore returns the last SGR sequence before the first occurrence of s in the styled line l.
+func sgrBefore(l, s string) string {
+	i := strings.Index(l, s)
+	if i < 0 {
+		return ""
+	}
+	j := strings.LastIndex(l[:i], "\x1b[")
+	if j < 0 {
+		return ""
+	}
+	return l[j : j+strings.IndexByte(l[j:], 'm')+1]
 }

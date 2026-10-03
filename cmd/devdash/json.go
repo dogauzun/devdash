@@ -19,23 +19,30 @@ const cpuGap = 200 * time.Millisecond
 // cpuGap apart; timing_ms describes the second sample.
 func runJSON(ctx context.Context, o engine.Options, stdout, stderr io.Writer) int {
 	err := func() error {
-		first, err := engine.Snapshot(ctx, o)
+		snap, took, err := sampleTwice(ctx, o)
 		if err != nil {
 			return err
 		}
-		time.Sleep(cpuGap)
-		start := time.Now()
-		snap, err := engine.SnapshotAfter(ctx, o, first)
-		if err != nil {
-			return err
-		}
-		return writeJSON(stdout, snap, time.Since(start))
+		return writeJSON(stdout, snap, took)
 	}()
 	if err != nil {
 		fmt.Fprintln(stderr, "devdash:", err)
 		return exitFailed
 	}
 	return 0
+}
+
+// sampleTwice takes the snapshot the JSON commands print: a first sample, then a second one
+// cpuGap later, so cpu_percent is a number. took is the wall time of the second sample.
+func sampleTwice(ctx context.Context, o engine.Options) (snap model.Snapshot, took time.Duration, err error) {
+	first, err := engine.Snapshot(ctx, o)
+	if err != nil {
+		return model.Snapshot{}, 0, err
+	}
+	time.Sleep(cpuGap)
+	start := time.Now()
+	snap, err = engine.SnapshotAfter(ctx, o, first)
+	return snap, time.Since(start), err
 }
 
 // Schema v1. Every key is always present; a value that is absent or unreadable is null,
@@ -132,18 +139,7 @@ func writeJSON(w io.Writer, s model.Snapshot, total time.Duration) error {
 		out.Processes = append(out.Processes, process(p))
 	}
 	for _, c := range s.Containers {
-		jc := jsonContainer{c.ID, c.Name, c.Image, c.State, str(c.ComposeProject), str(c.ComposeService), []jsonPort{}}
-		for _, m := range c.Ports {
-			jp := jsonPort{ContainerPort: m.ContainerPort, Proto: m.Proto}
-			if m.HostIP.IsValid() {
-				jp.HostIP = str(m.HostIP.String())
-			}
-			if m.HostPort != 0 { // exposed, not published
-				jp.HostPort = &m.HostPort
-			}
-			jc.Ports = append(jc.Ports, jp)
-		}
-		out.Containers = append(out.Containers, jc)
+		out.Containers = append(out.Containers, containerObject(c))
 	}
 	for _, x := range s.Warnings {
 		out.Warnings = append(out.Warnings, jsonWarning{x.Code, x.Count, x.Hint})
@@ -192,6 +188,21 @@ func process(p model.Process) jsonProcess {
 	}
 	j.Unknown = unknown.Names()
 	j.Tags = p.Tags.Names()
+	return j
+}
+
+func containerObject(c model.Container) jsonContainer {
+	j := jsonContainer{c.ID, c.Name, c.Image, c.State, str(c.ComposeProject), str(c.ComposeService), []jsonPort{}}
+	for _, m := range c.Ports {
+		jp := jsonPort{ContainerPort: m.ContainerPort, Proto: m.Proto}
+		if m.HostIP.IsValid() {
+			jp.HostIP = str(m.HostIP.String())
+		}
+		if m.HostPort != 0 { // exposed, not published
+			jp.HostPort = &m.HostPort
+		}
+		j.Ports = append(j.Ports, jp)
+	}
 	return j
 }
 
