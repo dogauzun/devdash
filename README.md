@@ -223,7 +223,7 @@ The dashboard's keys; `?` shows the same table inside it.
 | `pgup pgdown` | page the table or the open detail pane; g/home first, G/end last row |
 | `← → h l` | collapse or expand a project group or a tree node |
 | `enter` | open or close the detail pane (esc closes it too) |
-| `/` | filter by port, name, argv, project or container; ctrl+u, esc clear |
+| `/` | filter by port, name, argv, project, container or tag; esc clears |
 | `x` | kill modal: p process, t tree, f force, Y second confirm, esc cancel |
 | `o` | open http://localhost:&lt;port&gt; (the lowest port) |
 | `a` | show or hide shells and editors |
