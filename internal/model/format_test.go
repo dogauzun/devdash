@@ -54,3 +54,28 @@ func TestClean(t *testing.T) {
 		}
 	}
 }
+
+func TestLocation(t *testing.T) {
+	main := &Project{ID: "a", Root: "/code/shop", Here: true}
+	wt := &Project{ID: "b", Root: "/code/shop-login", Worktree: true, MainRepo: "/code/shop"}
+	wt2 := &Project{ID: "c", Root: "/code/shop-pay", Worktree: true, MainRepo: "/code/shop"}
+	other := &Project{ID: "d", Root: "/code/blog"}
+	for _, tt := range []struct {
+		name     string
+		pr, here *Project
+		want     string
+	}{
+		{"here", main, main, "this repo"},
+		{"worktree of here", wt, main, "this repo, other worktree"},
+		{"main repository of here", main, wt, "this repo, other worktree"},
+		{"sibling worktree", wt2, wt, "this repo, other worktree"},
+		{"here is a worktree", wt, wt, "this repo"},
+		{"other repository", other, main, ""},
+		{"no project", nil, main, ""},
+		{"no here", wt, nil, ""},
+	} {
+		if got := Location(tt.pr, tt.here); got != tt.want {
+			t.Errorf("%s: Location = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}

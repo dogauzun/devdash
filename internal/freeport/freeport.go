@@ -36,7 +36,7 @@ func Find(s model.Snapshot, from uint16, probe Prober) (port uint16, ok bool, er
 	held := map[uint16]bool{}
 	for _, p := range s.Processes {
 		for _, l := range p.Listeners {
-			// Only UDP is skipped (planned for v1.1), so a listener of any other proto holds the port.
+			// Only UDP is skipped (planned for v1.2), so a listener of any other proto holds the port.
 			if !strings.HasPrefix(l.Proto, "udp") {
 				held[l.Port] = true
 			}

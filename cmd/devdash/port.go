@@ -292,7 +292,7 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 	if !p.StartTime.IsZero() {
 		parts = append(parts, "up "+model.Uptime(now.Sub(p.StartTime)))
 	}
-	if m := location(pr, here); m != "" {
+	if m := model.Location(pr, here); m != "" {
 		parts = append(parts, m)
 	}
 	lines = append(lines, strings.Join(parts, ", "))
@@ -300,21 +300,6 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 		lines = append(lines, strings.Join(p.Tags.Labels(), ", "))
 	}
 	return lines
-}
-
-// location places project pr relative to the Here project (spec "Release 1.0", Here): "this
-// repo" when it is Here, "this repo, other worktree" when the two differ but share a main
-// repository (a linked worktree's MainRepo, a main repository's Root), else "".
-func location(pr, here *model.Project) string {
-	switch {
-	case pr == nil || here == nil:
-		return ""
-	case pr.ID == here.ID:
-		return "this repo"
-	case cmp.Or(pr.MainRepo, pr.Root) == cmp.Or(here.MainRepo, here.Root):
-		return "this repo, other worktree"
-	}
-	return ""
 }
 
 // dockerHint is the hint of the snapshot's Docker warning (docker_unreachable,
