@@ -627,6 +627,32 @@ func TestFilterSeesHiddenKinds(t *testing.T) {
 	}
 }
 
+// A header that only the search shows (the view omits its whole group) counts its rows as
+// the search finds them, not zero; a header the view shows keeps the view's counts (PR #96).
+func TestFilterHiddenGroupCounts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		keys  []string
+		query string
+		want  string
+	}{
+		{"d on: a compose group", []string{"d"}, "8000", "▾ shop (compose) · 2 containers · 2 ports"},
+		{"a group of editors", nil, "todo", "▾ notes @ main · 1 process · 0 ports"},
+		{"a shown group keeps the view's counts", nil, "zsh", "▾ shop @ feat/cart (worktree) · 4 processes · 1 port"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newTest(t, 120, 30)
+			feed(m, withHidden())
+			press(m, tc.keys...)
+			press(m, "/")
+			typeText(m, tc.query)
+			if line(m, tc.want) == "" {
+				t.Errorf("/%s: no header %q:\n%s", tc.query, tc.want, screen(m))
+			}
+		})
+	}
+}
+
 // The other group starts collapsed (Release 1.1): its header still counts its rows, → opens
 // it, and a search finds the rows inside it and leaves it folded once cleared.
 func TestOtherStartsCollapsed(t *testing.T) {
