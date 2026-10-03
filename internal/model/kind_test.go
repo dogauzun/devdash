@@ -1,6 +1,8 @@
 package model
 
 import (
+	"path"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -80,5 +82,58 @@ func TestClassifyUnknownOwner(t *testing.T) {
 	p := Process{Name: "unknown", Listeners: []Listener{{Proto: "tcp4", Addr: any4, Port: 22}}, Unknown: unknownOwner}
 	if got := Classify(p); got != KindOther {
 		t.Errorf("PID 0 pseudo-process: %v, want other", got)
+	}
+}
+
+func TestTool(t *testing.T) {
+	tests := []struct {
+		argv string // space-separated; "" for no argv
+		tool string // "" for ok false
+		args string // space-separated
+	}{
+		{argv: "node node_modules/.bin/vite --port 5173", tool: "vite", args: "--port 5173"},
+		{argv: "python3 -m uvicorn app:main --reload", tool: "uvicorn", args: "app:main --reload"},
+		{argv: "python3.12 -m pytest -q", tool: "pytest", args: "-q"},
+		{argv: "node server.js", tool: "server.js"},
+		{argv: "python3 manage.py runserver", tool: "manage.py", args: "runserver"},
+		{argv: "npx vitest run", tool: "vitest", args: "run"},
+		{argv: "/usr/local/bin/node22 --inspect /app/Server.MJS", tool: "Server.MJS"}, // case and extension kept
+		{argv: "python -m Http.Server 8000", tool: "Http.Server", args: "8000"},       // the module as written
+		{argv: "node -r x app.js", tool: "x", args: "app.js"},                         // the argument Classify reads
+		{argv: "node"},
+		{argv: "node --inspect"},
+		{argv: "python3 -m"},
+		{argv: "/usr/sbin/sshd -D"},
+		{argv: "vite --port 5173"},
+		{argv: ""},
+	}
+	for _, tt := range tests {
+		p := Process{PID: 42, Name: "node", Argv: strings.Fields(tt.argv)}
+		tool, args, ok := Tool(p)
+		if ok != (tt.tool != "") || tool != tt.tool || !slices.Equal(args, strings.Fields(tt.args)) {
+			t.Errorf("Tool(%q) = %q, %q, %v; want %q, %q, %v", tt.argv, tool, args, ok, tt.tool, strings.Fields(tt.args), tt.tool != "")
+		}
+	}
+}
+
+// TestToolMatchesClassify: Classify matches on the argument Tool names, lower-cased and
+// without a script extension, so the two never pick different arguments.
+func TestToolMatchesClassify(t *testing.T) {
+	for _, argv := range []string{
+		"node /app/node_modules/.bin/Jest --ci", "node --max-old-space-size=4096 /app/node_modules/jest/bin/jest.js",
+		"python3 -m PyTest -x", "npx vitest run", "node /app/node_modules/nodemon/bin/nodemon.js",
+		"node -r ts-node/register jest.ts", "python3.12 /usr/local/bin/pytest", "ruby bin/Rails.rb s",
+		"node", "node --inspect", "python3 -m", "/usr/sbin/sshd -D", "-zsh",
+	} {
+		argv := strings.Fields(argv)
+		tool, args, ok := Tool(Process{PID: 42, Argv: argv})
+		c, cok := command{baseName(argv[0]), argv[1:]}.unwrap()
+		want := strings.ToLower(tool)
+		if ext := path.Ext(want); scriptExts[ext] {
+			want = strings.TrimSuffix(want, ext)
+		}
+		if ok != cok || ok && (c.name != want || !slices.Equal(c.args, args)) {
+			t.Errorf("%q: Tool = %q, %q, %v; unwrap = %q, %q, %v", argv, tool, args, ok, c.name, c.args, cok)
+		}
 	}
 }
