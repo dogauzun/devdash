@@ -55,7 +55,11 @@ filter searches every row, folded or hidden: a shell or editor that matches show
 and a container row with `d`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
 A process run by an interpreter is named by its tool, as in `vite (node)` or `pytest (python3)`,
 and below 90 columns, where the command column does not fit, its arguments follow the name in
-faint text. It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
+faint text. Typing a port number in the table, `5173` say, searches for it and selects the
+process or container holding it, even inside a collapsed group, so `x` then kills it; a line
+under the header says how many rows hold the port and which port is free next (the search
+`devdash free` runs), or that the port is free.
+It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
 [Keybindings](#keybindings)) and `q` quits.
 
 ### `devdash --json`
@@ -228,6 +232,7 @@ The dashboard's keys; `?` shows the same table inside it.
 | `← → h l` | collapse or expand a project group or a tree node |
 | `enter` | open or close the detail pane (esc closes it too) |
 | `/` | filter by port, name, argv, project, container or tag; esc clears |
+| `0-9` | port search: opens the filter with the digit, selects the holder |
 | `x` | kill modal: p process, t tree, f force, Y second confirm, esc cancel |
 | `o` | open http://localhost:&lt;port&gt; (the lowest port) |
 | `a` | show or hide shells and editors |

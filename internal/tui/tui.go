@@ -5,8 +5,9 @@
 //
 // One file per feature: tui.go (state, message routing, layout), header.go (header and footer),
 // table.go (rows, columns, movement and view toggles), rows.go (flattening, selection that
-// survives a refresh, the filter), detail.go, help.go, open.go and kill.go. Each feature
-// file defines its own state type, held in Model, and its own messages, which implement action.
+// survives a refresh, the filter), port.go (port search and the port line), detail.go, help.go,
+// open.go and kill.go. Each feature file defines its own state type, held in Model, and its own
+// messages, which implement action.
 package tui
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dogauzun/devdash/internal/engine"
+	"github.com/dogauzun/devdash/internal/freeport"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -41,6 +43,9 @@ type Options struct {
 	KillTimeout time.Duration // engine.DefaultKillTimeout when 0
 	// Open opens a URL in the browser (open on macOS, xdg-open on Linux, when nil).
 	Open func(url string) error
+	// Probe reports whether this user can bind a port now, for the port line's next free port
+	// (freeport.Probe when nil). It runs off the UI goroutine.
+	Probe freeport.Prober
 	// DockerSocket returns the Docker endpoint in use, shown in the detail pane of a container
 	// row; nil or "" shows nothing.
 	DockerSocket func() string
@@ -70,6 +75,7 @@ type Model struct {
 	filtering bool   // the filter prompt has the keyboard
 
 	fsel filterSel // the row chosen before the filter hid it (rows.go)
+	port portState // the port line while the query is a port number (port.go)
 
 	detail  bool         // detail pane open (detail.go)
 	dscroll detailScroll // its scroll position (detail.go)
@@ -105,6 +111,9 @@ func New(o Options) *Model {
 	}
 	if o.Open == nil {
 		o.Open = openURL
+	}
+	if o.Probe == nil {
+		o.Probe = freeport.Probe
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -153,7 +162,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.upd = engine.Update(msg)
 		m.have = m.upd.Snapshot.SchemaVersion != 0
 		m.rebuild()
-		return m, m.wait()
+		return m, tea.Batch(m.wait(), m.portProbe())
 	case closedMsg:
 		return m, tea.Quit
 	case tickMsg:
@@ -162,7 +171,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, m.key(msg)
 	case tea.PasteMsg:
-		m.paste(msg.Content)
+		return m, m.paste(msg.Content)
 	case action:
 		return m, msg.apply(m)
 	}
@@ -204,12 +213,16 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		case m.detail:
 			m.closeDetail()
 		case m.filter != "":
-			m.setFilter("")
+			return m.setFilter("")
 		}
 	case "x":
 		return m.startKill()
 	case "o":
 		return m.openSelected()
+	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		if k.Mod&(tea.ModCtrl|tea.ModAlt) == 0 { // the prompt would not type it either
+			return m.portKey(s)
+		}
 	default:
 		if m.detail && m.detailKey(s) { // pgup and pgdown scroll the open pane
 			return nil
@@ -233,10 +246,14 @@ func (m *Model) View() tea.View {
 	return v
 }
 
-// render draws the whole screen: exactly height lines, none wider than width.
+// render draws the whole screen: exactly height lines, none wider than width. The port line,
+// while it is shown, goes under the header line and takes a line from the body.
 func (m *Model) render() string {
 	w, h := m.size()
 	header := m.headerView(w)
+	if pl := m.portLine(w); pl != "" {
+		header += "\n" + pl
+	}
 	footer := m.footerView(w)
 	bh := max(h-lipgloss.Height(header)-lipgloss.Height(footer), 0)
 	var body string

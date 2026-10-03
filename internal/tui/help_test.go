@@ -22,6 +22,7 @@ func TestHelp(t *testing.T) {
 		"← → h l     collapse or expand a project group or a tree node",
 		"enter       open or close the detail pane (esc closes it too)",
 		"/           filter by port, name, argv, project, container or tag; esc clears",
+		"0-9         port search: opens the filter with the digit, selects the holder",
 		"x           kill modal: p process, t tree, f force, Y second confirm, esc cancel",
 		"o           open http://localhost:<port> (the lowest port)",
 		"a           show or hide shells and editors",

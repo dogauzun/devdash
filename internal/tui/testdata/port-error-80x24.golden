@@ -1,0 +1,24 @@
+mbp · 2 s ago · 2 projects · 6 listeners · 2 containers · /5173_
+port 5173 · 1 holder · next free: socket: too many open files
+NAME                                          KIND      PORTS           PID   UP
+▾ shop @ feat/cart (worktree) · 4 processes · 1 port
+  ▾ zsh                                       shell                     100   5h
+      vite (node)  --port 5173                server    *5173           101   3h
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+run with sudo to see owners
+↑↓ move  ←→ fold  enter detail  / filter  x kill  o open  a all  ? help  q quit
