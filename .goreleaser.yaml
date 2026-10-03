@@ -92,11 +92,14 @@ homebrew_casks:
     commit_msg_template: "devdash {{ .Tag }}"
     # Prerelease tags do not touch the tap.
     skip_upload: auto
-    hooks:
-      post:
-        # The darwin binaries are only ad-hoc signed (spec: Signing), so Gatekeeper
-        # would refuse a quarantined download.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/devdash"]
-          end
+    # The darwin binaries are only ad-hoc signed (spec: Signing), so Gatekeeper
+    # would refuse a quarantined download. Homebrew deprecated `postflight`, which
+    # is all `hooks` can emit in goreleaser 2.18, so the declarative stanza goes in
+    # as a custom block; `{{staged_path}}` is Homebrew's token, escaped from goreleaser's
+    # template engine (DEV-104).
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/devdash"]
+        end
+      end
