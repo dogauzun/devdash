@@ -354,7 +354,7 @@ Non-goals for Release 1.0: an idle tag (a dev server without traffic is idle and
 
 **Here.** At startup devdash resolves its own working directory with steps 1 to 4 of project resolution. The project found, if any, has `Here` set in every snapshot; when devdash runs outside any repository, no project has it. A process is in `this repo` when its project is the `Here` project, and in `this repo, other worktree` when the two projects differ but share a main repository (the `MainRepo` of a linked worktree, or the `Root` of a main repository).
 
-**Tags.** A tag is computed per snapshot from data the collector already reads, except for one `lstat` per process on macOS. Rows with PID 0 and container rows never carry tags.
+**Tags.** A tag is computed per snapshot. `orphaned` uses data the collector already reads; `cwd deleted` needs one new read that the collector records per process: an `lstat` of the cwd for every process on macOS, and on Linux a `stat` of `/proc/<pid>/cwd` only for a process whose cwd link carried the ` (deleted)` suffix. Rows with PID 0 and container rows never carry tags.
 
 | Tag | Linux | macOS | Wrong when |
 | --- | --- | --- | --- |
@@ -375,7 +375,7 @@ next free: 5174
 ```
 
 1. The command: argv joined with single spaces, cut to the terminal width with a trailing `…`. Omitted when argv is unknown.
-2. Where: the project as the TUI's group header writes it (or the cwd when the process has no project, or `-` when that is unknown too), the uptime in the TUI's format, and the location marker (`this repo` or `this repo, other worktree`) when one applies.
+2. Where: the project as `name @ branch (worktree)`, the TUI's group header label without the `(here)` suffix, since the location marker carries that (or the cwd when the process has no project, or `-` when that is unknown too), the uptime in the TUI's format, and the location marker (`this repo` or `this repo, other worktree`) when one applies.
 3. Tags, comma-separated in the table's order, only when at least one applies.
 
 Container lines and the PID 0 unknown-owner line keep their v1 form and get no extra lines. Whenever `port N` exits 0 (a listener on N, or a container publishing N with no socket) and N is below 65535, the answer ends with `next free: <port>` from the same search as `devdash free N+1`, or `next free: none in <N+1>-<min(N+100, 65535)>`; for N = 65535 there is no `next free` line. When stdout is not a terminal, the output is byte-identical to v0.1.1. Exit codes do not change.
