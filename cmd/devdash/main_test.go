@@ -251,3 +251,15 @@ func TestRunFailed(t *testing.T) {
 		})
 	}
 }
+
+// version and -h take no snapshot, but a stdout that cannot be written is still exit 5 (DEV-107).
+func TestRunFailedWrite(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"-h"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stderr bytes.Buffer
+			if code := run(args, failWriter{}, &stderr, fake()); code != 5 || !strings.Contains(stderr.String(), "devdash: disk full") {
+				t.Errorf("stdout fails: exit %d, stderr %q; want 5 and the error", code, stderr.String())
+			}
+		})
+	}
+}
