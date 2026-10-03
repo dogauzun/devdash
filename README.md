@@ -299,7 +299,7 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   shows that process, and `kill N` signals it instead of refusing with `docker stop <name>`,
   which stops the container (or restarts it under a restart policy). macOS is unaffected,
   because container processes run inside the VM.
-- **UDP and unix sockets** are not shown in v1 (planned for v1.1).
+- **UDP and unix sockets** are not shown yet (planned for v1.2).
 - **Windows** is not supported. Neither are remote hosts, a config file or a background
   daemon: devdash runs only while its terminal is open.
 
