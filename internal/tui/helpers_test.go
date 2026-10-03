@@ -50,7 +50,7 @@ func (f *fakeSource) Updates() <-chan engine.Update { return f.ch }
 func (f *fakeSource) Refresh()                      { f.refreshes++ }
 
 // newTest returns a model at w by h with a fixed clock, a fake source and recording fakes for
-// plan, kill and open. Tests override o's fields through mod.
+// plan, kill and open, and a probe that fails the test when called. Tests override o's fields through mod.
 func newTest(t *testing.T, w, h int, mod ...func(*Options)) (*Model, *fakeSource) {
 	t.Helper()
 	src := &fakeSource{ch: make(chan engine.Update)}
@@ -66,6 +66,10 @@ func newTest(t *testing.T, w, h int, mod ...func(*Options)) (*Model, *fakeSource
 			return engine.Result{}, nil
 		},
 		Open: func(string) error { t.Error("unexpected Open call"); return nil },
+		Probe: func(p uint16) (bool, error) {
+			t.Errorf("unexpected Probe call for port %d: TUI tests never bind", p)
+			return false, nil
+		},
 	}
 	for _, f := range mod {
 		f(&o)

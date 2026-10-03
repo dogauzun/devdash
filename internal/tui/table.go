@@ -121,7 +121,10 @@ func (m *Model) tableView(w, h int) string {
 		lines = append(lines, styleBold.Render(pad(strings.Join(cells, " "), w, false)))
 	}
 	if len(m.rows) == 0 {
-		return strings.Join(append(lines, "  nothing to show"), "\n")
+		if !m.portShown() { // the port line answers a port search (port.go)
+			lines = append(lines, "  nothing to show")
+		}
+		return strings.Join(lines, "\n")
 	}
 
 	for i := m.top; i < min(len(m.rows), m.top+rh); i++ {

@@ -47,9 +47,11 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   `TestFindLiveOtherUser` is the CI gate (run with sudo).
 - `internal/tui` — the dashboard (Bubble Tea v2, Lip Gloss v2): `tui.go` (`Options`, `Model`, key routing, layout),
   `header.go` (header, footer), and one file per feature with its own state type and `action` messages: `table.go`,
-  `rows.go` (selection by row key, filter), `detail.go`, `help.go`, `open.go`, `kill.go`. Tested by sending `tea.Msg`s
-  to the model and asserting on `View()`; shared fixture in `helpers_test.go`. Golden views at 80x24 and 120x40 in
-  `golden_test.go`, files `testdata/*.golden`, rewritten with `go test ./internal/tui -run TestGolden -update`.
+  `rows.go` (selection by row key, filter), `port.go` (digits start a port search, the holder is selected, the port
+  line; its bind probe is `Options.Probe`, a fake in every test), `detail.go`, `help.go`, `open.go`, `kill.go`. Tested
+  by sending `tea.Msg`s to the model and asserting on `View()`; shared fixture in `helpers_test.go`. Golden views at
+  80x24 and 120x40 in `golden_test.go`, files `testdata/*.golden`, rewritten with
+  `go test ./internal/tui -run TestGolden -update`.
 
 ## Conventions
 

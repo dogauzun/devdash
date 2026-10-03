@@ -93,20 +93,28 @@ type filterSel struct {
 // setFilter sets the filter query and rebuilds the rows. The selection goes back to the row
 // chosen before the filter hid it as soon as that row is shown again, whether the query is
 // cleared, shortened or retyped; a selection moved since the last filter change (by a key or
-// a refresh) is the new choice.
-func (m *Model) setFilter(q string) {
+// a refresh) is the new choice. A query that changes to a port number selects the port's
+// holder instead (portSearch), a stand-in like any other, and the command returned probes for
+// the port line.
+func (m *Model) setFilter(q string) tea.Cmd {
 	if m.sel != m.fsel.shown {
 		m.fsel.chosen = m.sel
 	}
+	changed := q != m.filter
 	m.filter = q
 	m.sel = m.fsel.chosen
 	m.rebuild()
+	var cmd tea.Cmd
+	if changed {
+		cmd = m.portSearch()
+	}
 	m.fsel.shown = m.sel
+	return cmd
 }
 
 // paste appends pasted text to the filter query while the prompt is open, without its
 // newlines and other control characters; it is ignored otherwise.
-func (m *Model) paste(text string) {
+func (m *Model) paste(text string) tea.Cmd {
 	text = strings.Map(func(r rune) rune {
 		if !unicode.IsPrint(r) {
 			return -1
@@ -114,8 +122,9 @@ func (m *Model) paste(text string) {
 		return r
 	}, text)
 	if m.filtering && text != "" {
-		m.setFilter(m.filter + text)
+		return m.setFilter(m.filter + text)
 	}
+	return nil
 }
 
 // filterKey handles keys while the filter prompt is open; the rows are filtered as the query
@@ -128,16 +137,16 @@ func (m *Model) filterKey(k tea.KeyPressMsg) tea.Cmd {
 		m.filtering = false
 	case "esc":
 		m.filtering = false
-		m.setFilter("")
+		return m.setFilter("")
 	case "backspace":
 		if q := []rune(m.filter); len(q) > 0 {
-			m.setFilter(string(q[:len(q)-1]))
+			return m.setFilter(string(q[:len(q)-1]))
 		}
 	case "ctrl+u":
-		m.setFilter("")
+		return m.setFilter("")
 	default:
 		if k.Text != "" && k.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
-			m.setFilter(m.filter + k.Text)
+			return m.setFilter(m.filter + k.Text)
 		}
 	}
 	return nil

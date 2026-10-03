@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"net/netip"
 	"os"
@@ -199,6 +200,10 @@ func goldenOptions(t *testing.T, src Source) Options {
 		},
 		Kill: failKill(t),
 		Open: func(string) error { t.Error("unexpected Open call"); return nil },
+		Probe: func(p uint16) (bool, error) {
+			t.Errorf("unexpected Probe call for port %d: TUI tests never bind", p)
+			return false, nil
+		},
 	}
 }
 
@@ -234,7 +239,8 @@ func TestGoldenViews(t *testing.T) {
 	type view struct {
 		name        string
 		w, h        int
-		postgres    bool // add withPostgres's server outside every project
+		postgres    bool       // add withPostgres's server outside every project
+		probe       *fakeProbe // the port line's probe; nil fails the test when called
 		do          func(t *testing.T, m *Model, s model.Snapshot)
 		ansi, ascii bool // also store these styled forms
 	}
@@ -264,6 +270,12 @@ func TestGoldenViews(t *testing.T) {
 		{name: "kill-120x40", w: 120, h: 40, do: selectPID(101, "x", "t")},
 		// The second confirmation; postgres rather than sshd, since the engine refuses pid 1.
 		{name: "kill-outside-80x24", w: 80, h: 24, postgres: true, do: selectPID(400, "x", "enter"), ansi: true},
+		// Port search into the collapsed shop group: the prompt open, the holder selected and
+		// the port line answered; a port no row holds that binds; a probe that failed.
+		{name: "port-80x24", w: 80, h: 24, probe: &fakeProbe{}, do: portSearchIn(shopID, "5173"), ansi: true},
+		{name: "port-free-80x24", w: 80, h: 24, probe: &fakeProbe{}, do: portSearchIn("", "3000")},
+		{name: "port-error-80x24", w: 80, h: 24, probe: &fakeProbe{err: errors.New("socket: too many open files")},
+			do: portSearchIn("", "5173"), ansi: true},
 	} {
 		t.Run(v.name, func(t *testing.T) {
 			s := fixture()
@@ -271,6 +283,9 @@ func TestGoldenViews(t *testing.T) {
 				s, _ = withPostgres(s)
 			}
 			m, _, _, fk := newKillTest(t, v.w, v.h, s)
+			if v.probe != nil {
+				m.o.Probe = v.probe.probe
+			}
 			v.do(t, m, s)
 			golden(t, v.name+".golden", screen(m))
 			if v.ansi {
@@ -283,5 +298,17 @@ func TestGoldenViews(t *testing.T) {
 				t.Errorf("Kill called with %+v", fk.plans)
 			}
 		})
+	}
+}
+
+// portSearchIn collapses the project group with ID project (none when ""), then types q in the
+// table and runs the probe commands each key returns.
+func portSearchIn(project, q string) func(*testing.T, *Model, model.Snapshot) {
+	return func(t *testing.T, m *Model, _ model.Snapshot) {
+		if project != "" {
+			selectRow(t, m, model.RowKey{Header: model.GroupProject, Group: project})
+			press(m, "left")
+		}
+		search(m, q)
 	}
 }

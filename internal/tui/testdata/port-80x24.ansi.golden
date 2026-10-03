@@ -1,0 +1,24 @@
+[1mmbp[m · 2 s ago · 2 projects · 6 listeners · 2 containers · [36m/5173_[m                
+port 5173 · 1 holder · next free 5174                                           
+[1mNAME                                          KIND      PORTS           PID   UP[m
+[1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m
+[2m  ▾ zsh                                       shell                     100   5h[m
+[7;36m      node                                    server    *5173           101   3h[m
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+[33mrun with sudo to see owners[m                                                     
+[2m↑↓ move  ←→ fold  enter detail  / filter  x kill  o open  a all  ? help  q quit[m 
