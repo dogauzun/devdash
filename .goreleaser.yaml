@@ -5,6 +5,12 @@ version: 2
 
 project_name: devdash
 
+# A stale THIRD_PARTY_LICENSES (a dependency bumped without `make licenses`) stops the
+# release before anything is built (DEV-98).
+before:
+  hooks:
+    - go run ./scripts/licenses -check
+
 builds:
   - id: devdash
     main: ./cmd/devdash
@@ -33,6 +39,9 @@ archives:
           group: root
           mtime: "{{ .CommitDate }}"
       - src: README.md
+        info: *info
+      # Notices for the Go standard library and every module linked in (DEV-98).
+      - src: THIRD_PARTY_LICENSES
         info: *info
 
 checksum:

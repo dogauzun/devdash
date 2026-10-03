@@ -14,12 +14,12 @@ OSES    := darwin linux
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check build install cross vet lint fmt test bench snapshot docker-gate demo clean
+.PHONY: help check build install cross vet lint fmt test bench licenses licenses-check snapshot docker-gate demo clean
 
 help: ## List the targets
-	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-15s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-check: lint vet cross test ## The pre-push gate: lint, vet, cross-build and race tests
+check: lint vet cross test licenses-check ## The pre-push gate: lint, vet, cross-build, race tests, notices
 
 build: ## Build ./devdash for this machine
 	CGO_ENABLED=0 $(GO) build -trimpath -o devdash ./cmd/devdash
@@ -53,6 +53,14 @@ test: ## go test -race, uncached
 
 bench: ## Benchmarks, 20 iterations each
 	$(GO) test -run '^$$' -bench . -benchtime 20x ./...
+
+# THIRD_PARTY_LICENSES ships in the release archives (DEV-98); scripts/licenses rebuilds it from
+# `go list -deps` for the four targets and the module cache.
+licenses: ## Rewrite THIRD_PARTY_LICENSES from the modules the release binaries link
+	$(GO) run ./scripts/licenses
+
+licenses-check: ## Fail if THIRD_PARTY_LICENSES is not what `make licenses` writes
+	$(GO) run ./scripts/licenses -check
 
 snapshot: ## goreleaser check, then a snapshot release into dist/ (nothing is published)
 	$(GORELEASER) check
