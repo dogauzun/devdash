@@ -90,6 +90,43 @@ func TestCollectLimitedArgvLive(t *testing.T) {
 	}
 }
 
+// TestCollectCwdDeleted: a child whose working directory is removed while it runs keeps its
+// old path as Cwd and has CwdDeleted; a child in a live directory and the test process do not
+// (DEV-116).
+func TestCollectCwdDeleted(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a symlink, cwd is not
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, live := filepath.Join(base, "gone"), filepath.Join(base, "live")
+	for _, d := range []string{gone, live} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orphan, kept := startCat(t, gone), startCat(t, live)
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := New().Collect(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		pid     int
+		cwd     string
+		deleted bool
+	}{{orphan, gone, true}, {kept, live, false}, {os.Getpid(), kernelWd(t), false}} {
+		i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == want.pid })
+		if i < 0 {
+			t.Errorf("pid %d not in %d processes", want.pid, len(res.Processes))
+		} else if p := res.Processes[i]; p.Cwd != want.cwd || p.CwdDeleted != want.deleted {
+			t.Errorf("pid %d: cwd %q deleted %v; want %q, %v", p.PID, p.Cwd, p.CwdDeleted, want.cwd, want.deleted)
+		}
+	}
+}
+
 // startCat starts cat in dir, waits until it runs its own code (so its argv is published,
 // DEV-47) and kills it when the test ends. It returns the pid.
 func startCat(t *testing.T, dir string) int {
