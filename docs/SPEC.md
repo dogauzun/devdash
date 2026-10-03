@@ -64,7 +64,7 @@ type Snapshot struct {
     Projects      []Project
     Containers    []Container
     Warnings      []Warning  // deduplicated: code, count, hint
-    Timing        Timing     // per-source durations, for --json and the footer
+    Timing        Timing     // per-source durations, for --json only (the TUI does not show them)
 }
 
 type Process struct {
