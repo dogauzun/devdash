@@ -56,6 +56,7 @@ func TestKillSecondConfirmNeedsY(t *testing.T) {
 		{key("enter"), key("enter"), key("enter"), key("y"), key("y")},
 	} {
 		m, _, _, fk := newKillTest(t, 80, 24, s)
+		openOther(m) // postgres is in other
 		selectRow(t, m, pg.Key())
 		press(m, "x")
 		if cmds := send(m, keys...); len(cmds) != 0 || len(fk.plans) != 0 {
@@ -67,6 +68,7 @@ func TestKillSecondConfirmNeedsY(t *testing.T) {
 	}
 
 	m, _, _, fk := newKillTest(t, 80, 24, s)
+	openOther(m) // postgres is in other
 	selectRow(t, m, pg.Key())
 	press(m, "x", "enter")
 	if line(m, "Confirm again: press Y") == "" {
@@ -141,6 +143,7 @@ func TestKillConfirmNeedsAVisiblePid(t *testing.T) {
 	// The second prompt, after the terminal shrinks under it.
 	for h := 1; h <= 30; h++ {
 		m, _, _, fk := newKillTest(t, 80, 30, s)
+		openOther(m) // postgres is in other
 		selectRow(t, m, pg.Key())
 		press(m, "x", "enter")
 		m.Update(tea.WindowSizeMsg{Width: 80, Height: h})

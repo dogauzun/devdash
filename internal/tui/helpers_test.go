@@ -80,6 +80,13 @@ func feed(m *Model, s model.Snapshot) {
 	m.Update(updateMsg(engine.Update{Snapshot: s, Interval: 2 * time.Second}))
 }
 
+// openOther unfolds the other group, which starts collapsed (Release 1.1), as → on its header
+// would, for tests that select or draw the rows inside it.
+func openOther(m *Model) {
+	delete(m.view.Collapsed, model.RowKey{Header: model.GroupOther})
+	m.rebuild()
+}
+
 // press sends key presses: single characters ("j", "/", "?"), or names ("up", "down",
 // "left", "right", "enter", "esc", "backspace", "ctrl+c"). It returns the last command.
 func press(m *Model, keys ...string) tea.Cmd {

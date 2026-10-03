@@ -458,6 +458,7 @@ func TestKillPlanError(t *testing.T) {
 func TestKillOutsideConfirmsTwice(t *testing.T) {
 	s, pg := withPostgres(fixture())
 	m, _, _, fk := newKillTest(t, 80, 24, s)
+	openOther(m) // postgres is in other
 	selectRow(t, m, pg.Key())
 	press(m, "x")
 	if got := strings.Fields(line(m, "400 ")); !reflect.DeepEqual(got, []string{"400", "postgres", "-", "5433"}) {

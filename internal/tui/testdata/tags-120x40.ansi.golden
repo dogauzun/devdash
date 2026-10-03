@@ -11,9 +11,9 @@
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m listeners tcp4 127.0.0.1:8080         
     shop-web-1 (nginx:1.27)                   container *8000                   [2m|[m           tcp6 [::1]:8081             
     shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m parents   sshd 1                      
-[1m▾ other · 2 processes · 2 ports                                                 [m[2m|[m started   2026-10-01 10:00:00         
-    unknown                                   other     *631              -    -[2m|[m           (26 h ago)                  
-    sshd                                      server    *22               1   3d[2m|[m user      me (uid 501)                
+[1m▸ other · 2 processes · 2 ports                                                 [m[2m|[m started   2026-10-01 10:00:00         
+                                                                                [2m|[m           (26 h ago)                  
+                                                                                [2m|[m user      me (uid 501)                
                                                                                 [2m|[m cpu       0.5%                        
                                                                                 [2m|[m mem       50.0 MiB                    
                                                                                 [2m|[m                                       

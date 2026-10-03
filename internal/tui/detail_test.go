@@ -173,6 +173,7 @@ func TestDetailProcess(t *testing.T) {
 	detailSelect(t, m, keyOf(s, 103))
 	hasLine(t, m, "cpu       –")
 	hasLine(t, m, "listeners none")
+	openOther(m)
 	detailSelect(t, m, keyOf(s, 1))
 	hasLine(t, m, "project   none")
 	hasLine(t, m, "cwd       unknown")
@@ -202,6 +203,7 @@ func TestDetailParentChain(t *testing.T) {
 			m, _ := newTest(t, 100, 30)
 			s := model.Snapshot{SchemaVersion: 1, TakenAt: at(0), Processes: tc.procs}
 			feed(m, s)
+			openOther(m) // no project: every process is in other
 			detailSelect(t, m, keyOf(s, 101))
 			press(m, "enter")
 			hasLine(t, m, "parents   "+tc.want)
@@ -413,6 +415,7 @@ func TestDetailSplitNotesWrap(t *testing.T) {
 	m, _ := newTest(t, 120, 40)
 	s := fixture()
 	feed(m, s)
+	openOther(m)
 	press(m, "enter")
 	for _, tc := range []struct {
 		key  model.RowKey
@@ -461,6 +464,7 @@ func TestDetailUnknownOwner(t *testing.T) {
 	m, _ := newTest(t, 100, 30)
 	s := fixture()
 	feed(m, s)
+	openOther(m)
 	detailSelect(t, m, keyOf(s, 0))
 	press(m, "enter")
 	for _, want := range []string{
