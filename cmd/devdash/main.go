@@ -412,7 +412,11 @@ func (o options) dashboard(c collector.Collector) engine.Options { return o.engi
 
 func (o options) engineOptions(c collector.Collector, rediscover bool) engine.Options {
 	home, _ := os.UserHomeDir()
-	eo := engine.Options{Collector: c, Resolver: model.NewResolver(home, o.Roots), Tick: o.Tick}
+	r := model.NewResolver(home, o.Roots)
+	if wd, err := os.Getwd(); err == nil { // no working directory (deleted): no Here project
+		r.SetHere(wd)
+	}
+	eo := engine.Options{Collector: c, Resolver: r, Tick: o.Tick}
 	if !o.NoDocker {
 		eo.Docker = dockerSource(home, cmp.Or(o.Tick, engine.DefaultTick), rediscover)
 	}

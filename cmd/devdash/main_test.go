@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dogauzun/devdash/internal/collector"
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 func TestParse(t *testing.T) {
@@ -87,6 +88,40 @@ func TestRootsErrors(t *testing.T) {
 			bad := root[strings.LastIndex(root, "/")+1:]
 			if !strings.Contains(stderr.String(), bad) {
 				t.Errorf("stderr %q does not name %q", stderr.String(), bad)
+			}
+		})
+	}
+}
+
+// TestEngineHere: the engine's resolver marks the project of the working directory as Here,
+// under the --roots rule, and none when devdash runs outside any repository.
+func TestEngineHere(t *testing.T) {
+	home := testHome(t)
+	app := filepath.Join(home, "code", "app")
+	if err := os.MkdirAll(filepath.Join(app, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(app) // macOS: the kernel reports /private/var
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, wd string
+		o        options
+		want     bool
+	}{
+		{"in the repository", app, options{}, true},
+		{"outside any repository", filepath.Join(home, "work"), options{}, false},
+		{"repository outside --roots", app, options{Roots: []string{filepath.Join(home, "work")}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(tc.wd)
+			projects := tc.o.engine(fake()).Resolver.Resolve([]model.Process{{PID: 10, PPID: 1, Cwd: resolved}})
+			if got := len(projects) == 1 && projects[0].Here; got != tc.want {
+				t.Errorf("projects %+v, want Here %v", projects, tc.want)
 			}
 		})
 	}
