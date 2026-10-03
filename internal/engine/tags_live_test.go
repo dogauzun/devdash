@@ -44,10 +44,15 @@ func TestTagsLiveRemovedWorktree(t *testing.T) {
 	// The spec tags orphaned under init (launchd on macOS) or the user's `systemd --user`; any
 	// other subreaper that adopts the helper (a CI runner's own, a container's init shim that is
 	// not pid 1) is no exited parent devdash can know of, so there only cwd_deleted is promised.
+	// On CI that would leave the gate checking one tag, so there it fails instead.
 	adopted := p.PPID == 1 || runtime.GOOS == "linux" && parent.Name == "systemd" && parent.UID == p.UID &&
 		len(parent.Argv) > 1 && slices.Contains(parent.Argv[1:], "--user")
 	orphaned := model.TagOrphaned
 	if !adopted {
+		if os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("helper %d adopted by %d (%s %q), neither init nor systemd --user: the gate cannot check orphaned",
+				pid, p.PPID, parent.Name, parent.Argv)
+		}
 		t.Logf("pid %d is a subreaper other than init or systemd --user: orphaned is not expected", p.PPID)
 		orphaned = 0
 	}
