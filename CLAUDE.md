@@ -32,8 +32,9 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   codes), `tty_darwin.go` / `tty_linux.go` (the termios and winsize ioctls that `isTerminal` and `stdoutWidth` use).
 - `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`)
   and the raw input types in `build.go`; one file per seam: `project.go` (`Resolver`), `kind.go` (`Classify`),
-  `rows.go` (`Row`, `Flatten`), `reconcile.go` (`Reconcile`), `tags.go` (`Tag`). `format.go` holds the text both the
-  dashboard and `port N` show: `Project.Label`, `Uptime`, `Clean`.
+  `rows.go` (`Row`, `Flatten`), `reconcile.go` (`Reconcile`), `tags.go` (`Tag`), `holders.go` (`Holders`: a TCP
+  port's holders, as `kill N` and the TUI's kill result check them). `format.go` holds the text both the dashboard and
+  `port N` show: `Project.Label`, `Uptime`, `Clean`, `Location`.
 - `internal/collector` — `Collector` interface in `collector.go` (no build tag, nothing OS-specific; `Result`, `Process`,
   `Listener` alias `model.Raw`, `model.Process`, `model.RawListener`); `fake.go` is the scripted test `Fake`;
   one implementation per OS in `collector_darwin.go` / `collector_linux.go` and sibling files with the same build tag.

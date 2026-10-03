@@ -1,0 +1,24 @@
+mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
+api 200 · server
+command   /src/api/bin/api -addr :8080
+tags      orphaned: parent exited; now a child of launchd
+          cwd deleted: working directory deleted
+cwd       /src/api
+project   api @ main · this repo
+root      /src/api
+listeners tcp4 127.0.0.1:8080
+          tcp6 [::1]:8081
+next free 8082
+parents   sshd 1
+started   2026-10-01 10:00:00 (26 h ago)
+user      me (uid 501)
+cpu       0.5%
+mem       50.0 MiB
+
+
+
+
+
+
+run with sudo to see owners
+↑↓ move  ←→ fold  enter detail  / filter  x kill  o open  a all  ? help  q quit

@@ -6,17 +6,17 @@
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m[2m|[m           cwd deleted: working        
 [2m  ▾ zsh                                       shell                     100   5h[m[2m|[m           directory deleted           
     ▾ vite (node)                             server    *5173           101   3h[2m|[m cwd       /src/api                    
-        esbuild                               other                     102   2h[2m|[m project   api @ main                  
+        esbuild                               other                     102   2h[2m|[m project   api @ main · this repo      
     claude                                    agent                     103  20m[2m|[m root      /src/api                    
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m listeners tcp4 127.0.0.1:8080         
     shop-web-1 (nginx:1.27)                   container *8000                   [2m|[m           tcp6 [::1]:8081             
-    shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m parents   sshd 1                      
-[1m▸ other · 2 processes · 2 ports                                                 [m[2m|[m started   2026-10-01 10:00:00         
+    shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m next free …                           
+[1m▸ other · 2 processes · 2 ports                                                 [m[2m|[m parents   sshd 1                      
+                                                                                [2m|[m started   2026-10-01 10:00:00         
                                                                                 [2m|[m           (26 h ago)                  
                                                                                 [2m|[m user      me (uid 501)                
                                                                                 [2m|[m cpu       0.5%                        
                                                                                 [2m|[m mem       50.0 MiB                    
-                                                                                [2m|[m                                       
                                                                                 [2m|[m                                       
                                                                                 [2m|[m                                       
                                                                                 [2m|[m                                       
