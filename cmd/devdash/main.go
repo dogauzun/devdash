@@ -100,8 +100,7 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	o, err := parse(args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
-		fmt.Fprint(stdout, usage)
-		return 0
+		return write(stdout, stderr, usage, 0)
 	case err != nil:
 		fmt.Fprintln(stderr, "devdash:", err)
 		fmt.Fprint(stderr, usage)
@@ -112,8 +111,7 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	switch o.Cmd {
 	case "version":
 		ver, rev, built := versionInfo(version, commit, date, buildInfo())
-		fmt.Fprintf(stdout, "devdash %s (commit %s, built %s)\n", ver, rev, built)
-		return 0
+		return write(stdout, stderr, fmt.Sprintf("devdash %s (commit %s, built %s)\n", ver, rev, built), 0)
 	case "port":
 		port, _ := parsePort(o.Args[0]) // checked by parse
 		return runPort(ctx, o.engine(c), port, stdout, stderr)
