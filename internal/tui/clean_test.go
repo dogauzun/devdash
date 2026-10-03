@@ -265,23 +265,6 @@ func TestCleanFilterEcho(t *testing.T) {
 	}
 }
 
-func TestCleanText(t *testing.T) {
-	for in, want := range map[string]string{
-		"":                "",
-		"/src/my app":     "/src/my app",
-		"café 漢字":         "café 漢字",
-		evil:              evilShown,
-		"tab\there":       "tab?here",
-		"\u200bzw\u202e":  "?zw?", // zero-width space and right-to-left override are not printable
-		"nbsp\u00a0space": "nbsp?space",
-		"\ufffd":          "\ufffd", // a real U+FFFD is printable; an invalid byte is not
-	} {
-		if got := clean(in); got != want {
-			t.Errorf("clean(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestQuoteArgv(t *testing.T) {
 	// 0x9b is a C1 CSI on its own; as invalid UTF-8 it decodes to the printable U+FFFD.
 	got := quoteArgv([]string{"sh", "-c", "echo hi", "", "\x1b[31mred", "\x9b31mred", "café"})

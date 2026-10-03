@@ -229,7 +229,7 @@ func (m *Model) killDone(r engine.Result, err error) tea.Cmd {
 // errors are snapshot text, cleaned here.
 func (m *Model) killView(w, h int) string {
 	k := &m.kill
-	name := clean(k.name)
+	name := model.Clean(k.name)
 	title := "kill " + name
 	if k.key.PID > 0 {
 		title += fmt.Sprintf(" (pid %d)", k.key.PID)
@@ -238,12 +238,12 @@ func (m *Model) killView(w, h int) string {
 	switch k.stage {
 	case killRefused:
 		title = "cannot kill " + name
-		tail = append(killReason(clean(k.refusal)), "", "esc close")
+		tail = append(killReason(model.Clean(k.refusal)), "", "esc close")
 	case killConfirm, killOutside, killRunning:
 		switch {
 		case k.refusal != "":
 			title += ": " + killMode(k.opts)
-			tail = killReason(clean(k.refusal))
+			tail = killReason(model.Clean(k.refusal))
 			tail[0] = "refused: " + tail[0]
 			tail = append(tail, "", "p process  t tree  f force  esc cancel")
 			return m.killLayout(w, h, styleBold.Render(title), nil, tail)
@@ -278,7 +278,7 @@ func (m *Model) killView(w, h int) string {
 	case killReport:
 		if k.err != nil {
 			title += ": nothing was signalled"
-			tail = []string{clean(k.err.Error()), "", "esc close"}
+			tail = []string{model.Clean(k.err.Error()), "", "esc close"}
 			break
 		}
 		exited := 0
@@ -288,11 +288,11 @@ func (m *Model) killView(w, h int) string {
 				exited++
 				continue
 			}
-			outcome := clean(killOutcome(o))
+			outcome := model.Clean(killOutcome(o))
 			if errors.Is(o.Err, engine.ErrPermission) {
 				outcome = styleWarn.Render(outcome) // the last column: tabwriter does not pad it
 			}
-			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, clean(o.Process.Name), outcome))
+			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Name), outcome))
 		}
 		title += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
 		list = killTable(rows)
@@ -321,7 +321,7 @@ func (m *Model) killPlanLines(p engine.Plan) []string {
 		if project == "" {
 			project = "-"
 		}
-		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, clean(proc.Name), clean(project), killPorts(proc)))
+		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, model.Clean(proc.Name), model.Clean(project), killPorts(proc)))
 	}
 	return killTable(rows)
 }

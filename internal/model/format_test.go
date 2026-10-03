@@ -44,6 +44,10 @@ func TestClean(t *testing.T) {
 		"bidi\u202eevil":         "bidi?evil",
 		"bad\xffutf8":            "bad?utf8",
 		"nbsp\u00a0and\u2028sep": "nbsp?and?sep",
+		"\u200bzw\u202e":         "?zw?",        // a zero-width space is not printable either
+		"\ufffd":                 "\ufffd",      // a real U+FFFD is printable; an invalid byte is not
+		"nul\x00 csi\x9b2J":      "nul? csi?2J", // a lone 0x9b is a C1 CSI as a raw byte
+		"\x1b[31mred\x1b[0m":     "?[31mred?[0m",
 	} {
 		if got := Clean(in); got != want {
 			t.Errorf("Clean(%q) = %q, want %q", in, got, want)

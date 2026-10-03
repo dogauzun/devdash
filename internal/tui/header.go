@@ -24,7 +24,7 @@ const headerSep = " · "
 // shows its tail, so the prompt's cursor stays on screen (DEV-84).
 func (m *Model) headerView(w int) string {
 	s := m.upd.Snapshot
-	host := clean(s.Host.Hostname)
+	host := model.Clean(s.Host.Hostname)
 	if host == "" {
 		host = "devdash"
 	}
@@ -46,9 +46,9 @@ func (m *Model) headerView(w int) string {
 	var prefix, query, cursor string
 	switch {
 	case m.filtering:
-		prefix, query, cursor = "/", clean(m.filter), "_"
+		prefix, query, cursor = "/", model.Clean(m.filter), "_"
 	case m.filter != "":
-		prefix, query = "filter: ", clean(m.filter)
+		prefix, query = "filter: ", model.Clean(m.filter)
 	}
 	filter := prefix + query + cursor
 
@@ -149,14 +149,14 @@ const footerCut = "… (? for all)"
 func (m *Model) footerView(w int) string {
 	var lines []string
 	if m.status != "" {
-		lines = append(lines, styleWarn.Render(clean(m.status)))
+		lines = append(lines, styleWarn.Render(model.Clean(m.status)))
 	}
 	if ws := m.warnings(); len(ws) > 0 {
 		hints := make([]string, len(ws))
 		for i, x := range ws {
 			hints[i] = x.Hint
 		}
-		wl := detailWrap(strings.Fields(clean(strings.Join(hints, " · "))), " ", w)
+		wl := detailWrap(strings.Fields(model.Clean(strings.Join(hints, " · "))), " ", w)
 		if len(wl) > footerWarnLines {
 			last := footerWarnLines - 1
 			rest := strings.Fields(strings.Join(wl[last:], " "))
