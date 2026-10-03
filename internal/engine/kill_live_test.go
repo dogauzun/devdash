@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"slices"
@@ -16,6 +18,8 @@ import (
 	"github.com/dogauzun/devdash/internal/collector"
 	"github.com/dogauzun/devdash/internal/model"
 )
+
+const listenHelperEnv = "DEVDASH_KILL_LISTEN_HELPER" // set: run TestKillLiveListenerHelper's listener
 
 // Live tests signal only processes in a process group the test created: every child runs
 // under a shell started with Setpgid, and liveOS refuses any kill(2) outside that group.
@@ -112,6 +116,13 @@ func sleeps(s model.Snapshot, ppid int) []int {
 		}
 	}
 	return ps
+}
+
+// holds reports whether pid (any pid, PID 0 included, when pid is -1) listens on port.
+func holds(s model.Snapshot, pid int, port uint16) bool {
+	return slices.ContainsFunc(s.Processes, func(p model.Process) bool {
+		return (pid < 0 || p.PID == pid) && slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.Port == port })
+	})
 }
 
 func alive(t *testing.T, pid int) bool {
@@ -314,4 +325,19 @@ func TestKillLiveRefusesDevdash(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestKillLiveListenerHelper is the listener of TestKillLiveListenerSocketClosed and
+// TestTagsLiveRemovedWorktree: on 127.0.0.1:0, it prints its port and sleeps until signalled.
+// Without the environment variable it does nothing.
+func TestKillLiveListenerHelper(t *testing.T) {
+	if os.Getenv(listenHelperEnv) == "" {
+		return
+	}
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("listen-helper-port: %d\n", ln.Addr().(*net.TCPAddr).Port)
+	time.Sleep(time.Hour)
 }

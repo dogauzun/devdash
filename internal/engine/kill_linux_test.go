@@ -6,10 +6,8 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,8 +16,6 @@ import (
 
 	"github.com/dogauzun/devdash/internal/model"
 )
-
-const listenHelperEnv = "DEVDASH_KILL_LISTEN_HELPER" // set: run TestKillLiveListenerHelper's listener
 
 // stat builds a /proc/[pid]/stat line with the given state, ppid, num_threads (field 20) and
 // starttime (field 22); the comm holds a space and a ')', as the parser must allow.
@@ -93,13 +89,6 @@ func TestKillLiveListenerSocketClosed(t *testing.T) {
 	}
 }
 
-// holds reports whether pid (any pid, PID 0 included, when pid is -1) listens on port.
-func holds(s model.Snapshot, pid int, port uint16) bool {
-	return slices.ContainsFunc(s.Processes, func(p model.Process) bool {
-		return (pid < 0 || p.PID == pid) && slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.Port == port })
-	})
-}
-
 // listening reports whether /proc/net/tcp has a listener (state 0A) on 127.0.0.1:port.
 func listening(t *testing.T, port uint16) bool {
 	t.Helper()
@@ -152,18 +141,4 @@ func spawnListener(t *testing.T) (int, uint16) {
 		t.Fatal("listener did not start")
 	}
 	return 0, 0
-}
-
-// TestKillLiveListenerHelper is TestKillLiveListenerSocketClosed's listener: on 127.0.0.1:0, it
-// prints its port and sleeps until signalled. Without the environment variable it does nothing.
-func TestKillLiveListenerHelper(t *testing.T) {
-	if os.Getenv(listenHelperEnv) == "" {
-		return
-	}
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Printf("listen-helper-port: %d\n", ln.Addr().(*net.TCPAddr).Port)
-	time.Sleep(time.Hour)
 }
