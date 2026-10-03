@@ -14,8 +14,9 @@ import (
 )
 
 // TestArgvWanted: with InProject, argv is read for a listener's owner, for the processes
-// InProject marks and for those whose kernel name may have been cut, and for nobody else; a
-// short answer marks the rest false (DEV-92).
+// InProject marks, for those whose kernel name may have been cut or may be a runtime's, and
+// for a process named systemd, and for nobody else; a short answer marks the rest false
+// (DEV-92, DEV-123).
 func TestArgvWanted(t *testing.T) {
 	procs := []Process{{PID: 10}, {PID: 11}, {PID: 12}, {PID: 13},
 		// Docker Desktop's backend as Linux comm and macOS p_comm cut it: argv[0] is what tells
@@ -26,6 +27,9 @@ func TestArgvWanted(t *testing.T) {
 		// runtime process (PR #64 re-review); a short cut prefix of a runtime name; a short
 		// name that is neither.
 		{PID: 17, Name: "pasta.avx2"}, {PID: 18, Name: "com.docker.vpn"}, {PID: 19, Name: "sleep"},
+		// A systemd --user manager is known as a subreaper by its argv (model.Tag, DEV-117);
+		// only the exact name counts.
+		{PID: 20, Name: "systemd"}, {PID: 21, Name: "systemd-logind"},
 	}
 	ls := []Listener{{Port: 22}, {Port: 3000, PID: 11}} // PID 0: owner unknown
 	var got []Process
@@ -33,7 +37,7 @@ func TestArgvWanted(t *testing.T) {
 		got = ps
 		return []bool{false, false, true} // 13 and on not answered
 	}}
-	want := []bool{false, true, true, false, true, true, false, true, true, false}
+	want := []bool{false, true, true, false, true, true, false, true, true, false, true, false}
 	if w := argvWanted(o, procs, ls); !slices.Equal(w, want) {
 		t.Errorf("argvWanted = %v, want %v", w, want)
 	}
