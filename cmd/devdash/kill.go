@@ -185,38 +185,17 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	return code
 }
 
-// targets are the rows holding TCP port N: every process with a listener on it, and every
-// container that publishes it. A listener reconciled to a container (Listener.ContainerID) is
-// that container's target, not its holder's: the holder is a port proxy or an unknown owner,
-// and Docker Desktop's com.docker.backend holds several containers' ports in one process, so
-// only the container row says which container to stop. The holder is a target too only when
-// it also holds a socket on N that matched no container.
+// targets are the rows holding TCP port N, model.Holders: every process with a listener on it,
+// and every container that publishes it. A listener reconciled to a container is that
+// container's target, not its holder's, so only the container row says which container to stop.
 func targets(s model.Snapshot, port uint16) []target {
 	var ts []target
-	held := map[string]bool{}
-	container := func(id string) {
-		if !held[id] {
-			held[id] = true
-			ts = append(ts, target{key: model.RowKey{ContainerID: id}})
+	for _, h := range model.Holders(s, port) {
+		t := target{key: h.Key}
+		if p := h.Process; p != nil {
+			t.sudo, t.runtime = p.PID == 0, model.IsContainerRuntime(*p)
 		}
-	}
-	for _, p := range s.Processes {
-		own := false
-		for _, l := range p.Listeners {
-			switch {
-			case l.Port != port:
-			case l.ContainerID != "":
-				container(l.ContainerID)
-			case !own:
-				own = true
-				ts = append(ts, target{key: p.Key(), sudo: p.PID == 0, runtime: model.IsContainerRuntime(p)})
-			}
-		}
-	}
-	for _, c := range s.Containers {
-		if slices.ContainsFunc(c.Ports, func(m model.PortMapping) bool { return m.HostPort == port && m.Proto == "tcp" }) {
-			container(c.ID)
-		}
+		ts = append(ts, t)
 	}
 	return ts
 }

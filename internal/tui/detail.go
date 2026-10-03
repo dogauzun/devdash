@@ -9,14 +9,19 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dogauzun/devdash/internal/freeport"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
 // DEV-33 owns this file: the detail pane (full argv wrapped, cwd, project and branch,
 // listeners with bind address, parent chain, start time, user, Docker socket for containers).
 // DEV-86: the command is capped so those fields stay on screen, and the pane scrolls.
+// DEV-136: a process's project says whether it is in this repo, and a process with a listener
+// gets the next free port after its lowest, from the port line's probe (port.go), run as a
+// tea.Cmd off the UI goroutine.
 
 // Detail pane layout.
 const (
@@ -130,6 +135,104 @@ func (m *Model) closeDetail() {
 	m.dscroll.top = 0
 }
 
+// detailFree is the pane's next free port (spec "Release 1.1", Detail pane): the search from
+// the shown process's lowest TCP port plus one, as `port N` and the port line run it for N, for
+// one process and snapshot. The answer stays while the same process and port are asked again
+// from a newer snapshot, so the field does not flicker to `…` on every refresh.
+type detailFree struct {
+	key   model.RowKey // the process asked for
+	from  uint16       // its lowest TCP port
+	taken time.Time    // TakenAt of the snapshot asked from
+	seq   uint64       // tags the latest run; an answer with another tag is dropped
+	ans   portAnswer   // the latest answer for key and from
+	have  bool         // ans answers key and from
+}
+
+// detailFreeMsg is a next free run's answer, tagged with its run.
+type detailFreeMsg struct {
+	seq uint64
+	ans portAnswer
+}
+
+// apply keeps the answer when it is the latest run's.
+func (msg detailFreeMsg) apply(m *Model) tea.Cmd {
+	if msg.seq == m.dfree.seq {
+		m.dfree.ans, m.dfree.have = msg.ans, true
+	}
+	return nil
+}
+
+// lowestPort is p's lowest TCP port: listeners of any proto but UDP, as holds and freeport.Find
+// count them; ok is false when p has none.
+func lowestPort(p *model.Process) (port uint16, ok bool) {
+	for _, l := range p.Listeners {
+		if !strings.HasPrefix(l.Proto, "udp") && (!ok || l.Port < port) {
+			port, ok = l.Port, true
+		}
+	}
+	return port, ok
+}
+
+// detailFreeFor is the process whose next free port the pane shows, and the port the search
+// starts after: the selected row's real process, with a TCP listener below 65535, while the
+// pane is on screen (not under the help overlay or the kill modal). ok is false otherwise.
+func (m *Model) detailFreeFor() (p *model.Process, from uint16, ok bool) {
+	if !m.detail || m.help || m.kill.active() || !m.have {
+		return nil, 0, false
+	}
+	r, sel := m.selected()
+	if !sel || r.Key.Header != model.GroupNone || r.Process == nil || r.Process.PID == 0 {
+		return nil, 0, false
+	}
+	from, ok = lowestPort(r.Process)
+	if !ok || from == 65535 {
+		return nil, 0, false
+	}
+	return r.Process, from, true
+}
+
+// detailProbe returns the command that searches for the next free port when the pane shows a
+// process it has no answer for from the latest snapshot, tagged as the latest run; nil when
+// there is nothing to ask. Update calls it after every message.
+func (m *Model) detailProbe() tea.Cmd {
+	p, from, ok := m.detailFreeFor()
+	if !ok {
+		return nil
+	}
+	f, s, key := &m.dfree, m.upd.Snapshot, p.Key()
+	if f.key == key && f.from == from && f.taken.Equal(s.TakenAt) {
+		return nil
+	}
+	if f.key != key || f.from != from {
+		f.have = false
+	}
+	f.key, f.from, f.taken = key, from, s.TakenAt
+	f.seq++
+	seq, probe := f.seq, m.o.Probe
+	return func() tea.Msg { return detailFreeMsg{seq: seq, ans: probePort(s, from, false, probe)} }
+}
+
+// detailNextFree writes p's next free field after its listeners: `…` until the answer for p
+// and its lowest port arrives, then the port, `none in A-B`, or the probe's error in the warning
+// colour; no field without a TCP listener or when the lowest is 65535.
+func (m *Model) detailNextFree(d *detailDoc, p *model.Process) {
+	from, ok := lowestPort(p)
+	if !ok || from == 65535 {
+		return
+	}
+	f := m.dfree
+	switch a := f.ans; {
+	case !f.have || f.key != p.Key() || f.from != from:
+		d.field("next free", "…")
+	case a.err != nil:
+		d.warn("next free", model.Clean(a.err.Error()))
+	case a.found:
+		d.field("next free", strconv.Itoa(int(a.next)))
+	default:
+		d.field("next free", fmt.Sprintf("none in %d-%d", from+1, freeport.Last(from+1)))
+	}
+}
+
 // detailRow writes the details of r: a header, the PID 0 owner (a container's when Reconcile
 // matched its port), a process, or a container.
 func (m *Model) detailRow(d *detailDoc, r model.Row) {
@@ -202,7 +305,11 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 	}
 	d.field("cwd", cwd)
 	if pr := detailProject(s, p.ProjectID); pr != nil {
-		d.field("project", detailProjectTitle(pr))
+		project := detailProjectTitle(pr)
+		if loc := model.Location(pr, detailHere(s)); loc != "" {
+			project += " · " + loc
+		}
+		d.field("project", project)
 		d.field("root", quote(pr.Root))
 		if pr.Worktree && pr.MainRepo != "" {
 			d.field("main repo", quote(pr.MainRepo))
@@ -211,6 +318,7 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 		d.field("project", "none")
 	}
 	detailListeners(d, p.Listeners)
+	m.detailNextFree(d, p)
 	if chain := detailParents(s, p); len(chain) > 0 {
 		d.words("parents", chain, detailChain)
 	} else {
@@ -376,6 +484,16 @@ func detailProjectTitle(pr *model.Project) string {
 		t += " (worktree)"
 	}
 	return t
+}
+
+// detailHere returns the snapshot's Here project, the one devdash was run from, or nil.
+func detailHere(s model.Snapshot) *model.Project {
+	for i := range s.Projects {
+		if s.Projects[i].Here {
+			return &s.Projects[i]
+		}
+	}
+	return nil
 }
 
 // detailProject returns the snapshot's project with id, or nil.

@@ -8,13 +8,13 @@
 [7;36m    ▾ vite (node)                             server    *5173           101   3h[m[2m|[m main repo /src/shop-main              
         esbuild                               other                     102   2h[2m|[m listeners tcp6 [::]:5173              
     claude                                    agent                     103  20m[2m|[m           (every interface)           
-[1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m parents   zsh 100 < pid 90            
-    shop-web-1 (nginx:1.27)                   container *8000                   [2m|[m started   2026-10-02 09:00:00         
-    shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m           (3 h ago)                   
-[1m▸ other · 2 processes · 2 ports                                                 [m[2m|[m user      me (uid 501)                
+[1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m next free …                           
+    shop-web-1 (nginx:1.27)                   container *8000                   [2m|[m parents   zsh 100 < pid 90            
+    shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m started   2026-10-02 09:00:00         
+[1m▸ other · 2 processes · 2 ports                                                 [m[2m|[m           (3 h ago)                   
+                                                                                [2m|[m user      me (uid 501)                
                                                                                 [2m|[m cpu       12.3%                       
                                                                                 [2m|[m mem       178.9 MiB                   
-                                                                                [2m|[m                                       
                                                                                 [2m|[m                                       
                                                                                 [2m|[m                                       
                                                                                 [2m|[m                                       

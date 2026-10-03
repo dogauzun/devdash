@@ -79,9 +79,11 @@ type Model struct {
 
 	detail  bool         // detail pane open (detail.go)
 	dscroll detailScroll // its scroll position (detail.go)
+	dfree   detailFree   // its next free port (detail.go)
 	help    bool         // help overlay open (help.go)
 	kill    killState
-	hpos    helpPos // help overlay scroll position (help.go)
+	kafter  killAfter // the last kill's ports, until the first snapshot after it (kill.go)
+	hpos    helpPos   // help overlay scroll position (help.go)
 
 	status string // one-shot message in the footer (open failed, kill result); cleared by the next key
 }
@@ -153,8 +155,18 @@ func (m *Model) wait() tea.Cmd {
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 
-// Update implements tea.Model.
+// Update implements tea.Model. After every message, the detail pane asks for the next free
+// port of a process it has no answer for (detailProbe).
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := m.update(msg)
+	if probe := m.detailProbe(); probe != nil {
+		cmd = tea.Batch(cmd, probe)
+	}
+	return m, cmd
+}
+
+// update handles one message and returns its command.
+func (m *Model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -162,20 +174,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.upd = engine.Update(msg)
 		m.have = m.upd.Snapshot.SchemaVersion != 0
 		m.rebuild()
-		return m, tea.Batch(m.wait(), m.portProbe())
+		m.killPorts()
+		return tea.Batch(m.wait(), m.portProbe())
 	case closedMsg:
-		return m, tea.Quit
+		return tea.Quit
 	case tickMsg:
-		return m, tick()
+		return tick()
 	case tea.KeyPressMsg:
-		m.status = ""
-		return m, m.key(msg)
+		m.status, m.kafter = "", killAfter{} // a key clears the status before the kill's ports are in it
+		return m.key(msg)
 	case tea.PasteMsg:
-		return m, m.paste(msg.Content)
+		return m.paste(msg.Content)
 	case action:
-		return m, msg.apply(m)
+		return msg.apply(m)
 	}
-	return m, nil
+	return nil
 }
 
 // key routes a key press: ctrl+c always quits; an open kill modal, help overlay or filter

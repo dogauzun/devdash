@@ -258,8 +258,11 @@ func TestGoldenViews(t *testing.T) {
 		}
 	}
 	for _, v := range []view{
-		{name: "detail-80x24", w: 80, h: 24, do: selectPID(101, "enter")},               // full-screen overlay
-		{name: "detail-120x40", w: 120, h: 40, do: selectPID(101, "enter"), ansi: true}, // right split
+		// The detail pane before its next free answer (…), as an overlay and as the right split.
+		{name: "detail-80x24", w: 80, h: 24, do: selectPID(101, "enter")},
+		{name: "detail-120x40", w: 120, h: 40, do: selectPID(101, "enter"), ansi: true},
+		// api, in this repo, with its next free answered: 8081 is its own, so 8082.
+		{name: "detail-free-80x24", w: 80, h: 24, probe: &fakeProbe{}, do: detailAnswered(200)},
 		// api is the here project and api 200 is tagged: "!" below 90 columns, the labels and
 		// what they mean in the detail pane from there.
 		{name: "tags-80x24", w: 80, h: 24, do: selectPID(200), ansi: true},
@@ -301,6 +304,19 @@ func TestGoldenViews(t *testing.T) {
 				t.Errorf("Kill called with %+v", fk.plans)
 			}
 		})
+	}
+}
+
+// detailAnswered selects the process with pid, opens the detail pane and runs the next free
+// search it asks for.
+func detailAnswered(pid int) func(*testing.T, *Model, model.Snapshot) {
+	return func(t *testing.T, m *Model, s model.Snapshot) {
+		selectRow(t, m, keyOf(s, pid))
+		cmd := press(m, "enter")
+		if cmd == nil {
+			t.Fatal("the pane asked for no next free port")
+		}
+		runAll(m, cmd)
 	}
 }
 

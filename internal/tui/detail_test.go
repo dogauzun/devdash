@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -8,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -707,5 +711,195 @@ func TestDetailTags(t *testing.T) {
 	press(m, "enter")
 	if line(m, "tags") != "" {
 		t.Errorf("an untagged process lists tags:\n%s", screen(m))
+	}
+}
+
+// TestDetailLocation: a process's project ends with where it is from devdash's own repository,
+// as the port answer says it: this repo, another worktree of it, or nothing.
+func TestDetailLocation(t *testing.T) {
+	s := fixture()
+	m := newPortTest(t, 100, 40, s, &fakeProbe{})
+	detailSelect(t, m, keyOf(s, 200))
+	press(m, "enter")
+	hasLine(t, m, "project   api @ main · this repo")
+	detailSelect(t, m, keyOf(s, 101))
+	hasLine(t, m, "project   shop @ feat/cart (worktree)")
+
+	// devdash run from shop's main repository: the feat/cart worktree is another worktree of it.
+	s = fixture()
+	s.Projects[1].Here = false
+	s.Projects = append(s.Projects, model.Project{ID: "/src/shop-main", Root: "/src/shop-main", Name: "shop", Branch: "main", Here: true})
+	m = newPortTest(t, 100, 40, s, &fakeProbe{})
+	detailSelect(t, m, keyOf(s, 101))
+	press(m, "enter")
+	hasLine(t, m, "project   shop @ feat/cart (worktree) · this repo, other worktree")
+	detailSelect(t, m, keyOf(s, 200))
+	hasLine(t, m, "project   api @ main")
+
+	// No Here project: no marker.
+	s = fixture()
+	s.Projects[1].Here = false
+	m = newPortTest(t, 100, 40, s, &fakeProbe{})
+	detailSelect(t, m, keyOf(s, 200))
+	press(m, "enter")
+	hasLine(t, m, "project   api @ main")
+}
+
+// openDetail selects the row with key k with the pane closed, opens the pane and returns the
+// command enter returned.
+func openDetail(t *testing.T, m *Model, k model.RowKey) tea.Cmd {
+	t.Helper()
+	m.closeDetail()
+	selectRow(t, m, k)
+	return press(m, "enter")
+}
+
+// TestDetailNextFree: a process with a listener gets a next free field after its listeners,
+// the search from its lowest TCP port plus one, `…` until the answer arrives.
+func TestDetailNextFree(t *testing.T) {
+	s := fixture()
+	fp := &fakeProbe{}
+	m := newPortTest(t, 100, 40, s, fp)
+	cmd := openDetail(t, m, keyOf(s, 200))
+	if len(fp.calls) != 0 {
+		t.Fatalf("probed on the UI goroutine: %v", fp.calls)
+	}
+	pane := strings.Join(paneLines(m), "\n")
+	if !strings.Contains(pane, "listeners tcp4 127.0.0.1:8080\n          tcp6 [::1]:8081\nnext free …\nparents") {
+		t.Errorf("next free is not … after the listeners:\n%s", pane)
+	}
+	runAll(m, cmd)
+	hasLine(t, m, "next free 8082") // 8081 is api's own, from the snapshot: never probed
+	if !slices.Equal(fp.calls, []uint16{8082}) {
+		t.Errorf("probe calls %v, want 8082", fp.calls)
+	}
+
+	errMFILE := errors.New("socket: too many\x1bopen files")
+	for _, c := range []struct {
+		name  string
+		probe *fakeProbe
+		pid   int
+		want  string
+	}{
+		{"nothing free", (&fakeProbe{}).takeRange(8082, 8180), 200, "next free none in 8081-8180"},
+		{"probe failed", &fakeProbe{err: errMFILE}, 200, "next free socket: too many?open files"},
+		{"one listener", &fakeProbe{}, 101, "next free 5174"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := newPortTest(t, 100, 40, s, c.probe)
+			runAll(m, openDetail(t, m, keyOf(s, c.pid)))
+			hasLine(t, m, c.want)
+			if c.probe.err != nil && !warned(t, m, "next free", "socket: too many?open files") {
+				t.Errorf("the error is not in the warning colour:\n%q", styled(t, m, colorprofile.ANSI))
+			}
+		})
+	}
+
+	// The lowest TCP port, whatever the listeners' order; UDP does not count.
+	s2 := withProcess(fixture(), 204, apiID, model.KindServer, 0)
+	s2.Processes[len(s2.Processes)-1].Listeners = []model.Listener{lis("tcp4", "0.0.0.0", 9100), lis("udp4", "0.0.0.0", 53),
+		lis("tcp6", "::", 9000)}
+	m = newPortTest(t, 100, 40, s2, &fakeProbe{})
+	runAll(m, openDetail(t, m, keyOf(s2, 204)))
+	hasLine(t, m, "next free 9001")
+
+	// No field and no probe: no listener, UDP only, a lowest port of 65535.
+	for name, ls := range map[string][]model.Listener{
+		"no listener": nil,
+		"UDP only":    {lis("udp4", "0.0.0.0", 53)},
+		"65535":       {lis("tcp4", "0.0.0.0", 65535)},
+	} {
+		s3 := withProcess(fixture(), 204, apiID, model.KindServer, 0)
+		s3.Processes[len(s3.Processes)-1].Listeners = ls
+		fp := &fakeProbe{}
+		m := newPortTest(t, 100, 40, s3, fp)
+		if cmd := openDetail(t, m, keyOf(s3, 204)); cmd != nil {
+			runAll(m, cmd)
+			t.Errorf("%s: opening the pane returned a command (probe calls %v)", name, fp.calls)
+		}
+		if l := line(m, "next free"); l != "" {
+			t.Errorf("%s: %q", name, l)
+		}
+	}
+}
+
+// TestDetailNextFreeRuns: the probe runs off the UI goroutine when the pane shows a row it has
+// no answer for and on each new snapshot while it is open; answers for another row or an
+// older snapshot are dropped, and the row's last answer stays until the next one arrives.
+func TestDetailNextFreeRuns(t *testing.T) {
+	s := fixture()
+	fp := &fakeProbe{}
+	m := newPortTest(t, 100, 40, s, fp)
+	refresh := func(s model.Snapshot, ago time.Duration) tea.Cmd {
+		s.TakenAt = at(ago)
+		_, cmd := m.Update(updateMsg(engine.Update{Snapshot: s, Interval: 2 * time.Second}))
+		return cmd
+	}
+
+	// Pane closed: moving and refreshing never probe.
+	selectRow(t, m, keyOf(s, 200))
+	runAll(m, refresh(s, time.Second))
+	if len(fp.calls) != 0 {
+		t.Fatalf("probed with the pane closed: %v", fp.calls)
+	}
+
+	// Open on api, move to go test (no listener) and on to vite before api's answer arrives.
+	apiAns := press(m, "enter")
+	if cmd := press(m, "down"); cmd != nil {
+		t.Error("go test, without a listener, returned a command")
+	}
+	var viteAns tea.Cmd
+	for range 10 {
+		if viteAns = press(m, "down"); m.sel == keyOf(s, 101) {
+			break
+		}
+	}
+	if m.sel != keyOf(s, 101) || viteAns == nil {
+		t.Fatalf("vite selected %v, command %v", m.sel == keyOf(s, 101), viteAns != nil)
+	}
+	runAll(m, apiAns)
+	hasLine(t, m, "next free …")
+	runAll(m, viteAns)
+	hasLine(t, m, "next free 5174")
+
+	// A key that changes nothing shown asks for nothing.
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown}); cmd != nil {
+		t.Error("a key on the same row and snapshot returned a command")
+	}
+
+	// A new snapshot: the last answer stays until the new one arrives; an older one is dropped.
+	newer := withProcess(fixture(), 204, apiID, model.KindServer, 5174)
+	stale := refresh(fixture(), 500*time.Millisecond)
+	fresh := refresh(newer, 0)
+	hasLine(t, m, "next free 5174")
+	runAll(m, fresh)
+	hasLine(t, m, "next free 5175")
+	runAll(m, stale)
+	hasLine(t, m, "next free 5175")
+
+	// The same snapshot again (a failed tick keeps the last good one) is not new.
+	calls := len(fp.calls)
+	_, cmd := m.Update(updateMsg(engine.Update{Snapshot: m.upd.Snapshot, Err: errors.New("timeout"), Interval: 2 * time.Second}))
+	runAll(m, cmd)
+	if len(fp.calls) != calls {
+		t.Errorf("the same snapshot probed again: %v", fp.calls[calls:])
+	}
+
+	// Closed: a new snapshot does not probe; opening again on it does, and the row's last
+	// answer shows until the new one arrives.
+	press(m, "esc")
+	runAll(m, refresh(newer, -time.Second))
+	if len(fp.calls) != calls {
+		t.Errorf("probed with the pane closed: %v", fp.calls[calls:])
+	}
+	_, cmd = m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("reopening on a new snapshot returned no command")
+	}
+	hasLine(t, m, "next free 5175")
+	runAll(m, cmd)
+	hasLine(t, m, "next free 5175")
+	if len(fp.calls) == calls {
+		t.Error("reopening did not probe")
 	}
 }

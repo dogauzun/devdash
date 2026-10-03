@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -741,5 +742,137 @@ func TestKillScrollResets(t *testing.T) {
 	}
 	if line(m, "f force-kill survivors") == "" {
 		t.Error("force offer lost while scrolling")
+	}
+}
+
+// afterKill is s as taken d after the kill finished (the fixed clock: fakeKiller returns at
+// now); a negative d is a snapshot started before it.
+func afterKill(s model.Snapshot, d time.Duration) model.Snapshot {
+	s.TakenAt = now.Add(d)
+	return s
+}
+
+// without returns s without the processes with pids.
+func without(s model.Snapshot, pids ...int) model.Snapshot {
+	s.Processes = slices.DeleteFunc(slices.Clone(s.Processes), func(p model.Process) bool { return slices.Contains(pids, p.PID) })
+	return s
+}
+
+// killed kills the fixture process with pid after keys (t for tree mode), with every planned
+// process exiting, and returns the model with the modal closed.
+func killed(t *testing.T, s model.Snapshot, pid int, keys ...string) *Model {
+	t.Helper()
+	m, _, _, _ := newKillTest(t, 120, 40, s)
+	selectRow(t, m, keyOf(s, pid))
+	press(m, append([]string{"x"}, keys...)...)
+	run(t, m, press(m, "enter"))
+	if m.kill.active() {
+		t.Fatalf("the modal is still open:\n%s", screen(m))
+	}
+	return m
+}
+
+// status is the footer's status line, "" when there is none.
+func status(m *Model) string {
+	return line(m, "killed ")
+}
+
+// TestKillResultPorts: once every process a kill signalled exited, the first snapshot taken
+// after the kill finished adds each of their ports, ascending: free, or the holders that still
+// hold it.
+func TestKillResultPorts(t *testing.T) {
+	s := fixture()
+	m := killed(t, s, 101, "t") // vite and esbuild
+	if got, want := status(m), "killed 2 processes"; got != want {
+		t.Fatalf("status %q, want %q", got, want)
+	}
+	// A snapshot that started before the kill finished may still list vite: not reported.
+	feed(m, afterKill(without(s, 101, 102), -time.Millisecond))
+	if got, want := status(m), "killed 2 processes"; got != want {
+		t.Errorf("a snapshot from before the kill finished: %q, want %q", got, want)
+	}
+	feed(m, afterKill(without(s, 101, 102), time.Second))
+	if got, want := status(m), "killed 2 processes · 5173 free"; got != want {
+		t.Errorf("status %q, want %q", got, want)
+	}
+	// Reported once: a later snapshot changes nothing.
+	feed(m, afterKill(s, 2*time.Second))
+	if got, want := status(m), "killed 2 processes · 5173 free"; got != want {
+		t.Errorf("a second snapshot: %q, want %q", got, want)
+	}
+
+	// A forked child holds the port, by its label and pid, and a container publishes it, by
+	// its name; comma-joined in snapshot order.
+	m = killed(t, s, 101)
+	after := without(s, 101)
+	child := model.Process{PID: 105, PPID: 1, StartTime: at(time.Hour), UID: 501, Name: "node", ProjectID: shopID,
+		Argv: []string{"node", "node_modules/.bin/vite"}, Listeners: []model.Listener{lis("tcp6", "::", 5173)}}
+	after.Processes = append(after.Processes, child)
+	after.Containers = append(after.Containers, model.Container{ID: "c0ffee", Name: "web-dev", State: "running",
+		Ports: []model.PortMapping{{HostPort: 5173, ContainerPort: 80, Proto: "tcp"}}})
+	feed(m, afterKill(after, time.Second))
+	if got, want := status(m), "killed 1 process · 5173 still held by vite (node) 105, web-dev"; got != want {
+		t.Errorf("status %q, want %q", got, want)
+	}
+
+	// Every port, ascending, whatever the listeners' order; the unknown owner by that name.
+	s2 := fixture()
+	s2.Processes[4].Listeners = []model.Listener{lis("tcp6", "::1", 8081), lis("tcp4", "127.0.0.1", 8080), lis("udp4", "0.0.0.0", 8125)}
+	m = killed(t, s2, 200)
+	after = without(s2, 200)
+	after.Processes[len(after.Processes)-1].Listeners = append(after.Processes[len(after.Processes)-1].Listeners, lis("tcp4", "0.0.0.0", 8081))
+	feed(m, afterKill(after, time.Second))
+	if got, want := status(m), "killed 1 process · 8080 free · 8081 still held by unknown owner"; got != want {
+		t.Errorf("status %q, want %q", got, want)
+	}
+
+	// No port held: the status stays as it was.
+	m = killed(t, s, 103)
+	feed(m, afterKill(without(s, 103), time.Second))
+	if got, want := status(m), "killed 1 process"; got != want {
+		t.Errorf("status %q, want %q", got, want)
+	}
+
+	// A process that was gone before the signal counts: it was in the kill, and its port is the
+	// one the user wanted.
+	m, _, _, fk := newKillTest(t, 120, 40, s)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(proc model.Process) engine.Outcome {
+			return engine.Outcome{Signalled: proc.PID != 101, Exited: true}
+		}), nil
+	})
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "x", "t")
+	run(t, m, press(m, "enter"))
+	feed(m, afterKill(without(s, 101, 102), time.Second))
+	if got, want := status(m), "killed 1 process, 1 already gone · 5173 free"; got != want {
+		t.Errorf("status %q, want %q", got, want)
+	}
+}
+
+// TestKillResultKeyClears: a key pressed before the first snapshot after the kill clears the
+// status, as any key clears it, and the ports are not reported.
+func TestKillResultKeyClears(t *testing.T) {
+	s := fixture()
+	m := killed(t, s, 101, "t")
+	press(m, "down")
+	feed(m, afterKill(without(s, 101, 102), time.Second))
+	if got := status(m); got != "" || line(m, "5173 free") != "" {
+		t.Errorf("status %q after a key:\n%s", got, screen(m))
+	}
+
+	// A kill that left survivors reports in the modal; its ports are not waited for.
+	m, _, _, fk := newKillTest(t, 120, 40, s)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(proc model.Process) engine.Outcome {
+			return engine.Outcome{Signalled: true, Exited: proc.PID != 102}
+		}), nil
+	})
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "x", "t")
+	run(t, m, press(m, "enter"))
+	feed(m, afterKill(without(s, 101), time.Second))
+	if !m.kill.active() || line(m, "5173") != "" {
+		t.Errorf("survivors: modal open %v\n%s", m.kill.active(), screen(m))
 	}
 }

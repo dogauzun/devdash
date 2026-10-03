@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -20,7 +21,8 @@ import (
 // DEV-34 owns this file: the kill modal over engine plans (p process, t tree, f force, esc
 // cancel), the second confirmation outside every project (Y only), refusals, and survivors
 // with the offer to force-kill them. Kill runs as a tea.Cmd, off the UI goroutine, and its result
-// comes back as an action.
+// comes back as an action. DEV-136: the summary adds whether the killed processes' ports are
+// free, from the first snapshot taken after the kill.
 
 // killStage is where the kill modal is; killClosed is the zero value.
 type killStage uint8
@@ -55,13 +57,21 @@ type killState struct {
 	blind bool
 }
 
-// killDoneMsg is Kill's answer, delivered back to the UI goroutine.
+// killDoneMsg is Kill's answer, delivered back to the UI goroutine, with when Kill returned.
 type killDoneMsg struct {
 	result engine.Result
 	err    error
+	done   time.Time
 }
 
-func (msg killDoneMsg) apply(m *Model) tea.Cmd { return m.killDone(msg.result, msg.err) }
+func (msg killDoneMsg) apply(m *Model) tea.Cmd { return m.killDone(msg.result, msg.err, msg.done) }
+
+// killAfter is a finished kill's ports, waiting for the first snapshot taken after it to say
+// whether each is free (spec "Release 1.1", Kill result); the zero value waits for nothing.
+type killAfter struct {
+	ports []uint16  // the killed processes' TCP ports, ascending, without repeats
+	done  time.Time // when Kill returned: a snapshot taken before may still list them
+}
 
 // active reports whether the kill modal has the keyboard.
 func (k *killState) active() bool { return k.stage != killClosed }
@@ -184,16 +194,17 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 // killSignal shows p as being signalled and returns the command that runs Kill on it.
 func (m *Model) killSignal(p engine.Plan) tea.Cmd {
 	m.kill.stage, m.kill.plan, m.kill.top = killRunning, p, 0
-	kill, timeout := m.o.Kill, m.o.KillTimeout
+	kill, timeout, clock := m.o.Kill, m.o.KillTimeout, m.o.Now
 	return func() tea.Msg {
 		r, err := kill(p, timeout)
-		return killDoneMsg{r, err}
+		return killDoneMsg{r, err, clock()}
 	}
 }
 
 // killDone takes Kill's answer: it asks for a refresh when anything may have been signalled,
-// then closes the modal with a summary when every planned process is gone, or reports.
-func (m *Model) killDone(r engine.Result, err error) tea.Cmd {
+// then closes the modal with a summary when every planned process is gone, or reports. The
+// summary waits for the first snapshot taken after done to add the processes' ports.
+func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	if m.kill.stage != killRunning {
 		return nil
 	}
@@ -220,7 +231,62 @@ func (m *Model) killDone(r engine.Result, err error) tea.Cmd {
 		m.status += fmt.Sprintf(", %d already gone", gone)
 	}
 	m.kill = killState{}
+	var ports []uint16
+	for _, o := range r.Outcomes {
+		for _, l := range o.Process.Listeners {
+			if !strings.HasPrefix(l.Proto, "udp") {
+				ports = append(ports, l.Port)
+			}
+		}
+	}
+	slices.Sort(ports)
+	m.kafter = killAfter{ports: slices.Compact(ports), done: done}
 	return nil
+}
+
+// killPorts adds the last kill's ports to its summary in the status line once a snapshot taken
+// after the kill finished is in: `5173 free`, or `5173 still held by` its holders, each
+// process by its label and pid, a container by its name, comma-joined. Free means
+// model.Holders finds none, as `kill N` checks: no listener and no published container port,
+// from the snapshot alone. Update calls it on each new snapshot; a key clears the wait.
+func (m *Model) killPorts() {
+	k := m.kafter
+	if len(k.ports) == 0 || !m.have || !m.upd.Snapshot.TakenAt.After(k.done) {
+		return
+	}
+	m.kafter = killAfter{}
+	s := m.upd.Snapshot
+	for _, port := range k.ports {
+		hs := model.Holders(s, port)
+		if len(hs) == 0 {
+			m.status += fmt.Sprintf("%s%d free", headerSep, port)
+			continue
+		}
+		who := make([]string, len(hs))
+		for i, h := range hs {
+			who[i] = killHolder(s, h)
+		}
+		m.status += fmt.Sprintf("%s%d still held by %s", headerSep, port, strings.Join(who, ", "))
+	}
+}
+
+// killHolder names a port's holder after a kill: a process by its label and pid, the unknown
+// owner as such, a container by its name (its ID when it has none). The status is cleaned when
+// drawn.
+func killHolder(s model.Snapshot, h model.Holder) string {
+	p := h.Process
+	switch {
+	case p == nil:
+		for _, c := range s.Containers {
+			if c.ID == h.Key.ContainerID && c.Name != "" {
+				return c.Name
+			}
+		}
+		return h.Key.ContainerID
+	case p.PID == 0:
+		return "unknown owner"
+	}
+	return fmt.Sprintf("%s %d", procLabel(p), p.PID)
 }
 
 // killView draws the modal in w by h: a title line, the processes indented below it, then
