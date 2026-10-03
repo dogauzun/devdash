@@ -116,6 +116,8 @@ func proc500() ([]fixProc, []fixListen) {
 	deleted := user(1141, 1001, "perl", "/home/dev/gone (deleted)", []string{"perl", "-e", "sleep 600"})
 	deleted.wantCwd, deleted.gone = "/home/dev/gone", true // DEV-44, DEV-116
 	procs = append(procs,
+		// The user's service manager: no project, no listener, a short name (DEV-123).
+		user(990, 1, "systemd", "/", []string{"/usr/lib/systemd/systemd", "--user"}),
 		user(1000, 1, "tmux: server", "/home/dev", []string{"tmux", "new", "-s", "dev"}),
 		user(1001, 1000, "zsh", src+"api", []string{"-zsh"}),
 		user(1100, 1001, "node", src+"api", []string{"node", "server.js"}, sock(2001), sock(2100)),
@@ -483,9 +485,10 @@ func TestCollectSkipsDeniedFDs(t *testing.T) {
 }
 
 // TestCollectFixtureLimitedArgv: with Options.InProject (over 5000 processes), cmdline is read
-// only for listener owners and for the processes InProject marks, here those under src/api;
-// every other process keeps its row with argv unknown, and that does not count as unreadable
-// (DEV-92).
+// only for listener owners, for the processes InProject marks, here those under src/api, for
+// long or runtime names and for processes named systemd, so a systemd --user manager still
+// shows its --user (DEV-123); every other process keeps its row with argv unknown, and that
+// does not count as unreadable (DEV-92).
 func TestCollectFixtureLimitedArgv(t *testing.T) {
 	procs, listens := proc500()
 	dir, denied := copyProc500(t)
@@ -525,7 +528,7 @@ func TestCollectFixtureLimitedArgv(t *testing.T) {
 	want := wantProcs(procs, denied)
 	read := 0
 	for i := range want {
-		if p := &want[i]; !owners[p.PID] && p.Cwd != project && len(p.Name) < 15 && !model.MayBeRuntime(p.Name) {
+		if p := &want[i]; !owners[p.PID] && p.Cwd != project && len(p.Name) < 15 && !model.MayBeRuntime(p.Name) && p.Name != "systemd" {
 			p.Argv, p.Unknown = nil, p.Unknown|model.FieldArgv
 		} else {
 			read++
@@ -541,6 +544,10 @@ func TestCollectFixtureLimitedArgv(t *testing.T) {
 			}
 		}
 		t.Fatalf("got %d processes, want %d", len(res.Processes), len(want))
+	}
+	userManager := []string{"/usr/lib/systemd/systemd", "--user"}
+	if i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == 990 }); i < 0 || !slices.Equal(res.Processes[i].Argv, userManager) {
+		t.Errorf("systemd --user (pid 990) missing or without argv %q", userManager)
 	}
 
 	var codes []string
