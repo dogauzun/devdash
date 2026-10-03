@@ -829,3 +829,20 @@ func TestTableArgs(t *testing.T) {
 		}
 	}
 }
+
+// TestTableInlineCode: a process that runs inline code (`python3 -c`, `node -e`) has no tool, so
+// its row keeps the interpreter's name and the code follows as its arguments, not as the label
+// (DEV-137).
+func TestTableInlineCode(t *testing.T) {
+	s := fixture()
+	s.Processes[5].Name = "python3" // go test
+	s.Processes[5].Argv = []string{"python3", "-c", "from multiprocessing.spawn import x", "--fork"}
+	m, _ := newTest(t, 80, 30)
+	feed(m, s)
+	if l, want := line(m, "multiprocessing"), "    python3  -c from multiprocessing.spawn i… "; !strings.HasPrefix(l, want) {
+		t.Errorf("row %q, want it to start %q", l, want)
+	}
+	if got := procLabel(&s.Processes[5]); got != "python3" {
+		t.Errorf("procLabel = %q, want python3", got)
+	}
+}

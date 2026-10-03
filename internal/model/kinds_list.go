@@ -117,6 +117,11 @@ var interpreters = map[string]bool{
 	"ruby":   true, // Ruby
 }
 
+// inlineCodeFlags: an interpreter's flags whose value is the program itself (`python3 -c CODE`,
+// `node -e CODE`, `node --print=CODE`), so the process runs no tool (DEV-137). Python's
+// multiprocessing spawn workers, the default on macOS, are `python3 -c "from multiprocessing…"`.
+var inlineCodeFlags = map[string]bool{"-c": true, "-e": true, "--eval": true, "-p": true, "--print": true}
+
 // scriptExts: extensions stripped from an interpreter's script, so nodemon.js matches nodemon.
 var scriptExts = map[string]bool{".js": true, ".cjs": true, ".mjs": true, ".ts": true, ".py": true, ".rb": true}
 

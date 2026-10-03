@@ -102,13 +102,26 @@ func TestTool(t *testing.T) {
 		{argv: "node -r x app.js", tool: "x", args: "app.js"},                         // the argument Classify reads
 		{argv: "node"},
 		{argv: "node --inspect"},
+		// Inline code is not a tool (DEV-137): the program text follows -c, -e, --eval, -p or --print.
+		{argv: "python3 -c from@multiprocessing.spawn@import@spawn_main; --multiprocessing-fork"},
+		{argv: "python3 -B -c import@a/b"},
+		{argv: "node -e setInterval(()=>{},1e6)"},
+		{argv: "node --eval x app.js"},
+		{argv: "node --eval=x app.js"},
+		{argv: "node -p 1+1"},
+		{argv: "bun --print 1"},
+		{argv: "python3 -m pytest -c pytest.ini", tool: "pytest", args: "-c pytest.ini"}, // after the tool, -c is its own
 		{argv: "python3 -m"},
 		{argv: "/usr/sbin/sshd -D"},
 		{argv: "vite --port 5173"},
 		{argv: ""},
 	}
 	for _, tt := range tests {
-		p := Process{PID: 42, Name: "node", Argv: strings.Fields(tt.argv)}
+		argv := strings.Fields(tt.argv)
+		for i := range argv {
+			argv[i] = strings.ReplaceAll(argv[i], "@", " ") // one argument with spaces, as inline code is
+		}
+		p := Process{PID: 42, Name: "node", Argv: argv}
 		tool, args, ok := Tool(p)
 		if ok != (tt.tool != "") || tool != tt.tool || !slices.Equal(args, strings.Fields(tt.args)) {
 			t.Errorf("Tool(%q) = %q, %q, %v; want %q, %q, %v", tt.argv, tool, args, ok, tt.tool, strings.Fields(tt.args), tt.tool != "")
@@ -124,8 +137,12 @@ func TestToolMatchesClassify(t *testing.T) {
 		"python3 -m PyTest -x", "npx vitest run", "node /app/node_modules/nodemon/bin/nodemon.js",
 		"node -r ts-node/register jest.ts", "python3.12 /usr/local/bin/pytest", "ruby bin/Rails.rb s",
 		"node", "node --inspect", "python3 -m", "/usr/sbin/sshd -D", "-zsh",
+		"python3 -c import@pytest", "node -e require('jest')", "node --print=x jest",
 	} {
-		argv := strings.Fields(argv)
+		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
+		for i := range argv {
+			argv[i] = strings.ReplaceAll(argv[i], "\x00", " ")
+		}
 		tool, args, ok := Tool(Process{PID: 42, Argv: argv})
 		c, cok := command{baseName(argv[0]), argv[1:]}.unwrap()
 		want := strings.ToLower(tool)

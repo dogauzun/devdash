@@ -99,16 +99,20 @@ func Tool(p Process) (tool string, args []string, ok bool) {
 // toolArg returns the index in args of the tool interpreter name runs, and whether it is a
 // module (the argument after -m) rather than a script; -1 when name is not an interpreter (its
 // trailing version digits ignored) or args name no tool. The tool is the module after -m, else
-// the first argument that is not a flag. Flags taking a separate value are not known, so
-// `node -r x app.js` yields x; good enough to find jest or pytest.
+// the first argument that is not a flag. A flag of inlineCodeFlags before it means the
+// interpreter runs inline code, which names no tool (DEV-137). Flags taking a separate value are
+// not known, so `node -r x app.js` yields x; good enough to find jest or pytest.
 func toolArg(name string, args []string) (i int, module bool) {
 	if !interpreters[strings.TrimRight(name, "0123456789.")] {
 		return -1, false
 	}
 	for i, a := range args {
+		flag, _, _ := strings.Cut(a, "=")
 		switch {
 		case a == "-m" && i+1 < len(args):
 			return i + 1, true
+		case inlineCodeFlags[flag]:
+			return -1, false
 		case strings.HasPrefix(a, "-"):
 			continue
 		}
