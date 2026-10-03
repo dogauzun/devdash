@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dogauzun/devdash/internal/engine"
@@ -129,6 +130,18 @@ func screen(m *Model) string {
 		lines[i] = strings.TrimRight(l, " ")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// warned reports whether s is drawn in the warning colour (yellow, SGR 33) on the first line
+// that contains at, in the view as the program writes it with colour on.
+func warned(t *testing.T, m *Model, at, s string) bool {
+	t.Helper()
+	for l := range strings.SplitSeq(styled(t, m, colorprofile.ANSI), "\n") {
+		if strings.Contains(ansi.Strip(l), at) {
+			return strings.Contains(l, "\x1b[33m"+s)
+		}
+	}
+	return false
 }
 
 // line returns the first screen line containing s, or "" when none does.

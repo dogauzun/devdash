@@ -155,7 +155,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 		detailListeners(d, p.Listeners)
 		for _, w := range s.Warnings {
 			if slices.Contains(detailOwnerWarnings, w.Code) && w.Hint != "" {
-				d.field("hint", quote(w.Hint))
+				d.warn("hint", quote(w.Hint))
 			}
 		}
 		return
@@ -424,6 +424,15 @@ func (d *detailDoc) title(t string) { d.add(styleBold.Render(t)) }
 
 // field writes a labelled value, wrapped at spaces to the value column.
 func (d *detailDoc) field(label, value string) { d.words(label, strings.Split(value, " "), " ") }
+
+// warn writes a labelled value like field, in the warning colour.
+func (d *detailDoc) warn(label, value string) {
+	lines := detailWrap(strings.Split(value, " "), " ", d.w-detailLabel)
+	for i, l := range lines {
+		lines[i] = styleWarn.Render(l)
+	}
+	d.labelled(label, lines)
+}
 
 // words writes a label and words joined by sep, wrapped to the value column; continuation
 // lines are indented to the value column.

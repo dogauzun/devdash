@@ -32,6 +32,9 @@ func TestHeader(t *testing.T) {
 	if got := strings.Split(screen(m), "\n")[0]; !strings.HasPrefix(got, "mbp · stale 8 s · 2 projects") {
 		t.Errorf("stale header %q", got)
 	}
+	if !warned(t, m, "mbp · stale", "stale 8 s") {
+		t.Error("stale age is not in the warning colour")
+	}
 	m.Update(updateMsg(engine.Update{Snapshot: s, Missed: 1}))
 	if got := strings.Split(screen(m), "\n")[0]; !strings.HasPrefix(got, "mbp · 8 s ago") {
 		t.Errorf("one missed tick is not stale yet: %q", got)

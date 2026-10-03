@@ -534,6 +534,9 @@ func TestKillReportErrors(t *testing.T) {
 	if !strings.Contains(line(m, "101 "), "permission denied, run with sudo") {
 		t.Errorf("permission line %q", line(m, "101 "))
 	}
+	if !warned(t, m, "101 ", "permission denied, run with sudo") || warned(t, m, "102 ", "not signalled: pid reused") {
+		t.Error("the permission hint, and only it, is in the warning colour (DEV-108)")
+	}
 	if !strings.Contains(line(m, "102 "), "not signalled: pid reused") {
 		t.Errorf("start time line %q", line(m, "102 "))
 	}
