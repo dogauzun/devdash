@@ -128,6 +128,7 @@ var inlineCodeFlags = map[string]bool{
 	"nodejs -e": true, "nodejs --eval": true, "nodejs -p": true, "nodejs --print": true,
 	"bun -e": true, "bun --eval": true, "bun -p": true, "bun --print": true,
 	"ruby -e": true,
+	"npx -c":  true, "npx --call": true, // npm exec runs a command string
 }
 
 // valueFlags: an interpreter's flags that take the next argument as their value, which is

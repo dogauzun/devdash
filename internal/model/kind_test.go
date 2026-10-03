@@ -116,6 +116,8 @@ func TestTool(t *testing.T) {
 		// -e is python's nothing, and python's -X and -W take the next argument as their value.
 		{argv: "npx -p nodemon nodemon server.js", tool: "nodemon", args: "nodemon server.js"},
 		{argv: "bunx -p vite vite", tool: "vite", args: "vite"},
+		{argv: "npx -c tsc@-p@./tsconfig.json@--watch"},
+		{argv: "npx --call=tsc@--watch"},
 		{argv: "ruby -p script.rb", tool: "script.rb"},
 		{argv: "ruby -e puts@1"},
 		{argv: "nodejs --eval x"},
