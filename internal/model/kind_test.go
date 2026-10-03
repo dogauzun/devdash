@@ -38,6 +38,7 @@ func TestClassify(t *testing.T) {
 		{argv: "nodemon server.js", want: KindWatcher},
 		{argv: "node /app/node_modules/nodemon/bin/nodemon.js", listeners: listen, want: KindWatcher},
 		{argv: "tsc --watch", want: KindWatcher},
+		{argv: "npx -p nodemon nodemon server.js", listeners: listen, want: KindWatcher}, // npx -p is --package, not inline code (DEV-138)
 		{argv: "tsc -p . -w", want: KindWatcher},
 		{argv: "tsc -p .", want: KindOther},
 		{argv: "node /app/node_modules/.bin/tsc --watch", want: KindWatcher},
@@ -111,6 +112,18 @@ func TestTool(t *testing.T) {
 		{argv: "node -p 1+1"},
 		{argv: "bun --print 1"},
 		{argv: "python3 -m pytest -c pytest.ini", tool: "pytest", args: "-c pytest.ini"}, // after the tool, -c is its own
+		// The flags are each interpreter's own (DEV-138): -p is npx's --package and ruby's loop,
+		// -e is python's nothing, and python's -X and -W take the next argument as their value.
+		{argv: "npx -p nodemon nodemon server.js", tool: "nodemon", args: "nodemon server.js"},
+		{argv: "bunx -p vite vite", tool: "vite", args: "vite"},
+		{argv: "npx -c tsc@-p@./tsconfig.json@--watch"},
+		{argv: "npx --call=tsc@--watch"},
+		{argv: "ruby -p script.rb", tool: "script.rb"},
+		{argv: "ruby -e puts@1"},
+		{argv: "nodejs --eval x"},
+		{argv: "python3 -X dev -W ignore -c from@multiprocessing.spawn@import@spawn_main; --multiprocessing-fork"},
+		{argv: "python3 -X dev app.py", tool: "app.py"},
+		{argv: "python3 -Wignore app.py", tool: "app.py"},
 		{argv: "python3 -m"},
 		{argv: "/usr/sbin/sshd -D"},
 		{argv: "vite --port 5173"},
@@ -138,6 +151,7 @@ func TestToolMatchesClassify(t *testing.T) {
 		"node -r ts-node/register jest.ts", "python3.12 /usr/local/bin/pytest", "ruby bin/Rails.rb s",
 		"node", "node --inspect", "python3 -m", "/usr/sbin/sshd -D", "-zsh",
 		"python3 -c import@pytest", "node -e require('jest')", "node --print=x jest",
+		"npx -p nodemon nodemon server.js", "python3 -X dev -m pytest", "ruby -p spec.rb",
 	} {
 		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
 		for i := range argv {

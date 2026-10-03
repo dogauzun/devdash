@@ -118,9 +118,23 @@ var interpreters = map[string]bool{
 }
 
 // inlineCodeFlags: an interpreter's flags whose value is the program itself (`python3 -c CODE`,
-// `node -e CODE`, `node --print=CODE`), so the process runs no tool (DEV-137). Python's
-// multiprocessing spawn workers, the default on macOS, are `python3 -c "from multiprocessing…"`.
-var inlineCodeFlags = map[string]bool{"-c": true, "-e": true, "--eval": true, "-p": true, "--print": true}
+// `node -e CODE`, `node --print=CODE`), so the process runs no tool (DEV-137), keyed by the
+// interpreter and the flag (before any `=`): each interpreter's own, since npx's -p is
+// --package and ruby's -p takes no value (DEV-138). Python's multiprocessing spawn workers, the
+// default on macOS, are `python3 -c "from multiprocessing…"`.
+var inlineCodeFlags = map[string]bool{
+	"python -c": true,
+	"node -e":   true, "node --eval": true, "node -p": true, "node --print": true,
+	"nodejs -e": true, "nodejs --eval": true, "nodejs -p": true, "nodejs --print": true,
+	"bun -e": true, "bun --eval": true, "bun -p": true, "bun --print": true,
+	"ruby -e": true,
+	"npx -c":  true, "npx --call": true, // npm exec runs a command string
+}
+
+// valueFlags: an interpreter's flags that take the next argument as their value, which is
+// therefore not the tool (DEV-138). Python passes -X and -W on to its multiprocessing workers
+// (`python3 -X dev -c …`); -Wignore, with the value attached, is a plain flag.
+var valueFlags = map[string]bool{"python -X": true, "python -W": true}
 
 // scriptExts: extensions stripped from an interpreter's script, so nodemon.js matches nodemon.
 var scriptExts = map[string]bool{".js": true, ".cjs": true, ".mjs": true, ".ts": true, ".py": true, ".rb": true}
