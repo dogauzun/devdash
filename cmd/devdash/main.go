@@ -37,6 +37,7 @@ var (
 const usage = `usage: devdash [flags]              the dashboard (? inside it lists the keys)
        devdash [flags] --json       print one snapshot as JSON (docs/json-schema.md)
        devdash [flags] port N       who listens on TCP port N: exit 0 found, 1 free
+       devdash [flags] free N       first free port in N..N+99: exit 0 found, 1 none
        devdash [flags] kill N       stop the process(es) listening on TCP port N
        devdash version              print version, commit and commit date
 
@@ -60,17 +61,20 @@ kill prints every pid it will signal, then asks for confirmation on the terminal
                    every project); without a terminal, kill needs --yes
   --timeout d      how long to wait for the signalled processes to exit (default 3s)
 
-Exit codes: 0 ok (port: found; kill: every signalled process exited, or nothing
-listens on N), 1 port free, 2 usage error (kill: also no terminal to confirm on),
-3 kill: permission denied (also an owner devdash cannot see; try sudo),
-4 kill: survivors remain, 5 devdash failed (no snapshot could be taken, or output
-could not be written; kill: only before anything was signalled), 6 kill: nothing
-signalled (devdash refuses the target, or the confirmation was declined).
+Exit codes: 0 ok (port: found; free: a port printed; kill: every signalled process
+exited, or nothing listens on N), 1 only answers the question asked, never a failure
+(port: N is free; free: nothing free in range), 2 usage error (kill: also no terminal
+to confirm on), 3 kill: permission denied (also an owner devdash cannot see; try sudo),
+4 kill: survivors remain, 5 devdash failed (no snapshot could be taken, free could
+not probe a port, or output could not be written; kill: only before anything was
+signalled), 6 kill: nothing signalled (devdash refuses the target, or the
+confirmation was declined).
 `
 
 // exitFailed is the exit code of every command when devdash itself fails: the snapshot could
-// not be taken or the output could not be written. 1 is "port free", 2 a usage error, and 3,
-// 4 and 6 belong to kill.
+// not be taken, the free port probe could not look, or the output could not be written. 1 only
+// answers the question asked ("port free", "nothing free in range"), 2 is a usage error, and
+// 3, 4 and 6 belong to kill.
 const exitFailed = 5
 
 // options is the parsed command line. The dashboard and `kill N`
@@ -86,7 +90,7 @@ type options struct {
 	Force    bool          // kill --force
 	Yes      bool          // kill --yes
 	Timeout  time.Duration // kill --timeout, positive
-	Cmd      string        // "", "port", "kill" or "version"
+	Cmd      string        // "", "port", "free", "kill" or "version"
 	Args     []string      // the subcommand's arguments, flags removed
 }
 
@@ -115,6 +119,9 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	case "port":
 		port, _ := parsePort(o.Args[0]) // checked by parse
 		return runPort(ctx, o.engine(c), port, stdout, stderr)
+	case "free":
+		port, _ := parsePort(o.Args[0]) // checked by parse
+		return runFree(ctx, o.engine(c), port, stdout, stderr)
 	case "kill":
 		port, _ := parsePort(o.Args[0]) // checked by parse
 		return runKill(ctx, o, o.engine(c), port, stdout, stderr)
@@ -257,9 +264,9 @@ func parse(args []string) (options, error) {
 		if len(o.Args) > 0 {
 			return o, fmt.Errorf("version takes no arguments")
 		}
-	case "port":
+	case "port", "free":
 		if len(o.Args) != 1 {
-			return o, fmt.Errorf("port takes one port number")
+			return o, fmt.Errorf("%s takes one port number", o.Cmd)
 		}
 		if _, err := parsePort(o.Args[0]); err != nil {
 			return o, err
@@ -400,8 +407,8 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
-// engine returns the engine options for these flags, for the one-shot commands (port, kill,
-// --json). Unless --no-docker, it looks for a Docker endpoint once, retried after a failure
+// engine returns the engine options for these flags, for the one-shot commands (port, free,
+// kill, --json). Unless --no-docker, it looks for a Docker endpoint once, retried after a failure
 // on the first 5 s Docker beat once 10 ticks of --tick have passed (a zero Tick, as in tests,
 // is the default tick); the colour setting is not an engine option, its readers take it from o.
 func (o options) engine(c collector.Collector) engine.Options { return o.engineOptions(c, false) }
