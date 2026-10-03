@@ -1,8 +1,8 @@
 # devdash — Technical Specification
 
-> Copy of https://claude.ai/artifact/KAMHVNSXtKDT9fLjxLDryS as of 2026-10-02. Tracked in Jira project DEV.
+> The spec of record for devdash v1 (Release 0.1). Rulings made while building it are in [DECISIONS.md](../DECISIONS.md); `DEV-n` keys refer to the maintainer's private Jira tickets.
 
-2026-09-28 · Doga · Status: Draft v0.1
+2026-09-28 · Doga · Status: v1
 
 ## Summary
 

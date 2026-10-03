@@ -161,7 +161,7 @@ func TestKeyRouting(t *testing.T) {
 // listeners, then projects) and then the hostname is cut with "…" before the filter is, and a
 // query wider than what is left shows its tail, so the cursor is always on screen (DEV-84).
 func TestHeaderFit(t *testing.T) {
-	const mac = "Dogas-MacBook-Pro.local" // os.Hostname on a typical Mac
+	const mac = "Alexs-MacBook-Pro.local" // os.Hostname on a typical Mac
 	header := func(m *Model) string {
 		t.Helper()
 		got := strings.Split(screen(m), "\n")[0]
@@ -194,11 +194,11 @@ func TestHeaderFit(t *testing.T) {
 	feed(m, withHost(mac))
 	press(m, "/")
 	typeText(m, q)
-	if got, want := header(m), "Doga… · 2 s ago · /"+q+"_"; got != want {
+	if got, want := header(m), "Alex… · 2 s ago · /"+q+"_"; got != want {
 		t.Errorf("60-character query\n got %q\nwant %q", got, want)
 	}
 	press(m, "enter")
-	if got, want := header(m), "D… · 2 s ago · filter: …"+q[len(q)-56:]; got != want {
+	if got, want := header(m), "A… · 2 s ago · filter: …"+q[len(q)-56:]; got != want {
 		t.Errorf("60-character applied filter\n got %q\nwant %q", got, want)
 	}
 
@@ -209,7 +209,7 @@ func TestHeaderFit(t *testing.T) {
 	feed(m, withHost(mac))
 	press(m, "/")
 	typeText(m, long)
-	if got, want := header(m), "D… · 2 s ago · /…"+long[len(long)-62:]+"_"; got != want {
+	if got, want := header(m), "A… · 2 s ago · /…"+long[len(long)-62:]+"_"; got != want {
 		t.Errorf("120-character query\n got %q\nwant %q", got, want)
 	}
 
