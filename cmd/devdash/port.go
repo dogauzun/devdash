@@ -1,23 +1,50 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
+
+	"github.com/charmbracelet/x/ansi"
+	"golang.org/x/sys/unix"
 
 	"github.com/dogauzun/devdash/internal/engine"
+	"github.com/dogauzun/devdash/internal/freeport"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
+// stdoutWidth is the width of the terminal w writes to, in columns; 0 when it is not one or
+// does not say. Tests replace it (with stdoutTerminal, kill.go).
+var stdoutWidth = func(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok {
+		return 0
+	}
+	ws, err := unix.IoctlGetWinsize(int(f.Fd()), ioctlGetWinsize)
+	if err != nil {
+		return 0
+	}
+	return int(ws.Col)
+}
+
 // runPort answers "who has port N" from one snapshot (no CPU, so one sample): exit 0 and one
-// line per listener when found, exit 1 and "free" when nothing listens.
+// line per listener when found, exit 1 and "free" when nothing listens. On a terminal the
+// answer also says what each holder is and which port to use instead (writeAnswer); piped, it
+// is the v0.1.1 output byte for byte, since scripts read those lines.
 func runPort(ctx context.Context, o engine.Options, port uint16, stdout, stderr io.Writer) int {
 	s, err := engine.Snapshot(ctx, o)
+	if err == nil && stdoutTerminal(stdout) {
+		return writeAnswer(stdout, stderr, s, port, stdoutWidth(stdout))
+	}
 	var found bool
 	if err == nil {
 		found, err = writePort(stdout, s, port)
@@ -134,6 +161,123 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 		return false, err
 	}
 	return true, tw.Flush()
+}
+
+// detailIndent starts each line writeAnswer adds under a holder, so they read as its own.
+const detailIndent = "       "
+
+// writeAnswer is the port answer on a terminal (spec "Release 1.0", the port answer):
+// writePort's lines, each process holder followed once, after its last line, by holderLines;
+// then, when N is held and below 65535, the next free port from the search `devdash free N+1`
+// makes. Container lines and the PID 0 line keep their v1 form. width is the terminal's (0:
+// unknown). A probe that fails leaves the next free line out and says why on stderr; the exit
+// code stays that of the answer, since the holders found are still what was asked.
+func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width int) int {
+	var b bytes.Buffer
+	found, _ := writePort(&b, s, port) // a bytes.Buffer does not fail
+	if !found {
+		return write(stdout, stderr, b.String(), 1)
+	}
+	projects := map[string]*model.Project{}
+	var here *model.Project
+	for i := range s.Projects {
+		projects[s.Projects[i].ID] = &s.Projects[i]
+		if s.Projects[i].Here {
+			here = &s.Projects[i]
+		}
+	}
+
+	// writePort writes one line per listener on port, process by process in snapshot order, then
+	// the lines of containers with no socket on it; so each process's lines are the next n.
+	lines := strings.SplitAfter(b.String(), "\n")
+	var out strings.Builder
+	at := 0
+	for _, p := range s.Processes {
+		n, own := 0, false // own: a line of p's is p's, not a container's
+		for _, l := range p.Listeners {
+			if l.Port == port {
+				n++
+				own = own || l.ContainerID == ""
+			}
+		}
+		for _, l := range lines[at : at+n] {
+			out.WriteString(l)
+		}
+		at += n
+		if own && p.PID != 0 {
+			for _, d := range holderLines(p, projects[p.ProjectID], here, s.TakenAt, width) {
+				out.WriteString(detailIndent + d + "\n")
+			}
+		}
+	}
+	for _, l := range lines[at:] {
+		out.WriteString(l)
+	}
+
+	var nextErr error
+	if port < 65535 {
+		next, ok, err := freeport.Find(s, port+1, probe)
+		switch {
+		case err != nil:
+			nextErr = err
+		case ok:
+			fmt.Fprintf(&out, "next free: %d\n", next)
+		default:
+			fmt.Fprintf(&out, "next free: none in %d-%d\n", port+1, freeport.Last(port+1))
+		}
+	}
+	code := write(stdout, stderr, out.String(), 0)
+	if nextErr != nil {
+		fmt.Fprintln(stderr, "devdash: next free:", nextErr)
+	}
+	return code
+}
+
+// holderLines are what the port answer says under process holder p, unindented: its command,
+// cut to width with "…" counting the indent (not when width is 0, unknown), and left out when
+// argv is unknown; where it runs, how long it has been up and whether in the Here repository;
+// its tags when it has any. pr is p's project and here the Here project, either nil; uptime
+// counts to now, the snapshot's time. Snapshot text is cleaned, since it goes to a terminal.
+func holderLines(p model.Process, pr, here *model.Project, now time.Time, width int) []string {
+	var lines []string
+	if len(p.Argv) > 0 {
+		cmd := model.Clean(strings.Join(p.Argv, " "))
+		if width > 0 {
+			cmd = ansi.Truncate(cmd, max(width-len(detailIndent), 1), "…")
+		}
+		lines = append(lines, cmd)
+	}
+	where := cmp.Or(p.Cwd, "-")
+	if pr != nil {
+		where = pr.Label()
+	}
+	parts := []string{model.Clean(where)}
+	if !p.StartTime.IsZero() {
+		parts = append(parts, "up "+model.Uptime(now.Sub(p.StartTime)))
+	}
+	if m := location(pr, here); m != "" {
+		parts = append(parts, m)
+	}
+	lines = append(lines, strings.Join(parts, ", "))
+	if p.Tags != 0 {
+		lines = append(lines, strings.Join(p.Tags.Labels(), ", "))
+	}
+	return lines
+}
+
+// location places project pr relative to the Here project (spec "Release 1.0", Here): "this
+// repo" when it is Here, "this repo, other worktree" when the two differ but share a main
+// repository (a linked worktree's MainRepo, a main repository's Root), else "".
+func location(pr, here *model.Project) string {
+	switch {
+	case pr == nil || here == nil:
+		return ""
+	case pr.ID == here.ID:
+		return "this repo"
+	case cmp.Or(pr.MainRepo, pr.Root) == cmp.Or(here.MainRepo, here.Root):
+		return "this repo, other worktree"
+	}
+	return ""
 }
 
 // dockerHint is the hint of the snapshot's Docker warning (docker_unreachable,

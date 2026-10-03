@@ -95,16 +95,37 @@ container port shows as the container: the pid of the process forwarding it (`-`
 is none or devdash cannot see it), the container's name and compose project, the address, its
 image and the forwarder.
 
+On a terminal, each process holding the port gets up to three more lines, indented: its full
+command (cut to the terminal's width); where it runs (project as `name @ branch`, the working
+directory when it is in no repository, or `-`), how long it has been up, and `this repo` or
+`this repo, other worktree` when it runs in the repository you ran devdash from or another
+worktree of it; and its tags, `orphaned` (its parent exited) or `cwd deleted` (its working
+directory is gone), when either applies. Tags state facts; they do not say a process is safe
+to kill. When the port is held, the answer ends with the port to use instead, found as
+`devdash free N+1` finds it (no line for N = 65535):
+
 ```console
 $ devdash port 5173
 15669  python3  shop  0.0.0.0:5173
+       uvicorn app:main --reload --port 5173
+       shop @ feat/login (worktree), up 3h, this repo
+       orphaned, cwd deleted
+next free: 5174
 $ devdash port 5432
 20  shop-db-1  shop  0.0.0.0:5432  container (postgres:16) via docker-proxy
+next free: 5433
 $ devdash port 2024
 0  unknown  -  0.0.0.0:2024  owner unknown: run with sudo to see owners
+next free: 2025
 $ devdash port 4999
 free
 ```
+
+Container lines and the unknown-owner line get no extra lines. When nothing from N+1 to N+100
+(at most 65535) is free, the last line is `next free: none in 5174-5273`; when the free-port
+check itself fails, the line is left out, the reason goes to stderr and the exit code stays.
+Piped or redirected, `port N` prints only the listener lines, byte for byte as v0.1.1 did, so
+scripts reading them keep working.
 
 | Exit code | Meaning |
 | --- | --- |
