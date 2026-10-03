@@ -73,25 +73,63 @@ func baseName(s string) string {
 	return strings.ToLower(strings.TrimPrefix(path.Base(s), "-"))
 }
 
-// unwrap returns the tool an interpreter runs: the module after -m, else the first argument
-// that is not a flag, without a script extension. Flags taking a separate value are not
-// known, so `node -r x app.js` yields x; good enough to find jest or pytest.
-func (c command) unwrap() (command, bool) {
-	if !interpreters[strings.TrimRight(c.name, "0123456789.")] {
-		return command{}, false
+// Tool returns the tool an interpreter process runs, for the TUI's `<tool> (<name>)` label
+// (spec "Release 1.1", tool labels): when the basename of argv[0] is an interpreter (see
+// interpreters; trailing version digits ignored), the module after -m as written, else the
+// basename of the first argument that is not a flag, case and extension kept (`vite` for
+// node_modules/.bin/vite, `server.js`, `manage.py`). args are the arguments after it, a
+// subslice of p.Argv. ok is false when argv[0] is not an interpreter or names no tool. It is
+// the argument Classify unwraps: both use toolArg.
+func Tool(p Process) (tool string, args []string, ok bool) {
+	if len(p.Argv) == 0 {
+		return "", nil, false
 	}
-	for i, a := range c.args {
+	rest := p.Argv[1:]
+	i, module := toolArg(baseName(p.Argv[0]), rest)
+	if i < 0 {
+		return "", nil, false
+	}
+	tool = rest[i]
+	if !module {
+		tool = path.Base(tool)
+	}
+	return tool, rest[i+1:], true
+}
+
+// toolArg returns the index in args of the tool interpreter name runs, and whether it is a
+// module (the argument after -m) rather than a script; -1 when name is not an interpreter (its
+// trailing version digits ignored) or args name no tool. The tool is the module after -m, else
+// the first argument that is not a flag. Flags taking a separate value are not known, so
+// `node -r x app.js` yields x; good enough to find jest or pytest.
+func toolArg(name string, args []string) (i int, module bool) {
+	if !interpreters[strings.TrimRight(name, "0123456789.")] {
+		return -1, false
+	}
+	for i, a := range args {
 		switch {
-		case a == "-m" && i+1 < len(c.args):
-			return command{strings.ToLower(c.args[i+1]), c.args[i+2:]}, true
+		case a == "-m" && i+1 < len(args):
+			return i + 1, true
 		case strings.HasPrefix(a, "-"):
 			continue
 		}
-		name := baseName(a)
-		if ext := path.Ext(name); scriptExts[ext] {
-			name = strings.TrimSuffix(name, ext)
-		}
-		return command{name, c.args[i+1:]}, true
+		return i, false
 	}
-	return command{}, false
+	return -1, false
+}
+
+// unwrap returns the tool an interpreter runs (toolArg) as Classify matches it: a module
+// lower-cased, a script by its lower-case basename without a script extension.
+func (c command) unwrap() (command, bool) {
+	i, module := toolArg(c.name, c.args)
+	switch {
+	case i < 0:
+		return command{}, false
+	case module:
+		return command{strings.ToLower(c.args[i]), c.args[i+1:]}, true
+	}
+	name := baseName(c.args[i])
+	if ext := path.Ext(name); scriptExts[ext] {
+		name = strings.TrimSuffix(name, ext)
+	}
+	return command{name, c.args[i+1:]}, true
 }
