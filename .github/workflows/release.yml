@@ -35,6 +35,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The tap token is a secret of this environment, which only v* tags may deploy to,
+    # so no other workflow run can read it (DEV-105).
+    environment: release
     permissions:
       contents: write
     steps:
@@ -55,7 +58,7 @@ jobs:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
         run: |
           if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
-            echo "::error::secret HOMEBREW_TAP_GITHUB_TOKEN is not set (write access to dogauzun/homebrew-tap)"
+            echo "::error::secret HOMEBREW_TAP_GITHUB_TOKEN is not set in the release environment (write access to dogauzun/homebrew-tap)"
             exit 1
           fi
 
