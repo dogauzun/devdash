@@ -173,6 +173,7 @@ const detailIndent = "       "
 // unknown). A probe that fails leaves the next free line out and says why on stderr; the exit
 // code stays that of the answer, since the holders found are still what was asked.
 func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width int) int {
+	s = cleanText(s)
 	var b bytes.Buffer
 	found, _ := writePort(&b, s, port) // a bytes.Buffer does not fail
 	if !found {
@@ -231,6 +232,42 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 		fmt.Fprintln(stderr, "devdash: next free:", nextErr)
 	}
 	return code
+}
+
+// cleanText is a copy of s with every text writePort prints passed through model.Clean:
+// process, project and container names, container IDs, images and compose projects, warning
+// hints and address zones. Those come from other processes (a Linux comm set with
+// PR_SET_NAME, a directory name), so raw they could drive the terminal, and a newline in one
+// would shift the lines writeAnswer inserts onto the wrong holder. Piped output keeps them raw,
+// as v0.1.1 printed them. s itself is not changed: a snapshot is never mutated.
+func cleanText(s model.Snapshot) model.Snapshot {
+	s.Processes = slices.Clone(s.Processes)
+	for i := range s.Processes {
+		p := &s.Processes[i]
+		p.Name, p.ContainerID = model.Clean(p.Name), model.Clean(p.ContainerID)
+		p.Listeners = slices.Clone(p.Listeners)
+		for j := range p.Listeners {
+			l := &p.Listeners[j]
+			l.ContainerID = model.Clean(l.ContainerID)
+			if z := l.Addr.Zone(); z != "" {
+				l.Addr = l.Addr.WithZone(model.Clean(z))
+			}
+		}
+	}
+	s.Projects = slices.Clone(s.Projects)
+	for i := range s.Projects {
+		s.Projects[i].Name = model.Clean(s.Projects[i].Name)
+	}
+	s.Containers = slices.Clone(s.Containers)
+	for i := range s.Containers {
+		c := &s.Containers[i]
+		c.ID, c.Name, c.Image, c.ComposeProject = model.Clean(c.ID), model.Clean(c.Name), model.Clean(c.Image), model.Clean(c.ComposeProject)
+	}
+	s.Warnings = slices.Clone(s.Warnings)
+	for i := range s.Warnings {
+		s.Warnings[i].Hint = model.Clean(s.Warnings[i].Hint)
+	}
+	return s
 }
 
 // holderLines are what the port answer says under process holder p, unindented: its command,

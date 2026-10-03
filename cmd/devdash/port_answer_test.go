@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -315,5 +317,47 @@ func TestRunPortTerminalWriteFails(t *testing.T) {
 	var stderr bytes.Buffer
 	if code := run([]string{"port", "3000"}, failWriter{}, &stderr, fake()); code != 5 || stderr.String() != "devdash: disk full\n" {
 		t.Errorf("exit %d, stderr %q; want 5 and the error", code, stderr.String())
+	}
+}
+
+// TestWriteAnswerControlCharacters: on a terminal the v1 lines are cleaned too. A name with a
+// newline (a Linux comm set with PR_SET_NAME, a project directory, a container name) would
+// otherwise reach the terminal raw and shift every later holder's lines onto the wrong holder
+// (PR #87 review); piped, writePort still prints them raw, as v0.1.1 did.
+func TestWriteAnswerControlCharacters(t *testing.T) {
+	s := answerFixture()
+	s.Processes[0].Tags = 0
+	s.Projects = append(s.Projects, model.Project{ID: "/code/x\ny", Root: "/code/x\ny", Name: "x\ny", Branch: "b\x1b[2J"})
+	evil := model.Process{PID: 999, Name: "evil\nx", ProjectID: "/code/x\ny", Argv: []string{"evil"}, StartTime: s.TakenAt.Add(-time.Minute),
+		Listeners: []model.Listener{{Proto: "tcp6", Addr: netip.MustParseAddr("fe80::1%lo\n0"), Port: 5173}}}
+	proxy := model.Process{PID: 20, Name: "docker-proxy", ContainerID: "c\n1", StartTime: s.TakenAt.Add(-time.Hour),
+		Listeners: []model.Listener{{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 5173, ContainerID: "c\n1"}}}
+	s.Processes = append([]model.Process{evil, proxy}, s.Processes...)
+	s.Containers = []model.Container{{ID: "c\n1", Name: "web\n1", Image: "img\x07", ComposeProject: "p\nq"}}
+	s.Warnings = []model.Warning{{Code: "docker_unreachable", Count: 1, Hint: "docker: down\n\x1b]0;x"}}
+	unknown := model.Process{PID: 0, Name: "unknown", Listeners: []model.Listener{{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: 5173}}}
+	s.Processes = append(s.Processes, unknown)
+	before := fmt.Sprintf("%+v", s)
+
+	var stdout, stderr bytes.Buffer
+	want := "999    evil?x   x?y   [fe80::1%lo?0]:5173\n" +
+		"       evil\n" +
+		"       x?y @ b?[2J, up 1m\n" +
+		"20     web?1    p?q   0.0.0.0:5173  container (img?) via docker-proxy\n" +
+		"15669  python3  shop  0.0.0.0:5173\n" +
+		"       uvicorn app:main --reload --port 5173\n" +
+		"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+		"0      unknown  -     127.0.0.1:5173  owner unknown: run with sudo to see it; docker: down??]0;x\n" +
+		"next free: 5174\n"
+	if code := writeAnswer(&stdout, &stderr, s, 5173, 80); code != 0 || stdout.String() != want {
+		t.Errorf("exit %d, output\n%q\nwant\n%q", code, stdout.String(), want)
+	}
+	if after := fmt.Sprintf("%+v", s); after != before {
+		t.Errorf("writeAnswer changed the snapshot:\n%s\nwas\n%s", after, before)
+	}
+
+	var piped bytes.Buffer
+	if _, _ = writePort(&piped, s, 5173); !strings.Contains(piped.String(), "evil\nx") || !strings.Contains(piped.String(), "web\n1") {
+		t.Errorf("piped output is no longer raw:\n%q", piped.String())
 	}
 }
