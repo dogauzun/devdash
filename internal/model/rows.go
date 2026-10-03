@@ -82,7 +82,8 @@ type ViewOptions struct {
 }
 
 // Flatten turns a snapshot into display order (spec "Process tree and kinds" and "TUI design"):
-// one header per group, ordered by most recent activity with `containers` and `other` last,
+// one header per group, the Here project first (spec "Release 1.0", TUI), then ordered by most
+// recent activity with `containers` and `other` last,
 // each followed by its process tree by ppid with roots sorted by opts.Sort; containers with no
 // process become rows under their compose project or `containers`; hidden kinds are dropped
 // unless ShowAll or needed to connect a visible descendant (then Dimmed); children of collapsed
@@ -161,6 +162,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 	ordered := slices.SortedFunc(maps.Values(groups), func(a, b *group) int {
 		ka, kb := a.header.Key, b.header.Key
 		return cmp.Or(
+			boolCompare(!a.here(), !b.here()),
 			cmp.Compare(lastRank(ka.Header), lastRank(kb.Header)),
 			b.active.Compare(a.active),
 			cmp.Compare(ka.Header, kb.Header),
@@ -206,6 +208,9 @@ type node struct {
 }
 
 const noPort = 1 << 16 // sorts after every real port
+
+// here reports whether g is the project devdash was run from.
+func (g *group) here() bool { return g.header.Project != nil && g.header.Project.Here }
 
 func containerGroup(c *Container) RowKey {
 	if c != nil && c.ComposeProject != "" {
@@ -329,8 +334,9 @@ func (n *node) emit(rows []Row, depth int, collapsed map[RowKey]bool) []Row {
 }
 
 // Filter returns the rows that match query plus the ancestors of each, in order (spec "TUI
-// design"). A row matches when query is a case-insensitive substring of a process's name or
-// argv, a container's name or image, or a header's project or compose name; a matching
+// design"). A row matches when query is a case-insensitive substring of a process's name,
+// argv or one of its tags (as label or JSON name: "cwd deleted" or "cwd_deleted"), a
+// container's name or image, or a header's project or compose name; a matching
 // header keeps its whole group. A query of digits only matches listener and published ports
 // by prefix ("30" finds 3000 and 3001) and nothing else. An empty query returns rows.
 func Filter(rows []Row, query string) []Row {
@@ -375,6 +381,8 @@ func matches(r Row, q string, digits bool) bool {
 	}
 	if p := r.Process; p != nil {
 		texts = append(texts, p.Name, strings.Join(p.Argv, " "))
+		texts = append(texts, p.Tags.Labels()...)
+		texts = append(texts, p.Tags.Names()...)
 		for _, l := range p.Listeners {
 			ports = append(ports, l.Port)
 		}

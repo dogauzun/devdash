@@ -193,6 +193,9 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 	default:
 		d.command(quoteArgv(p.Argv))
 	}
+	for i, t := range detailTags(s, p) {
+		d.field(detailFirst(i, "tags"), t)
+	}
 	cwd := "unknown"
 	if p.Cwd != "" {
 		cwd = quote(p.Cwd)
@@ -239,6 +242,30 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 	if names := p.Unknown.Names(); len(names) > 0 {
 		d.field("unknown", strings.Join(names, ", "))
 	}
+}
+
+// detailTags returns each of p's tags with what it means (spec "Release 1.0", TUI), in the
+// table's order: "orphaned: parent exited; now a child of launchd". An orphan's new parent is
+// launchd on macOS; on Linux init when its ppid is 1, else the user's systemd, the subreaper
+// the tag also names, when the snapshot shows it.
+func detailTags(s model.Snapshot, p *model.Process) []string {
+	var out []string
+	if p.Tags&model.TagOrphaned != 0 {
+		why := "parent exited"
+		switch {
+		case s.Host.OS == "darwin":
+			why += "; now a child of launchd"
+		case p.PPID == 1:
+			why += "; now a child of init"
+		case slices.ContainsFunc(s.Processes, func(q model.Process) bool { return q.PID == p.PPID && q.Name == "systemd" }):
+			why += "; now a child of the user's systemd"
+		}
+		out = append(out, model.TagOrphaned.Labels()[0]+": "+why)
+	}
+	if p.Tags&model.TagCwdDeleted != 0 {
+		out = append(out, model.TagCwdDeleted.Labels()[0]+": working directory deleted")
+	}
+	return out
 }
 
 // detailListeners writes one line per listener: protocol, bind address and port.

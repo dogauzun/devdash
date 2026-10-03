@@ -456,3 +456,68 @@ func TestFilter(t *testing.T) {
 		t.Error("empty query must return the input")
 	}
 }
+
+// TestFlattenHereFirst: the project devdash was run from is the first group, ahead of groups
+// with newer activity; the others keep the activity order (spec "Release 1.0", TUI).
+func TestFlattenHereFirst(t *testing.T) {
+	snap := Snapshot{
+		Projects: []Project{{ID: "/a", Name: "a", Here: true}, {ID: "/b", Name: "b"}},
+		Processes: []Process{
+			fp(10, 1, 0, "a1", "/a", KindOther), // a: the oldest activity
+			fp(11, 1, 9, "b1", "/b", KindOther),
+			fp(12, 1, 7, "proxy", "", KindContainer, 5432),
+			fp(13, 1, 100, "lone", "", KindOther),
+		},
+		Containers: []Container{{ID: "db", Name: "db", ComposeProject: "shop", Ports: []PortMapping{{HostPort: 5432}}}},
+	}
+	snap.Processes[2].ContainerID = "db"
+	groups := func() []string {
+		var got []string
+		for _, r := range Flatten(snap, ViewOptions{}) {
+			if r.Depth == 0 {
+				got = append(got, groupNames[r.Key.Header]+" "+r.Key.Group)
+			}
+		}
+		return got
+	}
+	if got, want := groups(), []string{"project /a", "project /b", "compose shop", "other "}; !slices.Equal(got, want) {
+		t.Errorf("groups %q, want %q", got, want)
+	}
+	snap.Projects[0].Here = false
+	if got, want := groups(), []string{"project /b", "compose shop", "project /a", "other "}; !slices.Equal(got, want) {
+		t.Errorf("without here: groups %q, want %q", got, want)
+	}
+}
+
+// TestFilterTags: a query matches a process's tags by label or by JSON name, as a substring
+// of each tag (spec "Release 1.0", TUI).
+func TestFilterTags(t *testing.T) {
+	const s = "/src/shop"
+	orphan := fp(10, 1, 0, "api", s, KindServer, 8080)
+	orphan.Tags = TagOrphaned
+	gone := fp(11, 1, 1, "vite", s, KindServer, 3000)
+	gone.Tags = TagOrphaned | TagCwdDeleted
+	lone := fp(20, 1, 0, "watcher", "", KindOther)
+	lone.Tags = TagCwdDeleted
+	snap := Snapshot{
+		Projects:  shop(),
+		Processes: []Process{orphan, gone, fp(12, 1, 2, "worker", s, KindOther), lone},
+	}
+	rows := Flatten(snap, ViewOptions{})
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"orphaned", []string{"[project /src/shop]", "  api", "  vite"}},
+		{"ORPHAN", []string{"[project /src/shop]", "  api", "  vite"}},
+		{"cwd deleted", []string{"[project /src/shop]", "  vite", "[other]", "  watcher"}},
+		{"cwd_deleted", []string{"[project /src/shop]", "  vite", "[other]", "  watcher"}},
+		{"deleted", []string{"[project /src/shop]", "  vite", "[other]", "  watcher"}},
+		{"orphaned, cwd", nil}, // each tag is matched on its own, not the joined list
+	}
+	for _, tt := range tests {
+		if got := render(Filter(rows, tt.query)); !slices.Equal(got, tt.want) {
+			t.Errorf("Filter(%q) = %q, want %q", tt.query, got, tt.want)
+		}
+	}
+}

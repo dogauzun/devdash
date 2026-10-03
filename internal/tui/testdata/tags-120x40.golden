@@ -1,21 +1,21 @@
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
-NAME                                          KIND      PORTS           PID   UP| node 101 · server
-▾ api @ main (here) · 2 processes · 2 ports                                     | command   node node_modules/.bin/vite
-    api  orphaned, cwd deleted                server    8080,8081       200   1d|           --port 5173
-    go                                        test                      201  30s| cwd       /src/shop
-▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            | project   shop @ feat/cart (worktree)
-  ▾ zsh                                       shell                     100   5h| root      /src/shop
-    ▾ node                                    server    *5173           101   3h| main repo /src/shop-main
-        esbuild                               other                     102   2h| listeners tcp6 [::]:5173
-    claude                                    agent                     103  20m|           (every interface)
-▾ shop (compose) · 2 containers · 2 ports                                       | parents   zsh 100 < pid 90
-    shop-web-1 (nginx:1.27)                   container *8000                   | started   2026-10-02 09:00:00
-    shop-db-1 (postgres:16)                   container *5432           300   4h|           (3 h ago)
-▾ other · 2 processes · 2 ports                                                 | user      me (uid 501)
-    unknown                                   other     *631              -    -| cpu       12.3%
-    sshd                                      server    *22               1   3d| mem       178.9 MiB
-                                                                                |
-                                                                                |
+NAME                                          KIND      PORTS           PID   UP| api 200 · server
+▾ api @ main (here) · 2 processes · 2 ports                                     | command   /src/api/bin/api -addr :8080
+    api  orphaned, cwd deleted                server    8080,8081       200   1d| tags      orphaned: parent exited; now
+    go                                        test                      201  30s|           a child of launchd
+▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            |           cwd deleted: working
+  ▾ zsh                                       shell                     100   5h|           directory deleted
+    ▾ node                                    server    *5173           101   3h| cwd       /src/api
+        esbuild                               other                     102   2h| project   api @ main
+    claude                                    agent                     103  20m| root      /src/api
+▾ shop (compose) · 2 containers · 2 ports                                       | listeners tcp4 127.0.0.1:8080
+    shop-web-1 (nginx:1.27)                   container *8000                   |           tcp6 [::1]:8081
+    shop-db-1 (postgres:16)                   container *5432           300   4h| parents   sshd 1
+▾ other · 2 processes · 2 ports                                                 | started   2026-10-01 10:00:00
+    unknown                                   other     *631              -    -|           (26 h ago)
+    sshd                                      server    *22               1   3d| user      me (uid 501)
+                                                                                | cpu       0.5%
+                                                                                | mem       50.0 MiB
                                                                                 |
                                                                                 |
                                                                                 |
