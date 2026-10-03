@@ -521,3 +521,73 @@ func TestFilterTags(t *testing.T) {
 		}
 	}
 }
+
+// TestMatch: Match is Filter's test of one row, without the group rule (a matching header
+// keeps its whole group in Filter, but Match on a row under it looks at that row alone).
+func TestMatch(t *testing.T) {
+	const s = "/src/shop"
+	tagged := fp(12, 1, 2, "worker", s, KindOther)
+	tagged.Tags = TagCwdDeleted
+	proxy := fp(30, 1, 0, "docker-proxy", "", KindContainer, 5432)
+	proxy.ContainerID = "c1"
+	snap := Snapshot{
+		Projects:   shop(),
+		Processes:  []Process{fp(10, 1, 0, "Vite", s, KindServer, 3000), fp(11, 1, 1, "zsh", s, KindShell), tagged, proxy},
+		Containers: []Container{{ID: "c1", Name: "db", Image: "postgres:16", ComposeProject: "store", Ports: []PortMapping{{HostPort: 5432}}}},
+	}
+	all := Flatten(snap, ViewOptions{ShowAll: true})
+	rows := map[string]Row{}
+	for _, r := range all {
+		rows[strings.TrimSpace(render([]Row{r})[0])] = r
+	}
+	tests := []struct {
+		row   string
+		query string
+		want  bool
+	}{
+		{"[project /src/shop]", "SHOP", true},
+		{"Vite", "shop", false}, // the group rule is Filter's
+		{"Vite", "vI", true},
+		{"Vite", "30", true},   // port prefix
+		{"Vite", "10", false},  // digits never match pids or names
+		{"Vite", "000", false}, // a prefix, not a substring
+		{"zsh", "zsh", true},   // hidden kinds match like any row
+		{"zsh", "", true},      // an empty query matches every row
+		{"worker", "cwd_deleted", true},
+		{"worker", "CWD DEL", true},
+		{"[compose store]", "stor", true},
+		{"docker-proxy@db", "postgres", true},
+		{"docker-proxy@db", "5432", true},
+	}
+	for _, tt := range tests {
+		r, ok := rows[tt.row]
+		if !ok {
+			t.Fatalf("no row %q in %q", tt.row, render(all))
+		}
+		if got := Match(r, tt.query); got != tt.want {
+			t.Errorf("Match(%s, %q) = %v, want %v", tt.row, tt.query, got, tt.want)
+		}
+	}
+}
+
+// TestHideable: Flatten hides exactly the processes Hideable reports, unless ShowAll.
+func TestHideable(t *testing.T) {
+	const s = "/src/shop"
+	procs := []Process{
+		fp(10, 1, 0, "zsh", s, KindShell),
+		fp(11, 1, 1, "nvim", s, KindEditor),
+		fp(12, 1, 2, "code", s, KindEditor, 9229), // a listener is never hidden
+		fp(13, 1, 3, "vite", s, KindServer),
+	}
+	shown := map[string]bool{}
+	for _, r := range Flatten(Snapshot{Projects: shop(), Processes: procs}, ViewOptions{}) {
+		if r.Process != nil {
+			shown[r.Process.Name] = true
+		}
+	}
+	for _, p := range procs {
+		if p.Hideable() == shown[p.Name] {
+			t.Errorf("%s: Hideable %v, shown by Flatten %v", p.Name, p.Hideable(), shown[p.Name])
+		}
+	}
+}

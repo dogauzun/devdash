@@ -48,6 +48,7 @@ func TestKillEngineSource(t *testing.T) {
 			t.Fatalf("engine snapshot has %d processes, want postgres", len(m.upd.Snapshot.Processes))
 		}
 		target := m.upd.Snapshot.Processes[0]
+		openOther(m) // postgres is in other
 		selectRow(t, m, target.Key())
 		press(m, "x", "enter") // outside every project: the second prompt
 		if line(m, "postgres is outside every project") == "" {

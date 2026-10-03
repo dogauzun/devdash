@@ -482,15 +482,35 @@ func (c *tableCache) measure(m *Model) {
 // them, expanded and unfiltered, so a header's counts stay put when it is collapsed or
 // filtered. Dimmed rows count, since they are drawn. Compose and containers groups count
 // distinct containers, since Linux runs a docker-proxy per published port and address
-// family. It also reports which rows have children in those rows.
+// family. It also reports which rows have children in those rows. A group the view omits
+// whole but a search shows (its rows all hidden by a or d, rebuild) is counted with every
+// row shown, as the search finds it, rather than as zero.
 func (m *Model) groupCounts() (map[model.RowKey]groupCount, map[model.RowKey]bool) {
+	view := model.ViewOptions{ShowAll: m.view.ShowAll, HideContainers: m.view.HideContainers}
+	counts, kids := countGroups(model.Flatten(m.upd.Snapshot, view))
+	if m.filter != "" && (!view.ShowAll || view.HideContainers) {
+		var more map[model.RowKey]groupCount
+		for _, r := range m.rows {
+			if _, ok := counts[r.Key]; ok || r.Key.Header == model.GroupNone {
+				continue
+			}
+			if more == nil {
+				more, _ = countGroups(model.Flatten(m.upd.Snapshot, model.ViewOptions{ShowAll: true}))
+			}
+			counts[r.Key] = more[r.Key]
+		}
+	}
+	return counts, kids
+}
+
+// countGroups counts each group's rows and distinct ports in all, flattened rows with
+// nothing collapsed, and reports which rows have children there (groupCounts).
+func countGroups(all []model.Row) (map[model.RowKey]groupCount, map[model.RowKey]bool) {
 	counts := map[model.RowKey]groupCount{}
 	kids := map[model.RowKey]bool{}
 	var header model.RowKey
 	var seen map[uint16]bool
 	var ids map[string]bool
-	view := model.ViewOptions{ShowAll: m.view.ShowAll, HideContainers: m.view.HideContainers}
-	all := model.Flatten(m.upd.Snapshot, view)
 	for i, r := range all {
 		if i+1 < len(all) && all[i+1].Depth > r.Depth {
 			kids[r.Key] = true
