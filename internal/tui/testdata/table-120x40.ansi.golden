@@ -1,19 +1,19 @@
 [1mmbp[m · 2 s ago · 2 projects · 6 listeners · 2 containers                                                                 
-[1mNAME                        KIND      PORTS           PID   UP   CPU   MEM USER     COMMAND                             [m
-[7;36m▾ api @ main · 2 processes · 2 ports                                                                                    [m
-    api                     server    8080,8081       200   1d   0.5   50M me       bin/api -addr :8080                 
-    go                      test                      201  30s   0.5   50M me       go test ./...                       
+[1mNAME                           KIND      PORTS           PID   UP   CPU   MEM USER     COMMAND                          [m
+[7;36m▾ api @ main (here) · 2 processes · 2 ports                                                                             [m
+    api[2m  orphaned, cwd deleted[m server    8080,8081       200   1d   0.5   50M me       bin/api -addr :8080              
+    go                         test                      201  30s   0.5   50M me       go test ./...                    
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                                                                    [m
-[2m  ▾ zsh                     shell                     100   5h   0.5   50M me       -zsh                                [m
-    ▾ node                  server    *5173           101   3h  12.3  179M me       node node_modules/.bin/vite --port …
-        esbuild             other                     102   2h   0.5   50M me       node_modules/@esbuild/darwin-arm64/…
-    claude                  agent                     103  20m     –   50M me       claude                              
+[2m  ▾ zsh                        shell                     100   5h   0.5   50M me       -zsh                             [m
+    ▾ node                     server    *5173           101   3h  12.3  179M me       node node_modules/.bin/vite --po…
+        esbuild                other                     102   2h   0.5   50M me       node_modules/@esbuild/darwin-arm…
+    claude                     agent                     103  20m     –   50M me       claude                           
 [1m▾ shop (compose) · 2 containers · 2 ports                                                                               [m
-    shop-web-1 (nginx:1.27) container *8000                                                                             
-    shop-db-1 (postgres:16) container *5432           300   4h     –     – root     /usr/bin/docker-proxy -proto tcp -h…
+    shop-web-1 (nginx:1.27)    container *8000                                                                          
+    shop-db-1 (postgres:16)    container *5432           300   4h     –     – root     /usr/bin/docker-proxy -proto tcp…
 [1m▾ other · 2 processes · 2 ports                                                                                         [m
-    unknown                 other     *631              -    -     –     – -                                            
-    sshd                    server    *22               1   3d   0.5   50M root     /usr/sbin/sshd -D                   
+    unknown                    other     *631              -    -     –     – -                                         
+    sshd                       server    *22               1   3d   0.5   50M root     /usr/sbin/sshd -D                
                                                                                                                         
                                                                                                                         
                                                                                                                         

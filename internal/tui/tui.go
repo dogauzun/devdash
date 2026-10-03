@@ -232,10 +232,7 @@ func (m *Model) View() tea.View {
 
 // render draws the whole screen: exactly height lines, none wider than width.
 func (m *Model) render() string {
-	w, h := m.width, m.height
-	if w <= 0 || h <= 0 {
-		w, h = minWidth, 24 // before the first WindowSizeMsg
-	}
+	w, h := m.size()
 	header := m.headerView(w)
 	footer := m.footerView(w)
 	bh := max(h-lipgloss.Height(header)-lipgloss.Height(footer), 0)
@@ -258,6 +255,15 @@ func (m *Model) render() string {
 		parts = []string{header, fit(body, w, bh), footer}
 	}
 	return fit(strings.Join(parts, "\n"), w, h) // a terminal shorter than header and footer cuts the footer
+}
+
+// size is the screen's width and height: the terminal's, or 80 by 24 before the first
+// WindowSizeMsg.
+func (m *Model) size() (int, int) {
+	if m.width <= 0 || m.height <= 0 {
+		return minWidth, 24
+	}
+	return m.width, m.height
 }
 
 // fit pads or cuts s to exactly h lines, each exactly w cells wide.

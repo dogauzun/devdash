@@ -667,3 +667,41 @@ func TestDetailClosedPageKeysMoveTable(t *testing.T) {
 		t.Error("with the pane closed, pgdown no longer moves the table")
 	}
 }
+
+func TestDetailTags(t *testing.T) {
+	systemd := model.Process{PID: 900, PPID: 1, StartTime: at(99 * time.Hour), UID: 501, Name: "systemd",
+		Argv: []string{"/usr/lib/systemd/systemd", "--user"}}
+	for _, tc := range []struct {
+		name string
+		os   string
+		ppid int
+		want string
+	}{
+		{"macOS", "darwin", 1, "parent exited; now a child of launchd"},
+		{"Linux init", "linux", 1, "parent exited; now a child of init"},
+		{"Linux systemd --user", "linux", 900, "parent exited; now a child of the user's systemd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newTest(t, 100, 40)
+			s := fixture()
+			s.Host.OS = tc.os
+			s.Processes[4].PPID = tc.ppid
+			s.Processes = append(s.Processes, systemd)
+			feed(m, s)
+			detailSelect(t, m, keyOf(s, 200))
+			press(m, "enter")
+			hasLine(t, m, "tags      orphaned: "+tc.want)
+			hasLine(t, m, "          cwd deleted: working directory deleted")
+		})
+	}
+
+	// An untagged process has no tags line.
+	m, _ := newTest(t, 100, 40)
+	s := fixture()
+	feed(m, s)
+	detailSelect(t, m, keyOf(s, 101))
+	press(m, "enter")
+	if line(m, "tags") != "" {
+		t.Errorf("an untagged process lists tags:\n%s", screen(m))
+	}
+}

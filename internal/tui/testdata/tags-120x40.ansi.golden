@@ -1,21 +1,21 @@
 [1mmbp[m · 2 s ago · 2 projects · 6 listeners · 2 containers                                                                 
-[1mNAME                                          KIND      PORTS           PID   UP[m[2m|[m [1mnode 101 · server[m                     
-[1m▾ api @ main (here) · 2 processes · 2 ports                                     [m[2m|[m command   node node_modules/.bin/vite 
-    api[2m  orphaned, cwd deleted[m                server    8080,8081       200   1d[2m|[m           --port 5173                 
-    go                                        test                      201  30s[2m|[m cwd       /src/shop                   
-[1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m[2m|[m project   shop @ feat/cart (worktree) 
-[2m  ▾ zsh                                       shell                     100   5h[m[2m|[m root      /src/shop                   
-[7;36m    ▾ node                                    server    *5173           101   3h[m[2m|[m main repo /src/shop-main              
-        esbuild                               other                     102   2h[2m|[m listeners tcp6 [::]:5173              
-    claude                                    agent                     103  20m[2m|[m           (every interface)           
-[1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m parents   zsh 100 < pid 90            
-    shop-web-1 (nginx:1.27)                   container *8000                   [2m|[m started   2026-10-02 09:00:00         
-    shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m           (3 h ago)                   
-[1m▾ other · 2 processes · 2 ports                                                 [m[2m|[m user      me (uid 501)                
-    unknown                                   other     *631              -    -[2m|[m cpu       12.3%                       
-    sshd                                      server    *22               1   3d[2m|[m mem       178.9 MiB                   
-                                                                                [2m|[m                                       
-                                                                                [2m|[m                                       
+[1mNAME                                          KIND      PORTS           PID   UP[m[2m|[m [1mapi 200 · server[m                      
+[1m▾ api @ main (here) · 2 processes · 2 ports                                     [m[2m|[m command   /src/api/bin/api -addr :8080
+[7;36m    api[m[7;2;36m  orphaned, cwd deleted[m[7;36m                server    8080,8081       200   1d[m[2m|[m tags      orphaned: parent exited; now
+    go                                        test                      201  30s[2m|[m           a child of launchd          
+[1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m[2m|[m           cwd deleted: working        
+[2m  ▾ zsh                                       shell                     100   5h[m[2m|[m           directory deleted           
+    ▾ node                                    server    *5173           101   3h[2m|[m cwd       /src/api                    
+        esbuild                               other                     102   2h[2m|[m project   api @ main                  
+    claude                                    agent                     103  20m[2m|[m root      /src/api                    
+[1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m listeners tcp4 127.0.0.1:8080         
+    shop-web-1 (nginx:1.27)                   container *8000                   [2m|[m           tcp6 [::1]:8081             
+    shop-db-1 (postgres:16)                   container *5432           300   4h[2m|[m parents   sshd 1                      
+[1m▾ other · 2 processes · 2 ports                                                 [m[2m|[m started   2026-10-01 10:00:00         
+    unknown                                   other     *631              -    -[2m|[m           (26 h ago)                  
+    sshd                                      server    *22               1   3d[2m|[m user      me (uid 501)                
+                                                                                [2m|[m cpu       0.5%                        
+                                                                                [2m|[m mem       50.0 MiB                    
                                                                                 [2m|[m                                       
                                                                                 [2m|[m                                       
                                                                                 [2m|[m                                       
