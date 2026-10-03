@@ -1,11 +1,11 @@
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
-NAME                                          KIND      PORTS           PID   UP| node 101 · server
+NAME                                          KIND      PORTS           PID   UP| vite (node) 101 · server
 ▾ api @ main (here) · 2 processes · 2 ports                                     | command   node node_modules/.bin/vite
     api  orphaned, cwd deleted                server    8080,8081       200   1d|           --port 5173
     go                                        test                      201  30s| cwd       /src/shop
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            | project   shop @ feat/cart (worktree)
   ▾ zsh                                       shell                     100   5h| root      /src/shop
-    ▾ node                                    server    *5173           101   3h| main repo /src/shop-main
+    ▾ vite (node)                             server    *5173           101   3h| main repo /src/shop-main
         esbuild                               other                     102   2h| listeners tcp6 [::]:5173
     claude                                    agent                     103  20m|           (every interface)
 ▾ shop (compose) · 2 containers · 2 ports                                       | parents   zsh 100 < pid 90

@@ -512,7 +512,7 @@ func TestFilterSeesCollapsed(t *testing.T) {
 		{"port under a collapsed node", []model.RowKey{zsh}, "5173",
 			[]model.RowKey{rowsShopHeader, zsh, vite}, "▾ zsh"},
 		{"port under nested folds", []model.RowKey{rowsShopHeader, zsh, vite}, "esbuild",
-			[]model.RowKey{rowsShopHeader, zsh, vite, keyOf(s, 102)}, "▾ node"},
+			[]model.RowKey{rowsShopHeader, zsh, vite, keyOf(s, 102)}, "▾ vite (node)"},
 		{"tag in a collapsed group", []model.RowKey{rowsAPIHeader}, "orphaned",
 			[]model.RowKey{rowsAPIHeader, keyOf(s, 200)}, "▾ api @ main (here)"},
 		{"a collapsed group that matches keeps its rows", []model.RowKey{rowsAPIHeader}, "api",

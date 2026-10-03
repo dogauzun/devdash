@@ -5,7 +5,7 @@
     go                                        test                      201  30s[2m|[m           a child of launchd          
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m[2m|[m           cwd deleted: working        
 [2m  ▾ zsh                                       shell                     100   5h[m[2m|[m           directory deleted           
-    ▾ node                                    server    *5173           101   3h[2m|[m cwd       /src/api                    
+    ▾ vite (node)                             server    *5173           101   3h[2m|[m cwd       /src/api                    
         esbuild                               other                     102   2h[2m|[m project   api @ main                  
     claude                                    agent                     103  20m[2m|[m root      /src/api                    
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m listeners tcp4 127.0.0.1:8080         

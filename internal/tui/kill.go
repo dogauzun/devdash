@@ -77,7 +77,7 @@ func (m *Model) startKill() tea.Cmd {
 	name := ""
 	switch {
 	case r.Process != nil && (r.Process.PID != 0 || r.Container == nil):
-		name = r.Process.Name
+		name = procLabel(r.Process)
 	case r.Container != nil: // a container row, or its port's unreadable PID 0 owner
 		name = r.Container.Name
 	}
@@ -292,7 +292,7 @@ func (m *Model) killView(w, h int) string {
 			if errors.Is(o.Err, engine.ErrPermission) {
 				outcome = styleWarn.Render(outcome) // the last column: tabwriter does not pad it
 			}
-			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Name), outcome))
+			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(procLabel(&o.Process)), outcome))
 		}
 		title += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
 		list = killTable(rows)
@@ -321,7 +321,7 @@ func (m *Model) killPlanLines(p engine.Plan) []string {
 		if project == "" {
 			project = "-"
 		}
-		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, model.Clean(proc.Name), model.Clean(project), killPorts(proc)))
+		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, model.Clean(procLabel(&proc)), model.Clean(project), killPorts(proc)))
 	}
 	return killTable(rows)
 }

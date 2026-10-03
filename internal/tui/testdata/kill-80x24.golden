@@ -1,8 +1,8 @@
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
-kill node (pid 101): tree mode, SIGTERM to 2 processes
+kill vite (node) (pid 101): tree mode, SIGTERM to 2 processes
 
-  101  node     shop  5173
-  102  esbuild  shop  -
+  101  vite (node)  shop  5173
+  102  esbuild      shop  -
 
   p process  t tree  f force  enter confirm  esc cancel
 

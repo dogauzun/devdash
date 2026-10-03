@@ -167,7 +167,7 @@ func TestTableCells(t *testing.T) {
 		find string
 		want []string
 	}{
-		{"*5173", []string{"    ▾ node ", " server ", " 101 ", " 3h ", " 12.3 ", " 179M ", " me ", " node node_modules/.bin/vite --port 5173"}},
+		{"*5173", []string{"    ▾ vite (node) ", " server ", " 101 ", " 3h ", " 12.3 ", " 179M ", " me ", " node node_modules/.bin/vite --port 5173"}},
 		{"esbuild", []string{"        esbuild ", " other ", " 102 ", " 2h ", " 0.5 ", " 50M "}},
 		{"claude", []string{"    claude ", " agent ", " 103 ", " 20m ", " – "}},
 		{"8080", []string{"    api ", " 8080,8081 ", " 200 ", " 1d "}},
@@ -375,7 +375,7 @@ func TestTableCollapse(t *testing.T) {
 	vite := keyOf(s, 101)
 	selectKey(t, m, vite)
 	press(m, "h")
-	if !m.view.Collapsed[vite] || line(m, "esbuild") != "" || line(m, "▸ node") == "" {
+	if !m.view.Collapsed[vite] || line(m, "esbuild") != "" || line(m, "▸ vite (node)") == "" {
 		t.Errorf("h did not collapse node:\n%s", screen(m))
 	}
 	press(m, "h")
@@ -413,7 +413,7 @@ func TestTableCollapse(t *testing.T) {
 		t.Errorf("childless collapsed node keeps a marker: %q", l)
 	}
 	feed(m, s)
-	if line(m, "▸ node") == "" {
+	if line(m, "▸ vite (node)") == "" {
 		t.Errorf("children back: node is collapsed again:\n%s", screen(m))
 	}
 	press(m, "l")
@@ -665,4 +665,160 @@ func sgrBefore(l, s string) string {
 		return ""
 	}
 	return l[j : j+strings.IndexByte(l[j:], 'm')+1]
+}
+
+// A process run by an interpreter is labelled `<tool> (<name>)` at every width; one with no
+// tool keeps its name (spec "Release 1.1", tool labels). From 90 columns only the label
+// changes: the name cell holds no arguments, and the widest name cell is measured without them.
+func TestTableToolLabels(t *testing.T) {
+	for _, w := range []int{80, 120} {
+		m, _ := newTest(t, w, 30)
+		feed(m, fixture())
+		if l := line(m, "5173"); !strings.Contains(l, "▾ vite (node)") {
+			t.Errorf("%d columns: vite's row %q, want the label vite (node)", w, l)
+		}
+		for _, want := range []string{"    claude ", "    shop-db-1 (postgres:16) "} {
+			if !strings.Contains(screen(m), want) {
+				t.Errorf("%d columns: no row %q:\n%s", w, want, screen(m))
+			}
+		}
+	}
+
+	m, _ := newTest(t, 120, 30)
+	feed(m, fixture())
+	l := line(m, "5173")
+	if name := l[:strings.Index(l, "server")]; strings.Contains(name, "--port") {
+		t.Errorf("120 columns: the name cell holds arguments: %q", l)
+	}
+	if !strings.Contains(l, "node node_modules/.bin/vite") {
+		t.Errorf("120 columns: the command column lost argv: %q", l)
+	}
+	if got, want := m.cache().longest, len("    api  orphaned, cwd deleted"); got != want {
+		t.Errorf("120 columns: longest name cell %d, want %d", got, want)
+	}
+
+	// procLabel is the one place the label is built: a module after -m keeps its case, a script
+	// its extension, and a process with no tool (no argv, or not an interpreter) its name.
+	for _, tc := range []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"python3.12", []string{"python3.12", "-m", "uvicorn", "app:app"}, "uvicorn (python3.12)"},
+		{"node", []string{"/usr/bin/node", "/src/app/server.js"}, "server.js (node)"},
+		{"npx", []string{"npx", "vitest"}, "vitest (npx)"},
+		{"node", []string{"node"}, "node"},
+		{"node", nil, "node"},
+		{"go", []string{"go", "test", "./..."}, "go"},
+	} {
+		if got := procLabel(&model.Process{Name: tc.name, Argv: tc.argv}); got != tc.want {
+			t.Errorf("procLabel(%q, %q) = %q, want %q", tc.name, tc.argv, got, tc.want)
+		}
+	}
+}
+
+// Below 90 columns a process row's name cell shows its arguments after the label and tags:
+// what follows the tool for an interpreter, argv[1:] otherwise, faint, cut at the column's
+// edge, and none when fewer than 6 cells are left (spec "Release 1.1", tool labels).
+func TestTableArgs(t *testing.T) {
+	m, _ := newTest(t, 80, 30)
+	s := fixture()
+	feed(m, s)
+	for _, want := range []string{
+		"    api  !  -addr :8080 ",
+		"    go  test ./... ",
+		"    ▾ vite (node)  --port 5173 ",
+		"        esbuild  --service=0.21.5 --ping ",
+	} {
+		if !strings.Contains(screen(m), want) {
+			t.Errorf("no row %q:\n%s", want, screen(m))
+		}
+	}
+	if l := line(m, "sshd"); l != "" && !strings.HasPrefix(l, "    sshd  -D ") { // other may be collapsed
+		t.Errorf("sshd's row %q, want its arguments", l)
+	}
+	// Headers, container rows (the proxy's row is the container's) and the unknown owner have
+	// none.
+	if l, want := line(m, "shop (compose)"), "▾ shop (compose) · 2 containers · 2 ports"; l != want {
+		t.Errorf("compose header %q, want %q", l, want)
+	}
+	for _, want := range []string{"    shop-web-1 (nginx:1.27)  ", "    shop-db-1 (postgres:16)  "} {
+		if l := line(m, strings.TrimSpace(want)); !strings.HasPrefix(l, want) || strings.Contains(l, "-proto") {
+			t.Errorf("row %q has arguments: %q", want, l)
+		}
+	}
+	unknown := s.Processes[9]
+	unknown.Argv = []string{"cupsd", "-l"} // never read for PID 0, but drawn as none if it were
+	if got := argText(model.Row{Key: unknown.Key(), Process: &unknown}); got != "" {
+		t.Errorf("the unknown owner's arguments %q, want none", got)
+	}
+
+	// Only the tags and the arguments are faint; a selected row keeps reverse video throughout.
+	const faint = "\x1b[2m"
+	if l := rawLine(m, "5173"); !strings.Contains(l, faint+"  --port 5173") || strings.Contains(sgrBefore(l, "vite"), "2") {
+		t.Errorf("only the arguments are faint: %q", l)
+	}
+	if l := rawLine(m, "8080"); !strings.Contains(l, faint+"  !  -addr :8080") {
+		t.Errorf("api's tags and arguments are not one faint piece: %q", l)
+	}
+	selectKey(t, m, keyOf(s, 101))
+	l := rawLine(m, "5173")
+	for _, part := range []string{"vite", "--port", "server"} {
+		if sgr := sgrBefore(l, part); !strings.Contains(sgr, "7") {
+			t.Errorf("selected row: %q drawn with %q, not in reverse video: %q", part, sgr, l)
+		}
+	}
+	if sgr := sgrBefore(l, "--port"); !strings.Contains(sgr, "2") {
+		t.Errorf("selected row: the arguments are drawn with %q, not faint: %q", sgr, l)
+	}
+	if ansi.StringWidth(l) != 80 {
+		t.Errorf("selected row is %d cells wide, want 80", ansi.StringWidth(l))
+	}
+
+	// The name column is 45 cells at 80 columns, and a depth-1 cell starts with 4: with 6 cells
+	// left after the name and two spaces the arguments show, cut; with 5 they are left out.
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{strings.Repeat("n", 45-4-2-6), "  -addr…"},
+		{strings.Repeat("n", 45-4-2-5), ""},
+	} {
+		s := fixture()
+		s.Processes[5].Name = tc.name // go test
+		s.Processes[5].Argv = []string{"go", "-addr", ":8080"}
+		m, _ := newTest(t, 80, 30)
+		feed(m, s)
+		if l, want := line(m, tc.name), "    "+tc.name+tc.want+" "; !strings.HasPrefix(l, want) {
+			t.Errorf("%d-cell name: row %q, want it to start %q", len(tc.name), l, want)
+		}
+	}
+
+	// A process without argv has none, and arguments are cleaned.
+	s = fixture()
+	noArgv := s.Processes[5]
+	noArgv.Argv = nil
+	if got := argText(model.Row{Key: noArgv.Key(), Process: &noArgv}); got != "" {
+		t.Errorf("a process without argv has arguments %q", got)
+	}
+	s.Processes[6].Argv = []string{"nvim", "a\x1b[2Jb"}
+	m, _ = newTest(t, 80, 30)
+	feed(m, s)
+	press(m, "a") // show nvim
+	if l := line(m, "202"); !strings.HasPrefix(l, "    nvim  a?[2Jb ") {
+		t.Errorf("nvim's arguments are not cleaned: %q", l)
+	}
+
+	// At 89 columns they show, at 90 not: the command column holds them there.
+	for _, tc := range []struct {
+		w    int
+		args bool
+	}{{89, true}, {90, false}} {
+		m, _ := newTest(t, tc.w, 30)
+		feed(m, fixture())
+		l := line(m, "201")
+		if got := strings.HasPrefix(l, "    go  test ./..."); got != tc.args {
+			t.Errorf("%d columns: arguments shown %v, want %v: %q", tc.w, got, tc.args, l)
+		}
+	}
 }

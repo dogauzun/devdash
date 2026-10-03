@@ -51,7 +51,9 @@ parent pid, and each has a kind: agent, test, watcher, editor, shell, server, co
 other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
 Processes with no project go under `other`, and containers without a compose project under
 `containers`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
-It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
+A process run by an interpreter is named by its tool, as in `vite (node)` or `pytest (python3)`,
+and below 90 columns, where the command column does not fit, its arguments follow the name in
+faint text. It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
 [Keybindings](#keybindings)) and `q` quits.
 
 ### `devdash --json`
