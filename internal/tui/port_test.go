@@ -217,10 +217,23 @@ func TestPortSelectsHolder(t *testing.T) {
 	if r, ok := m.selected(); !ok || r.Container == nil || r.Container.Name != "shop-web-1" {
 		t.Errorf("8000 selected %+v", m.sel)
 	}
+	// Both are in the other group, which starts collapsed.
 	m = newPortTest(t, 80, 24, s, &fakeProbe{})
+	if !strings.Contains(line(m, "other ·"), "▸ other") {
+		t.Fatalf("other does not start collapsed:\n%s", screen(m))
+	}
 	search(m, "631")
 	if r, ok := m.selected(); !ok || r.Process == nil || r.Process.PID != 0 {
 		t.Errorf("631 selected %+v", m.sel)
+	}
+	m = newPortTest(t, 80, 24, s, &fakeProbe{})
+	search(m, "22")
+	if m.sel != keyOf(s, 1) || portLine(m) != "port 22 · 1 holder · next free 23" {
+		t.Errorf("22 selected %+v, line %q", m.sel, portLine(m))
+	}
+	press(m, "esc")
+	if !strings.Contains(line(m, "other ·"), "▸ other") {
+		t.Errorf("other is not collapsed again after esc:\n%s", screen(m))
 	}
 
 	// Two holders: the first in display order (api's group comes first).
@@ -348,23 +361,27 @@ func TestPortHoldersTCPOnly(t *testing.T) {
 // TestPortHolders: holders are counted with everything shown, whatever the view toggles, the
 // folds and the filter show.
 func TestPortHolders(t *testing.T) {
-	// An editor, hidden without a, listens on 9000: no row shows it, yet it holds the port.
+	// An editor, hidden without a, listens on 9000: it holds the port, and the search shows
+	// and selects its row, so the count is the rows the search can select.
 	s := withProcess(fixture(), 204, apiID, model.KindEditor, 9000)
 	m := newPortTest(t, 80, 24, s, &fakeProbe{})
 	search(m, "9000")
 	if got, want := portLine(m), "port 9000 · 1 holder · next free 9001"; got != want {
 		t.Errorf("hidden editor: %q, want %q", got, want)
 	}
-	if strings.Contains(screen(m), "nothing to show") {
-		t.Errorf("the table says nothing to show under the port line:\n%s", screen(m))
+	if m.sel != keyOf(s, 204) {
+		t.Errorf("hidden editor not selected: %+v\n%s", m.sel, screen(m))
 	}
 
-	// Containers hidden with d still hold their ports.
+	// Containers hidden with d still hold their ports, and the search shows them.
 	m = newPortTest(t, 80, 24, fixture(), &fakeProbe{})
 	press(m, "d")
 	search(m, "8000")
 	if got, want := portLine(m), "port 8000 · 1 holder · next free 8001"; got != want {
 		t.Errorf("containers hidden: %q, want %q", got, want)
+	}
+	if r, ok := m.selected(); !ok || r.Container == nil || r.Container.Name != "shop-web-1" {
+		t.Errorf("containers hidden: 8000 selected %+v", m.sel)
 	}
 
 	// The unknown owner and a docker-proxy holding a container's port are one row each.
