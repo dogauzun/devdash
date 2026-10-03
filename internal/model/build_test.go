@@ -37,6 +37,26 @@ func TestFieldSetNames(t *testing.T) {
 	}
 }
 
+func TestTagSetNames(t *testing.T) {
+	tests := []struct {
+		s      TagSet
+		names  []string
+		labels []string
+	}{
+		{0, []string{}, []string{}},
+		{TagCwdDeleted, []string{"cwd_deleted"}, []string{"cwd deleted"}},
+		{TagCwdDeleted | TagOrphaned, []string{"orphaned", "cwd_deleted"}, []string{"orphaned", "cwd deleted"}},
+	}
+	for _, tt := range tests {
+		if got := tt.s.Names(); !reflect.DeepEqual(got, tt.names) {
+			t.Errorf("%02b.Names() = %q, want %q", tt.s, got, tt.names)
+		}
+		if got := tt.s.Labels(); !reflect.DeepEqual(got, tt.labels) {
+			t.Errorf("%02b.Labels() = %q, want %q", tt.s, got, tt.labels)
+		}
+	}
+}
+
 func TestKindString(t *testing.T) {
 	if KindOther.String() != "other" || KindEditor.String() != "editor" || Kind(200).String() != "other" {
 		t.Errorf("kind names: %v %v %v", KindOther, KindEditor, Kind(200))
@@ -201,6 +221,8 @@ func TestBuildCopiesAndFills(t *testing.T) {
 	stale := proc(10, 0)
 	stale.Unknown = FieldCwd | FieldMem
 	stale.Listeners, stale.Kind, stale.ProjectID, stale.ContainerID = []Listener{{Proto: "tcp4", Addr: lo, Port: 1}}, KindShell, "/x", "c" // derived fields are recomputed
+	stale.Tags = TagOrphaned | TagCwdDeleted
+	stale.CwdDeleted = true // collected, so it passes through
 	raw := Raw{
 		TakenAt:   t0,
 		Host:      Host{OS: "linux", Arch: "arm64", Hostname: "h", UID: 1000},
@@ -227,6 +249,8 @@ func TestBuildCopiesAndFills(t *testing.T) {
 	wantProc.Unknown = FieldCwd | FieldMem // collector bits pass through, no owner bit for a real process
 	wantProc.Listeners = []Listener{{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: 3000}}
 	wantProc.Kind = KindServer
+	wantProc.CwdDeleted = true
+	wantProc.Tags = TagOrphaned | TagCwdDeleted // ppid 1 and a deleted cwd, recomputed from the collected fields
 	if len(s.Processes) != 1 || len(s.Timing) != 2 || s.Timing["proctable"] != time.Millisecond {
 		t.Fatalf("processes %+v timing %v", s.Processes, s.Timing)
 	}
