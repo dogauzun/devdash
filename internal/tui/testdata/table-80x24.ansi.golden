@@ -1,12 +1,12 @@
 [1mmbp[m · 2 s ago · 2 projects · 6 listeners · 2 containers                         
 [1mNAME                                          KIND      PORTS           PID   UP[m
 [7;36m▾ api @ main (here) · 2 processes · 2 ports                                     [m
-    api[2m  ![m                                    server    8080,8081       200   1d
-    go                                        test                      201  30s
+    api[2m  !  -addr :8080[m                       server    8080,8081       200   1d
+    go[2m  test ./...[m                            test                      201  30s
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m
 [2m  ▾ zsh                                       shell                     100   5h[m
-    ▾ node                                    server    *5173           101   3h
-        esbuild                               other                     102   2h
+    ▾ vite (node)[2m  --port 5173[m                server    *5173           101   3h
+        esbuild[2m  --service=0.21.5 --ping[m      other                     102   2h
     claude                                    agent                     103  20m
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m
     shop-web-1 (nginx:1.27)                   container *8000                   

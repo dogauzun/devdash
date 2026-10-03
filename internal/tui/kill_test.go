@@ -199,8 +199,8 @@ func TestKillModes(t *testing.T) {
 	if got := fp.calls[len(fp.calls)-1].opts; got != (engine.KillOptions{Tree: true}) {
 		t.Errorf("t planned with %+v, want Tree", got)
 	}
-	if !strings.Contains(line(m, "kill node"), "tree mode, SIGTERM to 2 processes") {
-		t.Errorf("tree title %q", line(m, "kill node"))
+	if !strings.Contains(line(m, "kill vite (node)"), "tree mode, SIGTERM to 2 processes") {
+		t.Errorf("tree title %q", line(m, "kill vite (node)"))
 	}
 	if got := strings.Fields(line(m, "102 ")); len(got) < 3 || got[1] != "esbuild" || got[2] != "shop" {
 		t.Errorf("descendant line %q", got)
@@ -210,15 +210,15 @@ func TestKillModes(t *testing.T) {
 	if got := fp.calls[len(fp.calls)-1].opts; got != (engine.KillOptions{Tree: true, Force: true}) {
 		t.Errorf("f planned with %+v, want Tree and Force", got)
 	}
-	if !strings.Contains(line(m, "kill node"), "tree mode, force, SIGKILL to 2 processes") {
-		t.Errorf("force title %q", line(m, "kill node"))
+	if !strings.Contains(line(m, "kill vite (node)"), "tree mode, force, SIGKILL to 2 processes") {
+		t.Errorf("force title %q", line(m, "kill vite (node)"))
 	}
 
 	press(m, "p")
 	if got := fp.calls[len(fp.calls)-1].opts; got != (engine.KillOptions{Force: true}) {
 		t.Errorf("p planned with %+v, want Force alone", got)
 	}
-	if !strings.Contains(line(m, "kill node"), "process mode, force, SIGKILL to 1 process") || line(m, "102 ") != "" {
+	if !strings.Contains(line(m, "kill vite (node)"), "process mode, force, SIGKILL to 1 process") || line(m, "102 ") != "" {
 		t.Errorf("process mode still shows the tree:\n%s", screen(m))
 	}
 
@@ -226,8 +226,30 @@ func TestKillModes(t *testing.T) {
 	if got := fp.calls[len(fp.calls)-1].opts; got != (engine.KillOptions{}) {
 		t.Errorf("second f planned with %+v, want SIGTERM again", got)
 	}
-	if !strings.Contains(line(m, "kill node"), "process mode, SIGTERM") {
-		t.Errorf("title after f f %q", line(m, "kill node"))
+	if !strings.Contains(line(m, "kill vite (node)"), "process mode, SIGTERM") {
+		t.Errorf("title after f f %q", line(m, "kill vite (node)"))
+	}
+}
+
+// The modal names a process by its tool label (spec "Release 1.1", tool labels): in its title,
+// the plan's lines and the report's.
+func TestKillToolLabel(t *testing.T) {
+	s := fixture()
+	m, _, _, fk := newKillTest(t, 80, 24, s)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(model.Process) engine.Outcome { return engine.Outcome{Signalled: true} }), nil
+	})
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "x")
+	if got, want := line(m, "kill vite"), "kill vite (node) (pid 101): process mode, SIGTERM to 1 process"; got != want {
+		t.Errorf("title\n got %q\nwant %q", got, want)
+	}
+	if got := line(m, "101 "); !strings.HasPrefix(strings.TrimSpace(got), "101  vite (node)  shop  5173") {
+		t.Errorf("plan line %q, want pid, label, project and ports", got)
+	}
+	run(t, m, press(m, "enter"))
+	if got := line(m, "101 "); !strings.HasPrefix(strings.TrimSpace(got), "101  vite (node)  still running") {
+		t.Errorf("report line %q, want pid, label and outcome", got)
 	}
 }
 
@@ -626,7 +648,7 @@ func TestKillViewFits(t *testing.T) {
 			}
 		}
 		if size == [2]int{80, 24} {
-			if line(m, "kill node") == "" || line(m, "of 42, ↑↓ to scroll") == "" || line(m, "enter confirm") == "" {
+			if line(m, "kill vite (node)") == "" || line(m, "of 42, ↑↓ to scroll") == "" || line(m, "enter confirm") == "" {
 				t.Errorf("80x24 tree plan lacks the title, the position or the hint:\n%s", screen(m))
 			}
 		}
@@ -647,8 +669,8 @@ func TestKillScroll(t *testing.T) {
 	if len(shown.Procs) != 40 {
 		t.Fatalf("plan has %d pids, want 40", len(shown.Procs))
 	}
-	if !strings.Contains(line(m, "kill node"), "SIGTERM to 40 processes") {
-		t.Errorf("title %q lacks the total count", line(m, "kill node"))
+	if !strings.Contains(line(m, "kill vite (node)"), "SIGTERM to 40 processes") {
+		t.Errorf("title %q lacks the total count", line(m, "kill vite (node)"))
 	}
 	// 24 lines: header, footer warning and hints leave 21; title and hint leave 19 (the
 	// blank lines go first when the list does not fit): 18 pids and the position line.

@@ -130,7 +130,7 @@ func (m *Model) tableView(w, h int) string {
 	for i := m.top; i < min(len(m.rows), m.top+rh); i++ {
 		r := m.rows[i]
 		var l string
-		tags := [2]int{} // the cells the tags take, cut to the name column
+		faint := [2]int{} // the cells the tags and arguments take, cut to the name column
 		if r.Key.Header != model.GroupNone {
 			l = pad(m.nameCell(i)+c.counts[r.Key].text(r.Key.Header), w, false)
 		} else {
@@ -138,10 +138,18 @@ func (m *Model) tableView(w, h int) string {
 			for j, c := range cols {
 				cells[j] = pad(m.cell(i, c), widths[j], colSpecs[c].right)
 			}
+			name := m.nameCell(i)
+			end := ansi.StringWidth(name)
+			args := ""
+			if c.short { // below commandWidth columns of the terminal (shortTags): no command column
+				if a, room := argText(r), widths[0]-end-2; a != "" && room >= argsMin {
+					args = "  " + ansi.Truncate(a, room, "…")
+					cells[0] = pad(name+args, widths[0], false)
+				}
+			}
 			l = pad(strings.Join(cells, " "), w, false)
-			if t := ansi.StringWidth(tagText(r, c.short)); t > 0 {
-				end := ansi.StringWidth(m.nameCell(i))
-				tags = [2]int{min(end-t, widths[0]), min(end, widths[0])}
+			if t := ansi.StringWidth(tagText(r, c.short)); t > 0 || args != "" {
+				faint = [2]int{min(end-t, widths[0]), min(end+ansi.StringWidth(args), widths[0])}
 			}
 		}
 		st := lipgloss.NewStyle()
@@ -153,9 +161,9 @@ func (m *Model) tableView(w, h int) string {
 		case r.Dimmed:
 			st = styleDim
 		}
-		if tags[0] < tags[1] { // in three pieces, since a style rendered inside another ends it
-			l = st.Render(ansi.Cut(l, 0, tags[0])) + st.Faint(true).Render(ansi.Cut(l, tags[0], tags[1])) +
-				st.Render(ansi.Cut(l, tags[1], w))
+		if faint[0] < faint[1] { // in three pieces, since a style rendered inside another ends it
+			l = st.Render(ansi.Cut(l, 0, faint[0])) + st.Faint(true).Render(ansi.Cut(l, faint[0], faint[1])) +
+				st.Render(ansi.Cut(l, faint[1], w))
 		} else {
 			l = st.Render(l)
 		}
@@ -292,10 +300,42 @@ func rowLabel(r model.Row) string {
 	case r.Process != nil && r.Process.PID == 0:
 		return "unknown"
 	case r.Process != nil:
-		return r.Process.Name
+		return procLabel(r.Process)
 	}
 	return ""
 }
+
+// procLabel is how the dashboard names process p (spec "Release 1.1", tool labels): `<tool>
+// (<name>)` when it is an interpreter running a tool (model.Tool: `vite (node)`, `server.js
+// (node)`), else its name. The table, the detail pane's title and the kill modal use it; JSON,
+// `port N` and `kill N` keep the name. It is snapshot text, not yet cleaned.
+func procLabel(p *model.Process) string {
+	if tool, _, ok := model.Tool(*p); ok {
+		return tool + " (" + p.Name + ")"
+	}
+	return p.Name
+}
+
+// argText is what follows a process row's label and tags below commandWidth columns, where the
+// command column is not shown (spec "Release 1.1", tool labels): its arguments after the tool
+// for an interpreter, else after argv[0], joined by single spaces and cleaned; "" for a header,
+// a container's row (whose label is the container's), the unknown owner and a process without
+// argv. tableView draws it faint, two spaces after the tags.
+func argText(r model.Row) string {
+	p := r.Process
+	if r.Key.Header != model.GroupNone || r.Container != nil || p == nil || p.PID == 0 || len(p.Argv) == 0 {
+		return ""
+	}
+	args := p.Argv[1:]
+	if _, a, ok := model.Tool(*p); ok {
+		args = a
+	}
+	return model.Clean(strings.Join(args, " "))
+}
+
+// argsMin is the fewest cells the arguments are drawn in; with fewer left in the name column
+// they are left out, since a few letters and `…` say nothing.
+const argsMin = 6
 
 // cell is the text of column c for the process or container row i, unpadded and cleaned.
 func (m *Model) cell(i int, c col) string {

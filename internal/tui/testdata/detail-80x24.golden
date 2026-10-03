@@ -1,5 +1,5 @@
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
-node 101 · server
+vite (node) 101 · server
 command   node node_modules/.bin/vite --port 5173
 cwd       /src/shop
 project   shop @ feat/cart (worktree)

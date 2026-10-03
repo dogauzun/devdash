@@ -3,7 +3,7 @@ port 5173 · 1 holder · next free: socket: too many open files
 NAME                                          KIND      PORTS           PID   UP
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
   ▾ zsh                                       shell                     100   5h
-      node                                    server    *5173           101   3h
+      vite (node)  --port 5173                server    *5173           101   3h
 
 
 

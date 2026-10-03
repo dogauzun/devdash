@@ -413,7 +413,7 @@ func TestPortLineShown(t *testing.T) {
 		t.Errorf("applied: %q", got)
 	}
 	press(m, "esc")
-	if line(m, "port 5173") != "" || !strings.HasPrefix(portLine(m), "NAME") {
+	if !strings.HasPrefix(portLine(m), "NAME") {
 		t.Errorf("after esc the line stays:\n%s", screen(m))
 	}
 
@@ -422,7 +422,7 @@ func TestPortLineShown(t *testing.T) {
 		m = newPortTest(t, 80, 24, fixture(), &fakeProbe{})
 		press(m, "/")
 		typeText(m, q)
-		if line(m, "port ") != "" {
+		if strings.HasPrefix(portLine(m), "port ") {
 			t.Errorf("%q shows a port line:\n%s", q, screen(m))
 		}
 	}
@@ -431,7 +431,7 @@ func TestPortLineShown(t *testing.T) {
 	m = newPortTest(t, 80, 24, fixture(), &fakeProbe{})
 	search(m, "5173")
 	m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	if line(m, "port 5173") != "" {
+	if strings.HasPrefix(portLine(m), "port ") {
 		t.Errorf("ctrl+u kept the line:\n%s", screen(m))
 	}
 
