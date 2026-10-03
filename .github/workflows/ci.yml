@@ -58,6 +58,16 @@ jobs:
           sudo "$RUNNER_TEMP/engine.test" -test.run '^TestKillLivePermission$' -test.count=1 -test.v | tee "$RUNNER_TEMP/perm.txt"
           grep -q -- '--- PASS: TestKillLivePermission ' "$RUNNER_TEMP/perm.txt"
 
+      # free's bind probe must catch a listener the snapshot cannot see (Release 1.0 gate): root
+      # starts one as uid 65534 and the search runs as uid 65533. Built and checked as above.
+      - name: go test (free skips another user's port, as root)
+        if: ${{ !cancelled() }}
+        working-directory: internal/freeport
+        run: |
+          go test -c -o "$RUNNER_TEMP/freeport.test" .
+          sudo "$RUNNER_TEMP/freeport.test" -test.run '^TestFindLiveOtherUser$' -test.count=1 -test.v | tee "$RUNNER_TEMP/free.txt"
+          grep -q -- '--- PASS: TestFindLiveOtherUser ' "$RUNNER_TEMP/free.txt"
+
       - name: go build (4 targets)
         if: ${{ !cancelled() }}
         run: make cross
