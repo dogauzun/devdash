@@ -9,7 +9,7 @@ Docker containers to the processes that own them, and lets you kill any of it. I
 static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
 shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
-![The devdash dashboard: four repositories grouped with their dev servers, watchers, a test runner and an agent; a port filter, the detail pane, and a tree kill of nodemon and its child](docs/demo.gif)
+![The devdash dashboard run from a repository, whose group comes first marked (here): four repositories grouped with their dev servers, watchers, a test runner and an agent, and a leftover dev server tagged orphaned and cwd deleted; the detail pane explains its tags, a tree kill removes nodemon and its child, then devdash port 5174 and port 5173 show each holder's command, project, uptime and tags with the next free port, and devdash free 5173 prints 5175](docs/demo.gif)
 
 ## Install
 

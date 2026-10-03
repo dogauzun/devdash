@@ -11,9 +11,12 @@
 #                worktree of shop)
 #   blog        (main)                 python3 -m http.server --bind 0.0.0.0 4000
 #   api         (fix/timeouts)         air, whose child api serves :8080; claude
-# The dev tools are demoproc linked under their names. When every port listens, it clears the
-# screen and runs an interactive bash with the prompt "$ " in /home/me; exiting it ends the
-# namespace and every process in it.
+# and a leftover: vite --port 5174, started in shop-search (feat/search, another linked worktree
+# of shop), whose parent exited and whose worktree was then removed, so it carries the orphaned
+# and cwd deleted tags. The dev tools are demoproc linked under their names. When every port listens, it clears
+# the screen and runs an interactive bash with the prompt "$ " in /home/me. A subshell that plays
+# the terminal is the parent of that bash and of every other dev tool, so only the leftover has
+# pid 1 as its parent; exiting the bash ends the namespace and every process in it.
 #
 # Linux only, as root (unshare). Needs go, git and python3.
 set -eu
@@ -31,6 +34,8 @@ fi
 	echo "demo.sh: not in the demo namespaces; run it without DEMO_INSIDE" >&2
 	exit 1
 }
+# pid 1 stays for the whole demo: keep it out of the repository this script came from.
+cd /
 hostname dev-box
 mount -t tmpfs tmpfs /home
 # No container engine of the host: hide its sockets and drop the variables that name one.
@@ -65,17 +70,30 @@ start() { # start DIR COMMAND...: COMMAND in the background, in DIR, with no ter
 	shift
 	(cd "$dir" && exec "$@" </dev/null >/dev/null 2>&1) &
 }
-start "$code/shop" env PORT=3000 DEMO_CHILD="node server.js" nodemon server.js
-start "$code/shop-cart" vite --port 5173
-start "$code/shop-cart" vitest --watch
-start "$code/blog" python3 -m http.server --bind 0.0.0.0 4000
-start "$code/api" env PORT=8080 DEMO_CHILD=api air
-start "$code/api" claude
+# The leftover: a dev server started in a worktree, left running when its terminal closed (its
+# parent is pid 1), and still running after the worktree was removed.
+git -C "$code/shop" worktree add -q -b feat/search "$code/shop-search"
+start "$code/shop-search" vite --port 5174
+until devdash port 5174 >/dev/null 2>&1; do sleep 0.1; done
+git -C "$code/shop" worktree remove --force "$code/shop-search"
 
-for port in 3000 5173 4000 8080; do
-	until devdash port "$port" >/dev/null 2>&1; do sleep 0.1; done
-done
+# Everything else runs under a subshell that plays the terminal: it starts the dev tools and
+# then the interactive bash, so neither they nor that bash (which the demo cds into a
+# repository) have pid 1 as their parent. pid 1 only waits.
+(
+	start "$code/shop" env PORT=3000 DEMO_CHILD="node server.js" nodemon server.js
+	start "$code/shop-cart" vite --port 5173
+	start "$code/shop-cart" vitest --watch
+	start "$code/blog" python3 -m http.server --bind 0.0.0.0 4000
+	start "$code/api" env PORT=8080 DEMO_CHILD=api air
+	start "$code/api" claude
 
-cd "$HOME"
-clear
-PS1='$ ' exec bash --norc --noprofile -i
+	for port in 3000 5173 4000 8080; do
+		until devdash port "$port" >/dev/null 2>&1; do sleep 0.1; done
+	done
+
+	cd "$HOME"
+	clear
+	PS1='$ ' bash --norc --noprofile -i
+	: # dash would exec a last command, making bash a child of pid 1
+)

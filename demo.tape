@@ -1,7 +1,8 @@
 # The README demo (DEV-65): `make demo` records docs/demo.gif from this file with vhs
 # (https://github.com/charmbracelet/vhs). scripts/demo.sh builds devdash and starts the
 # scripted dev machine it shows: four repositories with dev servers, watchers, a test runner
-# and an agent, alone in their own namespaces. Linux only, as root.
+# and an agent, plus a leftover dev server from a removed worktree, alone in their own
+# namespaces. Linux only, as root.
 
 Output docs/demo.gif
 
@@ -25,21 +26,24 @@ Wait@3m /^\$\s*$/
 Show
 
 Sleep 500ms
-Type "devdash --roots ~/code"
+Type "cd code/shop"
+Enter
+Sleep 300ms
+Type "devdash"
 Sleep 400ms
 Enter
-Sleep 3.5s
+Sleep 4.5s
 
-# Find the process on port 5173 and open its detail pane.
+# The leftover vite: its parent exited and its worktree is gone. The detail pane says so.
 Type "/"
 Sleep 400ms
-Type@200ms "5173"
+Type@120ms "orphaned"
 Sleep 1s
 Enter
 Down
 Sleep 800ms
 Enter
-Sleep 4s
+Sleep 4.5s
 Escape
 Sleep 500ms
 Escape
@@ -60,17 +64,20 @@ Sleep 3s
 Enter
 Sleep 2.5s
 Escape
-Sleep 3s
-
-Type "?"
-Sleep 3.5s
-Type "q"
-Sleep 400ms
+Sleep 2.5s
 Type "q"
 Sleep 800ms
 
-# Port 3000 is free again.
-Type "devdash port 3000"
+# Who holds 5174, should it go, and which port is free instead.
+Type "devdash port 5174"
 Sleep 400ms
 Enter
-Sleep 3s
+Sleep 4.5s
+Type "devdash port 5173"
+Sleep 400ms
+Enter
+Sleep 4s
+Type "devdash free 5173"
+Sleep 400ms
+Enter
+Sleep 3.5s
