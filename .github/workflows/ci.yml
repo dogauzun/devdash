@@ -85,6 +85,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # goreleaser's before hook runs this too; here it fails with its own message first.
+      - name: THIRD_PARTY_LICENSES is current
+        run: make licenses-check
+
       - name: goreleaser check
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -98,7 +102,7 @@ jobs:
           version: v2.18.2
           args: release --snapshot --clean
 
-      - name: Check archives and cask
+      - name: Check archives, notices and cask
         run: |
           set -eu
           for target in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do
@@ -113,6 +117,11 @@ jobs:
             "devdash v"*"-snapshot."*" (commit $sha, built "*")") ;;
             *) echo "unexpected version output"; exit 1 ;;
           esac
+          # Every archive carries the notices, byte for byte the committed file (DEV-98).
+          for archive in dist/devdash_*.tar.gz; do
+            tar -xzOf "$archive" THIRD_PARTY_LICENSES | cmp - THIRD_PARTY_LICENSES \
+              || { echo "::error::$archive: THIRD_PARTY_LICENSES missing or not the committed file"; exit 1; }
+          done
           cask=dist/homebrew/Casks/devdash.rb
           cat "$cask"
           test "$(grep -c '^ *url ' "$cask")" -eq 4

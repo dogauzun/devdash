@@ -10,7 +10,9 @@ Non-obvious choices go in `DECISIONS.md`, one dated line each.
 The `Makefile` wraps what CI runs; `make` lists the targets.
 
 ```sh
-make check      # the pre-push gate: lint + vet (darwin and linux), the four cross-builds, go test -race -count=1
+make check      # the pre-push gate: lint + vet (darwin and linux), the four cross-builds, go test -race -count=1,
+                #   licenses-check
+make licenses   # rewrite THIRD_PARTY_LICENSES (shipped in the archives) after a dependency change
 make fmt        # gofmt + goimports rewrite (golangci-lint fmt)
 make build      # ./devdash for this machine
 make snapshot   # goreleaser check + release --snapshot --clean into dist/ (goreleaser v2.18.2)
