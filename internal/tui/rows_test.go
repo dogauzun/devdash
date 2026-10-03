@@ -493,3 +493,89 @@ func TestFilterTags(t *testing.T) {
 		press(m, "/", "esc")
 	}
 }
+
+// The filter searches every row, folded or not (DEV-126): a match inside a collapsed group or
+// under a collapsed tree node is shown with its ancestors, drawn open, and clearing the filter
+// brings the folds back as they were.
+func TestFilterSeesCollapsed(t *testing.T) {
+	s := fixture()
+	zsh, vite := keyOf(s, 100), keyOf(s, 101)
+	for _, tc := range []struct {
+		name      string
+		collapsed []model.RowKey
+		query     string
+		want      []model.RowKey
+		open      string // a line drawn with the open marker while the filter is set
+	}{
+		{"port in a collapsed group", []model.RowKey{rowsShopHeader}, "5173",
+			[]model.RowKey{rowsShopHeader, zsh, vite}, "▾ shop @ feat/cart"},
+		{"port under a collapsed node", []model.RowKey{zsh}, "5173",
+			[]model.RowKey{rowsShopHeader, zsh, vite}, "▾ zsh"},
+		{"port under nested folds", []model.RowKey{rowsShopHeader, zsh, vite}, "esbuild",
+			[]model.RowKey{rowsShopHeader, zsh, vite, keyOf(s, 102)}, "▾ node"},
+		{"tag in a collapsed group", []model.RowKey{rowsAPIHeader}, "orphaned",
+			[]model.RowKey{rowsAPIHeader, keyOf(s, 200)}, "▾ api @ main (here)"},
+		{"a collapsed group that matches keeps its rows", []model.RowKey{rowsAPIHeader}, "api",
+			[]model.RowKey{rowsAPIHeader, keyOf(s, 200), keyOf(s, 201)}, "▾ api @ main (here)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newTest(t, 120, 30)
+			feed(m, fixture())
+			for _, k := range tc.collapsed {
+				m.view.Collapsed[k] = true
+			}
+			m.rebuild()
+			folded := rowsKeys(m)
+
+			press(m, "/")
+			typeText(m, tc.query)
+			if got := rowsKeys(m); !slices.Equal(got, tc.want) {
+				t.Fatalf("/%s: rows %+v, want %+v", tc.query, got, tc.want)
+			}
+			if line(m, tc.open) == "" || line(m, "▸") != "" {
+				t.Errorf("/%s: want %q drawn open and no closed marker:\n%s", tc.query, tc.open, screen(m))
+			}
+			press(m, "esc")
+			if got := rowsKeys(m); !slices.Equal(got, folded) {
+				t.Errorf("filter cleared: rows %+v, want the folded rows %+v", got, folded)
+			}
+			for _, k := range tc.collapsed {
+				if !m.view.Collapsed[k] {
+					t.Errorf("filter cleared: %+v is no longer collapsed", k)
+				}
+			}
+		})
+	}
+}
+
+// While a filter is set ← only moves to the parent row and → does nothing: a fold would not
+// show until the filter is cleared (DEV-126).
+func TestFilterNoFolding(t *testing.T) {
+	m, _ := newTest(t, 120, 30)
+	s := fixture()
+	feed(m, s)
+	zsh, vite := keyOf(s, 100), keyOf(s, 101)
+	m.view.Collapsed[rowsShopHeader] = true
+	m.rebuild()
+
+	press(m, "/")
+	typeText(m, "esbuild")
+	press(m, "enter")
+	rowsSelect(t, m, vite)
+	press(m, "left")
+	wantSel(t, m, zsh, 1)
+	press(m, "left", "left")
+	wantSel(t, m, rowsShopHeader, 0)
+	press(m, "right", "down", "right")
+	if len(m.view.Collapsed) != 1 || !m.view.Collapsed[rowsShopHeader] {
+		t.Errorf("collapsed under a filter: %v, want only the shop header", m.view.Collapsed)
+	}
+	if got := len(m.rows); got != 4 {
+		t.Errorf("%d rows, want shop, zsh, node and esbuild:\n%s", got, screen(m))
+	}
+
+	// The selection made under the filter is inside the folded group: clearing the filter
+	// selects its nearest shown ancestor, the shop header.
+	press(m, "esc")
+	wantSel(t, m, rowsShopHeader, slices.Index(rowsKeys(m), rowsShopHeader))
+}

@@ -214,7 +214,8 @@ const (
 // cleaned, then `(here)` on the Here project's header or a process's tags (tagText), so the
 // cached widest cell measures what is drawn.
 // A row has children when the next row is deeper, or when it is collapsed and had children
-// in the expanded rows (its children may have exited since it was collapsed).
+// in the expanded rows (its children may have exited since it was collapsed). While a filter
+// is set nothing is folded (rebuild), so a collapsed row is drawn by the rows shown.
 func (m *Model) nameCell(i int) string {
 	c := m.cache()
 	return m.nameCellWith(i, c.kids, c.short)
@@ -226,7 +227,7 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool) stri
 	r := m.rows[i]
 	mark := markNone
 	switch {
-	case m.view.Collapsed[r.Key] && kids[r.Key]:
+	case m.filter == "" && m.view.Collapsed[r.Key] && kids[r.Key]:
 		mark = markClosed
 	case i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth:
 		mark = markOpen
@@ -548,7 +549,7 @@ func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
 	case "left", "h":
 		m.collapse()
 	case "right", "l":
-		if m.selIdx >= 0 && m.view.Collapsed[m.sel] {
+		if m.filter == "" && m.selIdx >= 0 && m.view.Collapsed[m.sel] {
 			delete(m.view.Collapsed, m.sel)
 			m.rebuild()
 		}
@@ -566,14 +567,15 @@ func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
 }
 
 // collapse collapses the selected header or tree node when it is expanded and has children,
-// and otherwise moves the selection to its parent row.
+// and otherwise moves the selection to its parent row. While a filter is set it only moves:
+// the filter shows every match whatever is collapsed, so a fold would not show (DEV-126).
 func (m *Model) collapse() {
 	i := m.selIdx
 	if i < 0 || i >= len(m.rows) {
 		return
 	}
 	r := m.rows[i]
-	if !m.view.Collapsed[r.Key] && i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth {
+	if m.filter == "" && !m.view.Collapsed[r.Key] && i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth {
 		m.view.Collapsed[r.Key] = true
 		m.rebuild()
 		return

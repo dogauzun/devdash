@@ -58,7 +58,7 @@ type Model struct {
 	have bool          // upd holds a good snapshot (SchemaVersion != 0)
 
 	view model.ViewOptions // ShowAll, HideContainers, Sort, Collapsed (table.go)
-	all  []model.Row       // m.upd.Snapshot flattened with m.view
+	all  []model.Row       // m.upd.Snapshot flattened with m.view, nothing collapsed while a filter is set
 	rows []model.Row       // all, filtered: what the table shows
 
 	sel    model.RowKey // selected row; never an index (rows.go)

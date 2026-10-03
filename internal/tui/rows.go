@@ -15,7 +15,9 @@ import (
 
 // rebuild flattens the latest snapshot with the view options, applies the filter and finds
 // the selected row again by its key. It runs after every snapshot, view change and filter
-// change.
+// change. While a filter is set the rows are flattened as if nothing were collapsed, so a
+// match inside a folded group or under a folded tree node is found (DEV-126); the collapsed
+// keys are kept and apply again once the filter is cleared.
 //
 // When the key is gone the selection moves to the nearest row above it, in the rows as they
 // were, that is still shown (spec: "the nearest previous index"), wherever that row now is: a
@@ -26,7 +28,11 @@ import (
 func (m *Model) rebuild() {
 	prev, prevIdx := m.rows, m.selIdx
 	m.pruneCollapsed()
-	m.all = model.Flatten(m.upd.Snapshot, m.view)
+	view := m.view
+	if m.filter != "" {
+		view.Collapsed = nil
+	}
+	m.all = model.Flatten(m.upd.Snapshot, view)
 	m.rows = model.Filter(m.all, m.filter)
 	if len(m.rows) == 0 {
 		m.selIdx = -1
