@@ -45,10 +45,10 @@ func answerFixture() model.Snapshot {
 	}
 }
 
-// TestPortAnswer: on a terminal each process holder gets its command, where and tags lines once,
+// TestWriteAnswer: on a terminal each process holder gets its command, where and tags lines once,
 // after its last v1 line, indented by seven spaces, and the answer ends with the next free port
 // (spec "Release 1.0", the port answer; DEV-121).
-func TestPortAnswer(t *testing.T) {
+func TestWriteAnswer(t *testing.T) {
 	any4, any6, lo4 := netip.IPv4Unspecified(), netip.IPv6Unspecified(), netip.MustParseAddr("127.0.0.1")
 	with := func(f func(*model.Snapshot)) model.Snapshot { s := answerFixture(); f(&s); return s }
 	proc := func(s *model.Snapshot) *model.Process { return &s.Processes[0] }
@@ -210,10 +210,10 @@ func TestPortAnswer(t *testing.T) {
 	}
 }
 
-// TestPortAnswerNextFree: the next free port is the search `devdash free N+1` makes, with the
+// TestWriteAnswerNextFree: the next free port is the search `devdash free N+1` makes, with the
 // snapshot's holders skipped; none in range names the range; a probe that fails leaves the line
 // out, says why on stderr and keeps exit 0 (DEV-114); a free port is answered without a search.
-func TestPortAnswerNextFree(t *testing.T) {
+func TestWriteAnswerNextFree(t *testing.T) {
 	boom := errors.New("probing port 5175: bind: operation not permitted")
 	base := answerFixture()
 	base.Processes[0].Tags = 0

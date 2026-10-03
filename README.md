@@ -125,7 +125,9 @@ Container lines and the unknown-owner line get no extra lines. When nothing from
 (at most 65535) is free, the last line is `next free: none in 5174-5273`; when the free-port
 check itself fails, the line is left out, the reason goes to stderr and the exit code stays.
 Piped or redirected, `port N` prints only the listener lines, byte for byte as v0.1.1 did, so
-scripts reading them keep working.
+scripts reading them keep working. For scripts that want everything above, `devdash port N
+--json` prints the answer as one JSON object (holders, containers, `free` and `next_free`; see
+[docs/json-schema.md](docs/json-schema.md#port_answer)), with the same exit codes.
 
 | Exit code | Meaning |
 | --- | --- |
