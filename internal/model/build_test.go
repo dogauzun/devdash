@@ -250,6 +250,7 @@ func TestBuildCopiesAndFills(t *testing.T) {
 	wantProc.Listeners = []Listener{{Proto: "tcp6", Addr: netip.IPv6Unspecified(), Port: 3000}}
 	wantProc.Kind = KindServer
 	wantProc.CwdDeleted = true
+	wantProc.Tags = TagOrphaned | TagCwdDeleted // ppid 1 and a deleted cwd, recomputed from the collected fields
 	if len(s.Processes) != 1 || len(s.Timing) != 2 || s.Timing["proctable"] != time.Millisecond {
 		t.Fatalf("processes %+v timing %v", s.Processes, s.Timing)
 	}
