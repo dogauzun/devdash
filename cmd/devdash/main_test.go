@@ -35,6 +35,8 @@ func TestParse(t *testing.T) {
 		{[]string{"--all", "--no-docker", "--no-color"}, with(func(o *options) { o.All, o.NoDocker, o.NoColor = true, true, true })},
 		{[]string{"version"}, with(func(o *options) { o.Cmd = "version"; o.Args = []string{} })},
 		{[]string{"port", "3000"}, with(func(o *options) { o.Cmd, o.Args = "port", []string{"3000"} })},
+		{[]string{"port", "3000", "--json"}, with(func(o *options) { o.Cmd, o.Args, o.JSON = "port", []string{"3000"}, true })},
+		{[]string{"--json", "port", "3000"}, with(func(o *options) { o.Cmd, o.Args, o.JSON = "port", []string{"3000"}, true })},
 		{[]string{"free", "3000", "--no-docker"}, with(func(o *options) { o.Cmd, o.Args, o.NoDocker = "free", []string{"3000"}, true })},
 		{[]string{"--all", "port", "3000", "--tick", "1s", "--roots", "code"}, with(func(o *options) {
 			o.All, o.Tick, o.Roots, o.Cmd, o.Args = true, time.Second, []string{j("code")}, "port", []string{"3000"}
@@ -165,7 +167,9 @@ func TestUsageErrorMessages(t *testing.T) {
 		{[]string{"port", "abc"}, `"abc" is not a port number (1-65535)`},
 		{[]string{"free", "0"}, `"0" is not a port number (1-65535)`},
 		{[]string{"free"}, "free takes one port number"},
-		{[]string{"free", "3000", "--json"}, `--json takes no command, got "free"`},
+		{[]string{"free", "3000", "--json"}, `--json combines only with port, not "free"`},
+		{[]string{"--json", "kill", "3000", "--yes"}, `--json combines only with port, not "kill"`},
+		{[]string{"version", "--json"}, `--json combines only with port, not "version"`},
 		{[]string{"free", "3000", "--force"}, "--force only applies to kill"},
 	}
 	for _, tt := range tests {
@@ -224,7 +228,10 @@ func TestRunExitCodes(t *testing.T) {
 		{[]string{"nope"}, 2, ""},
 		{[]string{"version", "extra"}, 2, ""},
 		{[]string{"--json", "version"}, 2, ""},
-		{[]string{"port", "3000", "--json"}, 2, ""},
+		{[]string{"port", "3000", "--json"}, 0, "*"},
+		{[]string{"--json", "port", "3001"}, 1, "*"},
+		{[]string{"kill", "3000", "--json", "--yes"}, 2, ""},
+		{[]string{"version", "--json"}, 2, ""},
 		{[]string{"--tick", "499ms"}, 2, ""},
 		{[]string{"--tick", "0"}, 2, ""},
 		{[]string{"--tick", "-1s", "--json"}, 2, ""},

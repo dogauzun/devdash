@@ -37,6 +37,7 @@ var (
 const usage = `usage: devdash [flags]              the dashboard (? inside it lists the keys)
        devdash [flags] --json       print one snapshot as JSON (docs/json-schema.md)
        devdash [flags] port N       who listens on TCP port N: exit 0 found, 1 free
+                                    (--json: the answer as JSON, docs/json-schema.md)
        devdash [flags] free N       first free port in N..N+99: exit 0 found, 1 none
        devdash [flags] kill N       stop the process(es) listening on TCP port N
        devdash version              print version, commit and commit date
@@ -50,7 +51,7 @@ Flags may come before or after the subcommand and its arguments.
   --all            show shells and editors (--json always lists every process)
   --no-docker      do not ask Docker for containers
   --no-color       no colour; also when NO_COLOR is set and not empty
-  --json           print one snapshot as JSON on stdout
+  --json           print one snapshot as JSON on stdout; with port, its answer
   -h, --help       print this help
 
 kill prints every pid it will signal, then asks for confirmation on the terminal:
@@ -118,6 +119,9 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 		return write(stdout, stderr, fmt.Sprintf("devdash %s (commit %s, built %s)\n", ver, rev, built), 0)
 	case "port":
 		port, _ := parsePort(o.Args[0]) // checked by parse
+		if o.JSON {
+			return runPortJSON(ctx, o.engine(c), port, stdout, stderr)
+		}
 		return runPort(ctx, o.engine(c), port, stdout, stderr)
 	case "free":
 		port, _ := parsePort(o.Args[0]) // checked by parse
@@ -284,8 +288,8 @@ func parse(args []string) (options, error) {
 	default:
 		return o, fmt.Errorf("unknown command %q", o.Cmd)
 	}
-	if o.JSON && o.Cmd != "" {
-		return o, fmt.Errorf("--json takes no command, got %q", o.Cmd)
+	if o.JSON && o.Cmd != "" && o.Cmd != "port" {
+		return o, fmt.Errorf("--json combines only with port, not %q", o.Cmd)
 	}
 	var killOnly error
 	fs.Visit(func(f *flag.Flag) {

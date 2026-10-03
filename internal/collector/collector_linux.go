@@ -23,7 +23,7 @@ import (
 func New() Collector { return newLinux("/proc") }
 
 func newLinux(root string) *linuxCollector {
-	c := &linuxCollector{root: root, euid: os.Geteuid(), ptrace: hasPtrace()}
+	c := &linuxCollector{root: root, euid: os.Geteuid(), ptrace: hasPtrace(), stat: unix.Stat}
 	// btime is read once: the kernel shifts it when the wall clock is stepped,
 	// which would move every StartTime and break (pid, start time) identity.
 	c.btime = sync.OnceValues(func() (int64, error) {
@@ -45,6 +45,7 @@ type linuxCollector struct {
 	euid   int    // whose fds the walk reads (all when 0); os.Geteuid outside tests
 	ptrace bool   // CAP_SYS_PTRACE is effective; only read for the hints when euid is 0
 	btime  func() (int64, error)
+	stat   func(path string, st *unix.Stat_t) error // unix.Stat outside tests; see readCwd
 
 	// fd-walk state carried to the next Collect. A Collect abandoned on timeout may still be
 	// running when the next one starts, so it is copied in and out under mu.
@@ -190,7 +191,7 @@ func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.
 		if !ok {
 			continue
 		}
-		ok = (!withArgv || readArgv(dir, &p)) && readCwd(dir, &p)
+		ok = (!withArgv || readArgv(dir, &p)) && c.readCwd(dir, &p)
 		tArgv += time.Since(t1)
 		if ok {
 			procs = append(procs, p)
@@ -286,20 +287,28 @@ func readArgv(dir string, p *Process) (ok bool) {
 	return true
 }
 
-// readCwd fills Cwd; ok is false when the process is gone.
-func readCwd(dir string, p *Process) (ok bool) {
-	var err error
-	p.Cwd, err = os.Readlink(dir + "/cwd")
+// readCwd fills Cwd and CwdDeleted; ok is false when the process is gone.
+//
+// The kernel marks a removed cwd "<path> (deleted)"; macOS reports the bare old path, so the
+// mark is stripped. readlink cannot tell it from a live directory really named "x (deleted)"
+// (DEV-44), so only a marked link is stat'ed: the stat follows it to the directory itself,
+// removed or not, and a removed directory has no links left. A failed stat leaves CwdDeleted
+// false, so the tag is never guessed (DEV-116).
+// ponytail: that live directory still loses " (deleted)" from Cwd; nlink > 0 could keep it.
+func (c *linuxCollector) readCwd(dir string, p *Process) (ok bool) {
+	link, err := os.Readlink(dir + "/cwd")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		p.Unknown |= model.FieldCwd
 	case err != nil:
 		return false
 	}
-	// The kernel marks a removed cwd "<path> (deleted)"; macOS reports the bare old path.
-	// ponytail: a directory really named "x (deleted)" loses its suffix too, since readlink
-	// cannot tell them apart; a stat of cwd showing nlink 0 can, if that ever matters.
-	p.Cwd = strings.TrimSuffix(p.Cwd, " (deleted)")
+	var marked bool
+	p.Cwd, marked = strings.CutSuffix(link, " (deleted)")
+	if marked {
+		var st unix.Stat_t
+		p.CwdDeleted = c.stat(dir+"/cwd", &st) == nil && st.Nlink == 0
+	}
 	return true
 }
 

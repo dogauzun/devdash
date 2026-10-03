@@ -237,7 +237,7 @@ func schemaDoc(t *testing.T) map[string]map[string]field {
 		}
 		doc[section][name] = field{strings.TrimSpace(cells[2]), strings.TrimSpace(cells[3]) == "always"}
 	}
-	if doc["snapshot"] == nil || doc["process"] == nil {
+	if doc["snapshot"] == nil || doc["process"] == nil || doc["port_answer"] == nil {
 		t.Fatalf("no field tables found: %v", doc)
 	}
 	return doc
@@ -246,6 +246,13 @@ func schemaDoc(t *testing.T) map[string]map[string]field {
 // validate checks that out is one JSON document whose fields are exactly the documented ones,
 // with the documented types, and whose warning codes are all documented.
 func validate(t *testing.T, out []byte) {
+	t.Helper()
+	validateAs(t, out, "snapshot")
+}
+
+// validateAs is validate for a document whose top-level object is the documented type root
+// ("snapshot" for --json, "port_answer" for port N --json).
+func validateAs(t *testing.T, out []byte, root string) {
 	t.Helper()
 	var v any
 	if err := json.Unmarshal(out, &v); err != nil {
@@ -302,9 +309,9 @@ func validate(t *testing.T, out []byte) {
 			t.Errorf("%s: %v is not %s", path, v, typ)
 		}
 	}
-	check(v, "snapshot", "$")
-	root, _ := v.(map[string]any)
-	ws, _ := root["warnings"].([]any)
+	check(v, root, "$")
+	top, _ := v.(map[string]any)
+	ws, _ := top["warnings"].([]any)
 	for i, w := range ws {
 		m, _ := w.(map[string]any)
 		if code, _ := m["code"].(string); doc["Warning codes"][code] == (field{}) {

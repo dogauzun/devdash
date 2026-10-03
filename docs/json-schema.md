@@ -2,6 +2,8 @@
 
 `devdash --json` prints one snapshot as one JSON document on stdout and exits 0; stderr stays empty on success. If no snapshot can be taken, or stdout cannot be written, it exits 5 with the error on stderr and nothing on stdout (a failed write may leave part of the document). `cmd/devdash/json_test.go` checks real output against the tables below, so every field is listed here.
 
+`devdash port N --json` prints one [port_answer](#port_answer) object instead, made of the same process and container objects. Its exit codes are those of `devdash port N`: 0 when something holds N, 1 when N is free (the object is printed either way), 5 with nothing on stdout when no snapshot can be taken or stdout cannot be written. `--json` combines with no other command.
+
 ## Conventions
 
 | Rule | Value |
@@ -32,6 +34,20 @@ The top-level object.
 | `containers` | container array | always | Running Docker or Podman containers; `[]` with `--no-docker`, when no engine is found or while it does not answer. |
 | `warnings` | warning array | always | Degraded-mode conditions, one per code. |
 | `timing_ms` | timing_ms | always | Per-source durations of the second sample. |
+
+## port_answer
+
+The top-level object of `devdash port N --json`. Like `--json`, it samples twice, 200 ms apart, so every holder has the `cpu_percent` `--json` would give it.
+
+| Field | Type | Present | Description |
+| --- | --- | --- | --- |
+| `schema_version` | integer | always | 1 |
+| `taken_at` | string | always | When the second sample started (RFC 3339, UTC), as in the snapshot. |
+| `port` | integer | always | N, 1 to 65535. |
+| `free` | boolean | always | `true` when `holders` and `containers` are both empty: nothing devdash can see holds N (exit 1). It does not probe N; `devdash free N` does. |
+| `holders` | process array | always | Every process with a listener on N, in the order of the snapshot's `processes`, the `pid: 0` unknown owner included; each exactly the object `--json` prints, all its `listeners` included. `[]` when none. |
+| `containers` | container array | always | Containers publishing N over tcp on any host address, whether or not a socket of theirs is among the holders' listeners (an iptables-only publish has none). `[]` when none. |
+| `next_free` | integer or null | always | When N is taken, the first free port of N+1 to min(N+100, 65535), the same search as `devdash free N+1`. `null` when N is free, when N is 65535, when nothing in that range is free, or when the free-port probe failed, which also prints `devdash: next free: <error>` on stderr and keeps the exit code. |
 
 ## host
 

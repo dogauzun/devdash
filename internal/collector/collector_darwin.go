@@ -74,7 +74,7 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 		if n, err := lib.pidinfo(p.PID, procPidVnodePathInfo, pathBuf); err != nil {
 			cwdErr = err
 		} else if cwd, ok := decodeVnodePathInfo(pathBuf[:n]); ok {
-			p.Cwd = cwd
+			p.Cwd, p.CwdDeleted = cwd, cwdGone(cwd)
 		} else {
 			cwdErr = syscall.EINVAL
 		}
@@ -149,6 +149,15 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: pcbWarn})
 	}
 	return res, nil
+}
+
+// cwdGone reports whether a process's cwd was removed. PROC_PIDVNODEPATHINFO keeps reporting
+// a removed directory's old path, so only an lstat of that path can tell, at one syscall per
+// process with a known cwd. Only ENOENT counts: EACCES on a parent says nothing, and a
+// directory recreated at the same path is missed rather than the tag invented (DEV-116).
+func cwdGone(path string) bool {
+	var st unix.Stat_t
+	return errors.Is(unix.Lstat(path, &st), syscall.ENOENT)
 }
 
 // countDenied counts the processes of procs that denied has, so one dropped after it was
