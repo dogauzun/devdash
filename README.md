@@ -279,6 +279,9 @@ The spec in [docs/SPEC.md](docs/SPEC.md) is the authority. [CLAUDE.md](CLAUDE.md
 layout, commands and conventions (conventional commits, tests first, no cgo, a short
 dependency list). Non-obvious choices get one dated line in [DECISIONS.md](DECISIONS.md).
 
+Please report security bugs privately, as [SECURITY.md](SECURITY.md) describes, not in a
+public issue.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
