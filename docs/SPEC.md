@@ -1,6 +1,6 @@
 # devdash — Technical Specification
 
-> The spec of record for devdash v1 (Release 0.1) and for Release 1.0, the port answer, which adds to it (see [Release 1.0: the port answer](#release-10-the-port-answer)). Rulings made while building it are in [DECISIONS.md](../DECISIONS.md); `DEV-n` keys refer to the maintainer's private Jira tickets.
+> The spec of record for devdash v1 (Release 0.1), for Release 1.0, the port answer, which adds to it (see [Release 1.0: the port answer](#release-10-the-port-answer)), and for Release 1.1, the port answer on screen (see [Release 1.1: the port answer on screen](#release-11-the-port-answer-on-screen)). Rulings made while building it are in [DECISIONS.md](../DECISIONS.md); `DEV-n` keys refer to the maintainer's private Jira tickets.
 
 2026-09-28 · Doga · Status: v1
 
@@ -25,7 +25,7 @@ v1 is done when all eight goals hold on both operating systems without root.
 - The same data is available to scripts: `--json` with a versioned schema, `port N` with exit codes, `kill N`.
 - Builds are `CGO_ENABLED=0` for darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64.
 
-Non-goals for v1: Windows, remote hosts, a config file, log viewing, starting or restarting processes, Kubernetes, UDP and unix-domain sockets (planned for v1.1), notifications, and any daemon or background service. devdash runs only while its terminal is open.
+Non-goals for v1: Windows, remote hosts, a config file, log viewing, starting or restarting processes, Kubernetes, UDP and unix-domain sockets (planned for v1.2), notifications, and any daemon or background service. devdash runs only while its terminal is open.
 
 ## Architecture
 
@@ -270,6 +270,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `←` `→` `h` `l` | collapse or expand a project group or a tree node |
 | `enter` | open or close the detail pane |
 | `/` | filter by port, name, argv, project, container or tag (Release 1.0); `esc` clears |
+| `0`-`9` | port search: opens the filter with the digit typed and selects the port's holder (Release 1.1) |
 | `x` | kill modal: `p` process, `t` tree, `f` force, `esc` cancel |
 | `o` | open `http://localhost:<port>` |
 | `a` | show or hide shells and editors |
@@ -350,7 +351,7 @@ Release 1.0 is done when these four goals hold on both operating systems without
 - `devdash free N` prints the first port at or above N that nothing listens on and that the OS lets this user bind, so `PORT=$(devdash free 3000) npm run dev` works.
 - Scripts written against v0.1 keep working: piped `port N` output is unchanged, and JSON only gains fields.
 
-Non-goals for Release 1.0: an idle tag (a dev server without traffic is idle and fine), killing a whole project at once, a separate "left running" view, jumping to the terminal a process runs in, and reserving a port. UDP and unix-domain sockets stay planned for v1.1.
+Non-goals for Release 1.0: an idle tag (a dev server without traffic is idle and fine), killing a whole project at once, a separate "left running" view, jumping to the terminal a process runs in, and reserving a port. UDP and unix-domain sockets stay planned for a later release (v1.2, see Release 1.1).
 
 **Here.** At startup devdash resolves its own working directory with steps 1 to 4 of project resolution. The project found, if any, has `Here` set in every snapshot; when devdash runs outside any repository, no project has it. A process is in `this repo` when its project is the `Here` project, and in `this repo, other worktree` when the two projects differ but share a main repository (the `MainRepo` of a linked worktree, or the `Root` of a main repository).
 
@@ -393,9 +394,74 @@ On macOS a port in TIME_WAIT counts as taken, since the probe there runs without
 
 **JSON.** Schema v1 gains `processes[].tags` (an array of `"orphaned"` and `"cwd_deleted"`, empty when none applies) and `projects[].here` (a boolean). Both are always present, so `schema_version` stays 1.
 
+## Release 1.1: the port answer on screen
+
+Release 1.1 makes the dashboard answer "what is using this port" as well as `devdash port N` does, because that is the question the dashboard is most often opened with. The flow becomes: type the port, read the answer, then press `x` to kill the holder or read `next free` to move. Everything is inside the TUI: JSON, `port N`, `free N` and `kill N` do not change.
+
+Release 1.1 is done when these goals hold on both operating systems without root, on top of the v1 and Release 1.0 goals:
+
+- Typing a port number in the table finds its holder wherever it is (a collapsed group, a hidden shell's child) and selects it, so `5173` then `x` kills it.
+- While the search is a port number, one line says how many rows hold it and which port is free next, from the same search as `devdash free`, or that it is free.
+- A row run by an interpreter names the tool (`vite (node)`), and at 80 columns the arguments fill the name column's spare width.
+- The detail pane says whether a process is in this repo and which port is free next, and the kill result says whether the killed processes' ports are free.
+
+Non-goals for Release 1.1, considered in the design and parked: mouse support (capturing the mouse breaks the terminal's own text selection), copy to clipboard (OSC 52 is ignored by macOS Terminal.app), a separate ports view, killing a whole project, rows that linger after they exit, a colour per kind, and `devdash 5173` opening the dashboard on that search. UDP and unix-domain sockets move to v1.2.
+
+**Search.** While a filter is set, the rows are flattened as if nothing were collapsed (Release 1.0, DEV-126) and with every row the view toggles hide shown (shells and editors without `a`, container rows with `d`), then filtered, so `/zsh` and `/nvim` find their rows without `a`, and `8000` finds a container with `d` on. A row the view hides that matches the query itself is drawn normally; one kept only as the ancestor of a match is dimmed, as hidden-but-connected rows are; one that neither matches nor leads to a match is left out, so a query that matches a group header (`/shop`) shows that group as the view shows it, without its idle shells. A group left with no row is left out. With `a` on and `d` off, every row is drawn as the view draws it.
+
+**Port search.** In the table, with no modal, overlay or prompt open, a digit key opens the filter prompt with that digit typed, exactly as `/` and then the digit would; the detail pane may be open. Digits were unbound, so no key changes meaning. A query is a port number when it is digits only, without a leading zero, from 1 to 65535. Each time the query changes to a port number and a row holds exactly that port (a listener on it, or a container publishing it), the first such row in display order is selected. Prefix matches still show (`80` lists 8000 and 8080), but the exact holder wins the selection. Every other query, and every refresh, keeps the selection rules of "Refresh and selection". So the port question is `5173` `enter`, then `x` to kill or `enter` to read the detail pane.
+
+**The port line.** While the query, typed or applied, is a port number N, a line under the header answers it. Its holders are the rows that hold N when everything is shown (shells, editors and containers, nothing collapsed), which are the rows a search for N can show and select: processes with a listener on N, the unknown owner included, and containers publishing N with no process behind them. `next free` is the search `devdash free N+1` runs (`freeport.Find` over the current snapshot with the same bind probe), and the range it names is N+1 to min(N+100, 65535).
+
+| Situation | Port line |
+| --- | --- |
+| K rows hold N | `port 5173 · 1 holder · next free 5174` |
+| K rows hold N, nothing in range is free | `port 5173 · 1 holder · no free port in 5174-5273` |
+| no row holds N and N binds | `port 3000 · free` |
+| no row holds N but the bind fails | `port 3000 · next free 3001 · bind refused` |
+| the probe failed (`EMFILE`, a sandbox's `EPERM`) | `port 5173 · 1 holder · next free: <error>`, the error part in the warning colour |
+| N = 65535 | `port 65535 · 1 holder`, or `free` or `bind refused`, with no `next free` |
+
+`bind refused` means a listener devdash cannot see holds the port (another user's on macOS, one in another network namespace) or this user may not bind it (below 1024 on Linux); with no row holding N and the bind failing, the parts are `next free …` (or `no free port in …`) and then `bind refused`. Until the first answer for the current query arrives, the line shows only what the snapshot says: `port 5173 · 1 holder`, or `port 3000` when no row holds it. The probe runs in a `tea.Cmd`, off the UI goroutine, when the query changes to a port number and on each new snapshot while it is one; an answer for an older query or snapshot is dropped. It binds at most 101 ports, never runs on the refresh path and shells out to nothing. The probe is `tui.Options.Probe` (`freeport.Probe` when nil), so TUI tests never bind a socket. The line is cut with `…` at the screen edge, which is why `next free` comes before `bind refused`. While the line is shown, the table under it never says `nothing to show`: the line is the answer.
+
+```text
+mbp · 2 s ago · 2 projects · 6 listeners · 2 containers · /5173_
+port 5173 · 1 holder · next free 5174
+NAME                                          KIND      PORTS           PID   UP
+▾ shop @ feat/cart (worktree) · 4 processes · 1 port
+  ▾ zsh                                       shell                     100   5h
+>     vite (node)  --port 5173                server    *5173           101   3h
+```
+
+That screen is what the user gets even when the shop group was collapsed (`>` marks the selected row, drawn in reverse video).
+
+**Tool labels.** A process whose argv[0] is an interpreter (the `interpreters` list next to the kind lists: node, nodejs, bun, bunx, npx, python of any version, ruby) and that runs a tool is labelled `<tool> (<name>)`, where the tool is the argument `Classify` unwraps (the first non-flag argument, or the module after `-m`) as written, by its basename with its extension kept, and name is the process name the row showed before: `vite (node)`, `uvicorn (python3)`, `pytest (python3)`, `server.js (node)`, `manage.py (python3)`, `vitest (npx)`. A process with no tool keeps its name. The label is used in the table's name column, the detail pane's title and the kill modal (its title and its lists of processes); JSON, `port N` and `kill N` keep `name`, so piped `port N` stays byte-identical to v0.1.1.
+
+Below 90 columns, where the command column is dropped, a process row's name cell fills its spare width with the arguments that follow the tool for an interpreter, or argv[0] otherwise, joined with single spaces and cleaned, in faint text, two spaces after the label and its tags, cut with `…` at the column's edge, and left out when fewer than 6 cells remain for them. Header, container and unknown-owner rows have none. At 90 columns and wider only the label changes.
+
+```text
+NAME                                          KIND      PORTS           PID   UP
+▾ api @ main (here) · 2 processes · 2 ports
+    api  !  -addr :8080                       server    8080,8081       200   1d
+    go  test ./...                            test                      201  30s
+▾ shop @ feat/cart (worktree) · 4 processes · 1 port
+  ▾ zsh                                       shell                     100   5h
+    ▾ vite (node)  --port 5173                server    *5173           101   3h
+        esbuild  --service=0.21.5 --ping      other                     102   2h
+    claude                                    agent                     103  20m
+```
+
+**Detail pane.** For a process, the `project` value ends with the location marker of the port answer when one applies: `api @ main · this repo`, or `shop @ feat/cart (worktree) · this repo, other worktree`. A process with a listener gets a `next free` field after `listeners`: the search from its lowest port plus one, as `port N` does for N (`next free 8082` for api on 8080 and 8081), `none in 8081-8180` when nothing in range is free, or `<error>` in the warning colour when the probe failed; no field when the lowest port is 65535. It is computed like the port line, off the UI goroutine, when the pane shows a row it has no answer for and on each new snapshot while it is open, and shows `…` until the answer arrives.
+
+**Kill result.** When the processes a kill signalled held ports and every one of them exited, the status line first reads `killed 2 processes` as before; with the first snapshot taken after the kill finished, it adds each of those ports in ascending order: `killed 2 processes · 5173 free`, or `killed 1 process · 5173 still held by esbuild 102` (each holder by its label and pid, a container by its name, comma-joined). Free means no listener and no published container port on it in that snapshot, as `kill N` checks. A forked child can hold a socket credited only to its parent, which is what this catches. A key pressed before that snapshot clears the status as any status is cleared, and the ports are not reported.
+
+**The `other` group starts collapsed.** Decided by Doga on 2026-10-03. On a Mac `other` fills with system listeners (ControlCenter on 5000 and 7000, rapportd, launch agents) that push down everything the developer started. Its header still counts its processes and ports (`▸ other · 9 processes · 7 ports`), `→` opens it, and search finds anything inside it, so goal 1 (every listening socket is shown) holds. The fold is not remembered between runs (no config file).
+
+**Keys.** One new key: `0`-`9` start a port search. The help overlay and README's key table list it.
+
 ## Milestones
 
-Six phases in strict order for v1, and three more for Release 1.0, each closed by a gate that is a test or a measurement rather than a feeling; the spike comes first because everything else rests on the platform claims it checks.
+Six phases in strict order for v1, three more for Release 1.0 and one for Release 1.1, each closed by a gate that is a test or a measurement rather than a feeling; the spike comes first because everything else rests on the platform claims it checks.
 
 | Phase | Scope | Gate |
 | --- | --- | --- |
@@ -408,6 +474,7 @@ Six phases in strict order for v1, and three more for Release 1.0, each closed b
 | 6 · Port answer: data | `Process.Tags`, `Project.Here`, the collector's cwd-deleted fact, JSON `tags` and `here` | tests create a server in a temporary worktree, remove the worktree and kill its parent, and see both tags on Linux CI and on a Mac; a manual run on the maintainer's Mac lists every tagged process and none is tagged wrongly |
 | 7 · Port answer: commands and TUI | `port N` detail lines, `port N --json`, `devdash free N`, `next free`, the TUI's `(here)` header, tag markers and filter | `free` skips a port held by another user's listener (Linux CI as root with a second user; macOS by hand); piped `port N` output is byte-identical to v0.1.1; golden views pass |
 | 8 · Release 1.0 | README, demo GIF, QA pass, tag v1.0.0 | QA finds no open bug |
+| 9 · Release 1.1 | search sees hidden kinds, `other` collapsed, port search and the port line, tool labels and arguments, detail `this repo` and `next free`, the kill result's ports; QA pass, tag v1.1.0 | golden views pass, among them a port search into a collapsed group, a free port and the detail pane with `next free` at 80x24; TUI tests never bind a socket; QA finds no open bug |
 
 No phase starts until the previous gate passes; a failed gate sends the work back into the same phase, and a gate that cannot pass (for example the PCB list is empty on macOS 27) records the finding in DECISIONS.md and adjusts scope before moving on. Phases 0 to 2 are the first weekend of work with Claude Code; each phase is one or more small commits, with the plan for the phase written and approved before implementation.
 
@@ -433,7 +500,7 @@ Open questions, to decide before Phase 2 (decisions recorded 2026-10-02, DEV-20)
 - The name. `devdash` is generic; check GitHub, Homebrew, pkg.go.dev and crates.io before the first tag. **Decided (2026-10-02): keep `devdash`.** It collides with `Phantas0s/devdash` (a Go terminal dashboard, ~1,600 stars) and is taken on npm and PyPI, and is free on Homebrew core and crates.io; installs are namespaced (`dogauzun/tap/devdash`, `github.com/dogauzun/devdash`), so the collision only affects search.
 - Should root-owned listeners on ports below 1024 (sshd, cups, mDNS) be hidden by default behind a `--system` flag, to keep the default view about development? **Decided: no `--system` flag.** Goal 1 shows every listening TCP socket; root-owned listeners below 1024 stay visible in the `other` group.
 - Default interval: 2 s, or 1 s with the adaptive backoff carrying the load? **Decided: 2 s**, with the adaptive backoff.
-- Is UDP worth including in v1 after all, given the fd walk already sees UDP sockets on both OSes? **Decided: no**, UDP stays a v1 non-goal; planned for v1.1.
+- Is UDP worth including in v1 after all, given the fd walk already sees UDP sockets on both OSes? **Decided: no**, UDP stays a v1 non-goal; planned for v1.2 (it was v1.1 until Release 1.1 took that number).
 - Should `port N` also answer for a port held inside a Docker network but not published, using the container's port list? **Decided: no.** `port N` answers only for ports listening on the host, including published container ports; unpublished ports inside a Docker network are not reported.
 
 ## Appendix: prior art
