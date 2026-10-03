@@ -15,7 +15,8 @@
       "branch": "main",
       "short_sha": null,
       "worktree": false,
-      "main_repo": null
+      "main_repo": null,
+      "here": false
     },
     {
       "id": "/TMP/shop-cart",
@@ -24,7 +25,8 @@
       "branch": null,
       "short_sha": "0123456",
       "worktree": true,
-      "main_repo": "/TMP/shop"
+      "main_repo": "/TMP/shop",
+      "here": false
     }
   ],
   "processes": [
@@ -55,7 +57,8 @@
       "kind": "server",
       "project": "/TMP/shop",
       "container": null,
-      "unknown": []
+      "unknown": [],
+      "tags": []
     },
     {
       "pid": 101,
@@ -83,7 +86,8 @@
       "kind": "test",
       "project": "/TMP/shop-cart",
       "container": null,
-      "unknown": []
+      "unknown": [],
+      "tags": []
     },
     {
       "pid": 1,
@@ -105,7 +109,8 @@
         "cwd",
         "cpu",
         "mem"
-      ]
+      ],
+      "tags": []
     },
     {
       "pid": 103,
@@ -124,7 +129,8 @@
       "container": null,
       "unknown": [
         "cpu"
-      ]
+      ],
+      "tags": []
     },
     {
       "pid": 0,
@@ -154,7 +160,8 @@
         "cwd",
         "cpu",
         "mem"
-      ]
+      ],
+      "tags": []
     },
     {
       "pid": 0,
@@ -184,7 +191,8 @@
         "cwd",
         "cpu",
         "mem"
-      ]
+      ],
+      "tags": []
     }
   ],
   "containers": [

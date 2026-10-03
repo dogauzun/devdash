@@ -65,6 +65,7 @@ type (
 		ShortSHA *string `json:"short_sha"`
 		Worktree bool    `json:"worktree"`
 		MainRepo *string `json:"main_repo"`
+		Here     bool    `json:"here"`
 	}
 	jsonProcess struct {
 		PID        int            `json:"pid"`
@@ -82,6 +83,7 @@ type (
 		Project    *string        `json:"project"`
 		Container  *string        `json:"container"`
 		Unknown    []string       `json:"unknown"`
+		Tags       []string       `json:"tags"`
 	}
 	jsonListener struct {
 		Proto     string  `json:"proto"`
@@ -124,7 +126,7 @@ func writeJSON(w io.Writer, s model.Snapshot, total time.Duration) error {
 		TimingMS:      map[string]float64{"total": ms(total)},
 	}
 	for _, p := range s.Projects {
-		out.Projects = append(out.Projects, jsonProject{p.ID, p.Root, p.Name, str(p.Branch), str(p.ShortSHA), p.Worktree, str(p.MainRepo)})
+		out.Projects = append(out.Projects, jsonProject{p.ID, p.Root, p.Name, str(p.Branch), str(p.ShortSHA), p.Worktree, str(p.MainRepo), p.Here})
 	}
 	for _, p := range s.Processes {
 		out.Processes = append(out.Processes, process(p))
@@ -189,6 +191,7 @@ func process(p model.Process) jsonProcess {
 		j.Listeners = append(j.Listeners, jsonListener{l.Proto, l.Addr.String(), l.Port, str(l.ContainerID)})
 	}
 	j.Unknown = unknown.Names()
+	j.Tags = p.Tags.Names()
 	return j
 }
 

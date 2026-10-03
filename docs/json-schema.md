@@ -53,6 +53,7 @@ The top-level object.
 | `short_sha` | string or null | always | First 7 characters of a detached HEAD; `null` on a branch. |
 | `worktree` | boolean | always | `true` for a linked worktree. |
 | `main_repo` | string or null | always | Main repository's work tree for a linked worktree, else `null`. |
+| `here` | boolean | always | `true` for the repository devdash was run from: the one its working directory resolves to (steps 1 to 4 of project resolution). At most one project has it; none when devdash runs outside every repository. |
 
 ## process
 
@@ -73,6 +74,7 @@ The top-level object.
 | `project` | string or null | always | `id` of the project the process belongs to, `null` for none. |
 | `container` | string or null | always | Id of the container whose published ports this process holds, when every one of its sockets is that one container's; `null` otherwise, including for a proxy holding several containers' ports or one container's next to a port of its own (`OrbStack Helper`, `com.docker.backend`; see the listener's `container`). |
 | `unknown` | string array | always | Fields that could not be read, in this order: `owner`, `argv`, `cwd`, `cpu`, `mem`. `[]` when everything was read. `pid: 0` entries have all five. |
+| `tags` | string array | always | Facts that suggest the process was left over, in this order: `orphaned` (its parent exited: ppid 1, or on Linux a `systemd --user` subreaper; only on a process in a project or with `cwd_deleted`), `cwd_deleted` (its working directory was removed). `[]` when none applies, and always for `pid: 0` and for a process with a `container`. Tags state facts; none says a process is safe to kill. |
 
 ## listener
 
