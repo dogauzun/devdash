@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -315,6 +316,32 @@ func TestPortLineBeforeAnswer(t *testing.T) {
 	}
 	if len(fp.calls) != 0 {
 		t.Errorf("probed without a command run: %v", fp.calls)
+	}
+}
+
+// TestPortHoldersTCPOnly: a UDP listener or a container publishing the port over UDP only does
+// not hold it, as freeport.Find, port N and kill N count, so N itself is probed and the row is
+// not selected.
+func TestPortHoldersTCPOnly(t *testing.T) {
+	s := fixture()
+	s.Containers = append(s.Containers, model.Container{ID: "a1b2c3d4e5f6", Name: "statsd-1", Image: "statsd:1",
+		State: "running", Ports: []model.PortMapping{{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 8125, ContainerPort: 8125, Proto: "udp"}}})
+	s = withProcess(s, 204, apiID, model.KindServer, 0)
+	s.Processes[len(s.Processes)-1].Listeners = []model.Listener{lis("udp4", "0.0.0.0", 8126)}
+	for q, want := range map[string]string{"8125": "port 8125 · free", "8126": "port 8126 · free"} {
+		fp := &fakeProbe{}
+		m := newPortTest(t, 80, 24, s, fp)
+		typeText(m, q[:len(q)-1])
+		search(m, q[len(q)-1:])
+		if got := portLine(m); got != want {
+			t.Errorf("%s: %q, want %q", q, got, want)
+		}
+		if len(fp.calls) != 1 || fp.calls[0] != portQuery(q) {
+			t.Errorf("%s: probe calls %v, want the port itself", q, fp.calls)
+		}
+		if m.sel.ContainerID == "a1b2c3d4e5f6" || m.sel.PID == 204 {
+			t.Errorf("%s selected the UDP row %+v", q, m.sel)
+		}
 	}
 }
 

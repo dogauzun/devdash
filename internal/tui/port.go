@@ -123,10 +123,21 @@ func probePort(s model.Snapshot, n uint16, self bool, probe freeport.Prober) por
 	return a
 }
 
-// holds reports whether r holds port n: a listener on it, or, for a container row with no
-// process behind it, a published port.
+// holds reports whether r holds TCP port n: a listener on it of any proto but UDP, or, for a
+// container row with no process behind it, a port published over tcp. These are the ports
+// freeport.Find counts as held, as `port N` and `kill N` do, so the line agrees with them.
 func holds(r model.Row, n uint16) bool {
-	return slices.ContainsFunc(ports(r), func(p port) bool { return p.n == n })
+	switch {
+	case r.Process != nil:
+		return slices.ContainsFunc(r.Process.Listeners, func(l model.Listener) bool {
+			return l.Port == n && !strings.HasPrefix(l.Proto, "udp")
+		})
+	case r.Container != nil:
+		return slices.ContainsFunc(r.Container.Ports, func(pm model.PortMapping) bool {
+			return pm.HostPort == n && pm.Proto == "tcp"
+		})
+	}
+	return false
 }
 
 // portShown reports whether the port line is shown: the query, typed or applied, is a port
