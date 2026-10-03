@@ -1,7 +1,7 @@
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers
 NAME                                          KIND      PORTS           PID   UP
-▾ api @ main · 2 processes · 2 ports
-    api                                       server    8080,8081       200   1d
+▾ api @ main (here) · 2 processes · 2 ports
+    api  !                                    server    8080,8081       200   1d
     go                                        test                      201  30s
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
   ▾ zsh                                       shell                     100   5h

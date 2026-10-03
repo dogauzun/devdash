@@ -1,7 +1,7 @@
 [1mmbp[m · 2 s ago · 2 projects · 6 listeners · 2 containers                         
 [1mNAME                                          KIND      PORTS           PID   UP[m
-[7m▾ api @ main · 2 processes · 2 ports                                            [m
-    api                                       server    8080,8081       200   1d
+[7m▾ api @ main (here) · 2 processes · 2 ports                                     [m
+    api[2m  ![m                                    server    8080,8081       200   1d
     go                                        test                      201  30s
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m
 [2m  ▾ zsh                                       shell                     100   5h[m

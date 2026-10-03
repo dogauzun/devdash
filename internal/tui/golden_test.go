@@ -77,7 +77,8 @@ func (goldenDocker) Fetch(context.Context) ([]model.Container, *model.Warning) {
 
 // engineModel returns a model at w by h showing what a real engine built from collector.Fake:
 // the fixture's machine (a worktree shop on feat/cart and api on main in temporary
-// repositories, a compose project, sshd and an unknown owner) sampled twice, 2 s apart, so CPU
+// repositories, devdash run from api, whose server's cwd was deleted, a compose project, sshd
+// and an unknown owner) sampled twice, 2 s apart, so CPU
 // is a number except for claude, which appears in the second sample. The model takes the
 // engine's updates through Source as runTUI wires it, inside a synctest bubble so the second
 // tick comes without waiting; it shows the second one, by which time Docker's first Fetch has
@@ -116,12 +117,14 @@ func engineModel(t *testing.T, w, h int) *Model {
 		proxy.Unknown = model.FieldCwd | model.FieldCPU | model.FieldMem
 		sshd := proc(1, 0, now.Add(-72*time.Hour), 0, "", "/usr/sbin/sshd", "-D")
 		sshd.Unknown = model.FieldCwd
+		apiSrv := proc(200, 1, now.Add(-26*time.Hour), 501, api, "bin/api", "-addr", ":8080")
+		apiSrv.CwdDeleted = true // with ppid 1, Build tags it orphaned and cwd deleted
 		procs := []collector.Process{
 			proc(100, 90, now.Add(-5*time.Hour), 501, shop, "-zsh"),
 			vite,
 			proc(102, 101, now.Add(-3*time.Hour+time.Second), 501, shop,
 				"node_modules/@esbuild/darwin-arm64/bin/esbuild", "--service=0.21.5", "--ping"),
-			proc(200, 1, now.Add(-26*time.Hour), 501, api, "bin/api", "-addr", ":8080"),
+			apiSrv,
 			proc(201, 90, now.Add(-30*time.Second), 501, api, "go", "test", "./..."),
 			proc(202, 90, now.Add(-2*time.Hour), 501, api, "nvim", "main.go"),
 			proxy,
@@ -147,6 +150,8 @@ func engineModel(t *testing.T, w, h int) *Model {
 		}}
 	}
 
+	resolver := model.NewResolver("", nil)
+	resolver.SetHere(api)
 	var m *Model
 	synctest.Test(t, func(t *testing.T) {
 		e := engine.New(engine.Options{
@@ -154,7 +159,7 @@ func engineModel(t *testing.T, w, h int) *Model {
 				sample(now.Add(-4*time.Second), time.Second, false),
 				sample(now.Add(-2*time.Second), time.Second+10*time.Millisecond, true),
 			}},
-			Resolver: model.NewResolver("", nil),
+			Resolver: resolver,
 			LookupUser: func(uid int) string {
 				n, ok := goldenUsers[uid]
 				if !ok {
@@ -223,8 +228,7 @@ func TestGoldenTable(t *testing.T) {
 func sizeName(w, h int) string { return strconv.Itoa(w) + "x" + strconv.Itoa(h) }
 
 // TestGoldenViews: the detail pane, the filter, the kill modal and tags over fixture(), whose
-// processes, projects and containers the engine scenario above mirrors, but for api's Here and
-// api 200's tags, which the engine scenario has no input for. Plans come from
+// processes, projects and containers the engine scenario above mirrors. Plans come from
 // fakePlanner and kills go to fakeKiller, which must stay unused: no view confirms.
 func TestGoldenViews(t *testing.T) {
 	type view struct {
