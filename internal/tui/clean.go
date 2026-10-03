@@ -12,33 +12,7 @@ import (
 // of which can set its own title or argv; so can the filter query a user pastes. None of it
 // may reach the terminal raw: a control character can move the cursor, retitle the window or
 // split a table row. Everything drawn goes through one of these, at draw time: quote in the
-// detail pane, where the exact bytes matter, clean everywhere else, where widths matter.
-
-// clean returns s with every rune that is not printable (unicode.IsPrint: C0 and C1 controls,
-// DEL, format characters such as bidi overrides, every space but ' ') and every byte that is
-// not valid UTF-8 replaced by '?', as ps(1) does, so each stands for one visible cell.
-func clean(s string) string {
-	i := 0
-	for i < len(s) && s[i] >= ' ' && s[i] < 0x7f { // printable ASCII, the usual case, is kept as is
-		i++
-	}
-	if i == len(s) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	b.WriteString(s[:i])
-	for i < len(s) {
-		r, n := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && n == 1 || !unicode.IsPrint(r) {
-			b.WriteByte('?')
-		} else {
-			b.WriteString(s[i : i+n])
-		}
-		i += n
-	}
-	return b.String()
-}
+// detail pane, where the exact bytes matter, model.Clean everywhere else, where widths matter.
 
 // quote returns s, Go-quoted when it holds a character that is not printable or is not valid
 // UTF-8 (a lone 0x9b is a C1 CSI, yet decodes to the printable U+FFFD).

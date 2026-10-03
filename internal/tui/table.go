@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -232,7 +231,7 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool) stri
 	case i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth:
 		mark = markOpen
 	}
-	label := clean(rowLabel(r))
+	label := model.Clean(rowLabel(r))
 	if r.Key.Header == model.GroupProject && r.Project != nil && r.Project.Here {
 		label += hereSuffix
 	}
@@ -240,7 +239,8 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool) stri
 }
 
 // hereSuffix ends the header of the project devdash was run from (spec "Release 1.0", TUI). It
-// is not part of rowLabel: the port answer shows that label without it and says "this repo".
+// is not part of rowLabel (model.Project.Label): the port answer shows that label without it and
+// says "this repo".
 const hereSuffix = " (here)"
 
 // tagText is what follows a tagged process's name (spec "Release 1.0", TUI): two spaces and
@@ -263,7 +263,8 @@ func (m *Model) shortTags() bool {
 	return w < commandWidth
 }
 
-// rowLabel is what the name column says about r: the group for a header, the container name
+// rowLabel is what the name column says about r: the group for a header (a project's is the
+// model's Project.Label, which `port N` shows too, so the two read the same), the container name
 // and image for a container row or a process holding a container's port, else the process name.
 // It is snapshot text, not yet cleaned.
 func rowLabel(r model.Row) string {
@@ -273,14 +274,7 @@ func rowLabel(r model.Row) string {
 		if p == nil {
 			return r.Key.Group
 		}
-		s, at := p.Name, cmp.Or(p.Branch, p.ShortSHA)
-		if at != "" {
-			s += " @ " + at
-		}
-		if p.Worktree {
-			s += " (worktree)"
-		}
-		return s
+		return p.Label()
 	case model.GroupCompose:
 		return r.Key.Group + " (compose)"
 	case model.GroupContainers:
@@ -328,7 +322,7 @@ func (m *Model) cell(i int, c col) string {
 		if unknown || p.StartTime.IsZero() {
 			return "-"
 		}
-		return uptime(m.o.Now().Sub(p.StartTime))
+		return model.Uptime(m.o.Now().Sub(p.StartTime))
 	case colCPU:
 		return cpu(p)
 	case colMem:
@@ -337,31 +331,17 @@ func (m *Model) cell(i int, c col) string {
 		}
 		return mem(p.RSSBytes)
 	case colUser:
-		return cmp.Or(clean(p.User), "-")
+		return cmp.Or(model.Clean(p.User), "-")
 	case colCommand:
 		switch {
 		case unknown:
 			return ""
 		case len(p.Argv) == 0:
-			return clean(p.Name)
+			return model.Clean(p.Name)
 		}
-		return clean(strings.Join(p.Argv, " "))
+		return model.Clean(strings.Join(p.Argv, " "))
 	}
 	return ""
-}
-
-// uptime formats a duration as its largest whole unit: 45s, 12m, 3h, 2d.
-func uptime(d time.Duration) string {
-	d = max(d, 0)
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", d/time.Second)
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", d/time.Minute)
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", d/time.Hour)
-	}
-	return fmt.Sprintf("%dd", d/(24*time.Hour))
 }
 
 // cpu formats a CPU percent with one decimal below 100 and none from there, or an en dash when it is not known (first sample).

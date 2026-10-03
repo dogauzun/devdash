@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -527,14 +526,6 @@ func TestTableEmpty(t *testing.T) {
 }
 
 func TestFormat(t *testing.T) {
-	for d, want := range map[time.Duration]string{
-		-time.Second: "0s", 0: "0s", 45 * time.Second: "45s", time.Minute: "1m", 59*time.Minute + 59*time.Second: "59m",
-		time.Hour: "1h", 23 * time.Hour: "23h", 24 * time.Hour: "1d", 400 * 24 * time.Hour: "400d",
-	} {
-		if got := uptime(d); got != want {
-			t.Errorf("uptime(%v) = %q, want %q", d, got, want)
-		}
-	}
 	for b, want := range map[uint64]string{
 		0: "0B", 1023: "1023B", 1024: "1K", 50 << 20: "50M", 187563008: "179M", 1023 << 20: "1023M",
 		1 << 30: "1.0G", 1288490188: "1.2G", 15 << 30: "15G",

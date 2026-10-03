@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/dogauzun/devdash/internal/model"
 )
 
 // DEV-33 owns this file: the help overlay with every key of the spec's key table.
@@ -61,7 +63,7 @@ func (m *Model) helpLines(w int) []string {
 	}
 	lines = append(lines, "", styleBold.Render("Warnings"))
 	for _, wn := range ws {
-		words := strings.Fields(clean(wn.Hint))
+		words := strings.Fields(model.Clean(wn.Hint))
 		if wn.Count > 1 {
 			words = append(words, fmt.Sprintf("(count %d)", wn.Count))
 		}
