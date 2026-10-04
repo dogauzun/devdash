@@ -34,6 +34,19 @@ Sleep 400ms
 Enter
 Sleep 4.5s
 
+# Who holds 5173? Digits start a port search: the holder is selected in its group, and the
+# detail pane places it in this repo, in another worktree, with the next free port.
+Type@200ms "5173"
+Sleep 1.5s
+Enter
+Sleep 500ms
+Enter
+Sleep 4.5s
+Escape
+Sleep 500ms
+Escape
+Sleep 800ms
+
 # Who holds 5174? Digits start a port search: the holder is selected wherever it is, and the
 # port line under the header names the next free port. The detail pane says why it is still
 # running (its parent exited, its worktree is gone). It is outside every project, so x asks
