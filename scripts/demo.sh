@@ -13,8 +13,10 @@
 #   api         (fix/timeouts)         air, whose child api serves :8080; claude
 # and a leftover: vite --port 5174, started in shop-search (feat/search, another linked worktree
 # of shop), whose parent exited and whose worktree was then removed, so it carries the orphaned
-# and cwd deleted tags. The dev tools are demoproc linked under their names. When every port listens, it clears
-# the screen and runs an interactive bash with the prompt "$ " in /home/me. A subshell that plays
+# and cwd deleted tags. The dev tools are demoproc linked under their names; nodemon, vite and
+# vitest run as node node_modules/.bin/<tool>, as npm scripts start them, so their rows read
+# nodemon (node), vite (node) and vitest (node). When every port listens, it clears the screen
+# and runs an interactive bash with the prompt "$ " in /home/me. A subshell that plays
 # the terminal is the parent of that bash and of every other dev tool, so only the leftover has
 # pid 1 as its parent; exiting the bash ends the namespace and every process in it.
 #
@@ -73,7 +75,7 @@ start() { # start DIR COMMAND...: COMMAND in the background, in DIR, with no ter
 # The leftover: a dev server started in a worktree, left running when its terminal closed (its
 # parent is pid 1), and still running after the worktree was removed.
 git -C "$code/shop" worktree add -q -b feat/search "$code/shop-search"
-start "$code/shop-search" vite --port 5174
+start "$code/shop-search" node node_modules/.bin/vite --port 5174
 until devdash port 5174 >/dev/null 2>&1; do sleep 0.1; done
 git -C "$code/shop" worktree remove --force "$code/shop-search"
 
@@ -81,9 +83,9 @@ git -C "$code/shop" worktree remove --force "$code/shop-search"
 # then the interactive bash, so neither they nor that bash (which the demo cds into a
 # repository) have pid 1 as their parent. pid 1 only waits.
 (
-	start "$code/shop" env PORT=3000 DEMO_CHILD="node server.js" nodemon server.js
-	start "$code/shop-cart" vite --port 5173
-	start "$code/shop-cart" vitest --watch
+	start "$code/shop" env PORT=3000 DEMO_CHILD="node server.js" node node_modules/.bin/nodemon server.js
+	start "$code/shop-cart" node node_modules/.bin/vite --port 5173
+	start "$code/shop-cart" node node_modules/.bin/vitest --watch
 	start "$code/blog" python3 -m http.server --bind 0.0.0.0 4000
 	start "$code/api" env PORT=8080 DEMO_CHILD=api air
 	start "$code/api" claude

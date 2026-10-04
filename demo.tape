@@ -34,18 +34,24 @@ Sleep 400ms
 Enter
 Sleep 4.5s
 
-# The leftover vite: its parent exited and its worktree is gone. The detail pane says so.
-Type "/"
-Sleep 400ms
-Type@120ms "orphaned"
-Sleep 1s
+# Who holds 5174? Digits start a port search: the holder is selected wherever it is, and the
+# port line under the header names the next free port. The detail pane says why it is still
+# running (its parent exited, its worktree is gone). It is outside every project, so x asks
+# twice; then the status line and the port line say 5174 is free.
+Type@200ms "5174"
+Sleep 2.5s
 Enter
-Down
-Sleep 800ms
+Sleep 500ms
 Enter
 Sleep 4.5s
 Escape
 Sleep 500ms
+Type "x"
+Sleep 1.5s
+Enter
+Sleep 2s
+Type "Y"
+Sleep 4.5s
 Escape
 Sleep 1s
 
@@ -62,21 +68,17 @@ Sleep 2s
 Type "t"
 Sleep 3s
 Enter
-Sleep 2.5s
+Sleep 4s
 Escape
-Sleep 2.5s
+Sleep 1.5s
 Type "q"
 Sleep 800ms
 
-# Who holds 5174, should it go, and which port is free instead.
-Type "devdash port 5174"
-Sleep 400ms
-Enter
-Sleep 4.5s
+# The same answers outside the dashboard.
 Type "devdash port 5173"
 Sleep 400ms
 Enter
-Sleep 4s
+Sleep 4.5s
 Type "devdash free 5173"
 Sleep 400ms
 Enter
