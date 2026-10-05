@@ -706,9 +706,9 @@ func TestFilterNoFolding(t *testing.T) {
 	press(m, "left", "left")
 	wantSel(t, m, rowsShopHeader, 0)
 	press(m, "right", "down", "right")
-	if len(m.view.Collapsed) != 2 || !m.view.Collapsed[rowsShopHeader] || !m.view.Collapsed[rowsOtherHeader] || len(m.view.Unfolded) != 0 {
+	if len(m.view.Collapsed) != 2 || !m.view.Collapsed[rowsShopHeader] || !m.view.Collapsed[rowsOtherHeader] || len(m.unfolded) != 0 {
 		t.Errorf("collapsed under a filter: %v, want only the shop header and other (folded at start); unfolded %v, want none",
-			m.view.Collapsed, m.view.Unfolded)
+			m.view.Collapsed, m.unfolded)
 	}
 	if got := len(m.rows); got != 3 {
 		t.Errorf("%d rows, want shop, zsh › node and esbuild:\n%s", got, screen(m))

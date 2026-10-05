@@ -132,17 +132,17 @@ func TestFoldLabelHiddenLinks(t *testing.T) {
 	// → on the row that shows one name has nothing to unfold: the view hides zsh (DEV-193).
 	selectKey(t, m, viteKey)
 	press(m, "right")
-	if len(m.view.Unfolded) != 0 || line(m, "▾ zsh") != "" || !strings.HasPrefix(line(m, "vite"), "    vite ") || m.sel != viteKey {
-		t.Fatalf("right on a one-name row (unfolded %v):\n%s", m.view.Unfolded, screen(m))
+	if len(m.unfolded) != 0 || line(m, "▾ zsh") != "" || !strings.HasPrefix(line(m, "vite"), "    vite ") || m.sel != viteKey {
+		t.Fatalf("right on a one-name row (unfolded %v):\n%s", m.unfolded, screen(m))
 	}
 	// With `a` it unfolds as any chain, and ← on its first row folds it again.
 	press(m, "a", "right")
-	if !m.view.Unfolded[zsh] || !strings.HasPrefix(line(m, "zsh"), "  ▾ zsh ") || !strings.HasPrefix(line(m, "vite"), "      vite ") {
+	if !m.unfolded[zsh] || !strings.HasPrefix(line(m, "zsh"), "  ▾ zsh ") || !strings.HasPrefix(line(m, "vite"), "      vite ") {
 		t.Fatalf("with a, right did not unfold the chain:\n%s", screen(m))
 	}
 	selectKey(t, m, zsh)
 	press(m, "left", "a")
-	if m.view.Unfolded[zsh] || m.sel != viteKey || !strings.HasPrefix(line(m, "vite"), "    vite ") {
+	if m.unfolded[zsh] || m.sel != viteKey || !strings.HasPrefix(line(m, "vite"), "    vite ") {
 		t.Fatalf("left did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
 	}
 
@@ -216,25 +216,25 @@ func TestFoldKeys(t *testing.T) {
 		t.Fatalf("right did not expand the folded row:\n%s", screen(m))
 	}
 	press(m, "right") // the row for each process the label names, from claude (DEV-193)
-	if !m.view.Unfolded[claude] || line(m, chainLine) != "" || !strings.HasPrefix(line(m, "claude"), "  ▾ claude ") ||
+	if !m.unfolded[claude] || line(m, chainLine) != "" || !strings.HasPrefix(line(m, "claude"), "  ▾ claude ") ||
 		!strings.HasPrefix(line(m, "xargs"), "    ▾ xargs ") || m.sel != xargs {
 		t.Fatalf("right did not unfold the chain with xargs selected (%+v):\n%s", m.sel, screen(m))
 	}
 	press(m, "right") // nothing more to unfold
-	if m.sel != xargs || len(m.view.Unfolded) != 1 {
-		t.Errorf("right on an unfolded row: sel %+v, unfolded %v", m.sel, m.view.Unfolded)
+	if m.sel != xargs || len(m.unfolded) != 1 {
+		t.Errorf("right on an unfolded row: sel %+v, unfolded %v", m.sel, m.unfolded)
 	}
 
 	// ← on the first row folds the chain again and selects the folded row; elsewhere it collapses.
 	selectKey(t, m, claude)
 	press(m, "left")
-	if len(m.view.Unfolded) != 0 || line(m, "▾ "+chainLine) == "" || m.sel != xargs {
+	if len(m.unfolded) != 0 || line(m, "▾ "+chainLine) == "" || m.sel != xargs {
 		t.Fatalf("left on the first row did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
 	}
 	press(m, "a", "right")
 	selectKey(t, m, claude)
 	press(m, "left")
-	if !m.view.Collapsed[claude] || !m.view.Unfolded[bash] || line(m, "▸ claude") == "" {
+	if !m.view.Collapsed[claude] || !m.unfolded[bash] || line(m, "▸ claude") == "" {
 		t.Fatalf("left on a link of an unfolded chain did not collapse it:\n%s", screen(m))
 	}
 	press(m, "left") // claude is collapsed: ← moves to its parent, the first row
@@ -295,8 +295,8 @@ func TestFoldUnfoldHiddenLinks(t *testing.T) {
 	}
 	selectKey(t, m, keyOf(s, 11))
 	press(m, "left")
-	if got := rows(); len(m.view.Unfolded) != 0 || len(got) == 0 || got[0] != "1 bash › claude › bash › bash › guard.sh › run55.sh › xargs" || m.sel != keyOf(s, 16) {
-		t.Errorf("left on claude did not fold the chain: rows %q, unfolded %v, sel %+v", got, m.view.Unfolded, m.sel)
+	if got := rows(); len(m.unfolded) != 0 || len(got) == 0 || got[0] != "1 bash › claude › bash › bash › guard.sh › run55.sh › xargs" || m.sel != keyOf(s, 16) {
+		t.Errorf("left on claude did not fold the chain: rows %q, unfolded %v, sel %+v", got, m.unfolded, m.sel)
 	}
 }
 
@@ -332,8 +332,8 @@ func TestFoldUnfoldedSurvivesRefresh(t *testing.T) {
 	// Kept by the first process the label names (DEV-193), and pruned once it is gone, as
 	// collapsed keys are.
 	feed(m, drop(chainFixture(), 11))
-	if len(m.view.Unfolded) != 0 {
-		t.Errorf("unfolded keys after claude exited: %v", m.view.Unfolded)
+	if len(m.unfolded) != 0 {
+		t.Errorf("unfolded keys after claude exited: %v", m.unfolded)
 	}
 }
 

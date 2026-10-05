@@ -649,7 +649,7 @@ func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
 		// Unfold the chain by its first link; rebuild's unfold moves the key to the first link
 		// the label draws (DEV-193). Its last process stays selected (DEV-157).
 		case r.Links != nil:
-			m.view.Unfolded[r.Links[0].Key()] = true
+			m.unfolded[r.Links[0].Key()] = true
 			m.rebuild()
 		}
 	case "a":
@@ -675,8 +675,8 @@ func (m *Model) collapse() {
 		return
 	}
 	r := m.rows[i]
-	if m.filter == "" && m.view.Unfolded[r.Key] {
-		delete(m.view.Unfolded, r.Key)
+	if m.filter == "" && m.unfolded[r.Key] {
+		delete(m.unfolded, r.Key)
 		m.rebuild()
 		if m.sel != r.Key { // folded: rebuild selected the chain's row
 			return

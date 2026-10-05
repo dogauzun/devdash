@@ -216,20 +216,6 @@ func TestFlattenFold(t *testing.T) {
 			},
 		},
 		{
-			name:  "unfolded chain: one row per process, the last one's children fold",
-			procs: issueChain(),
-			opts:  ViewOptions{Unfolded: map[RowKey]bool{issueChain()[0].Key(): true}},
-			want: []string{
-				"[project /src/shop]",
-				"  bash (dim)", "    claude", "      bash (dim)", "        bash (dim)", "          guard.sh (dim)",
-				"            run55.sh (dim)", "              xargs",
-				"                sh › time",
-				"                  timeout › lte_scanner",
-				"                  grep",
-				"                sleep",
-			},
-		},
-		{
 			name:  "a listener ends a chain",
 			procs: []Process{fp(30, 1, 0, "a", s, KindOther), fp(31, 30, 1, "b", s, KindServer, 3000), fp(32, 31, 2, "c", s, KindOther)},
 			want:  []string{"[project /src/shop]", "  a › b", "    c"},
