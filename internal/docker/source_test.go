@@ -92,7 +92,7 @@ type engine struct {
 // newEngine starts an engine on a socket in a new temporary directory.
 func newEngine(t *testing.T, body string) *engine {
 	t.Helper()
-	return newEngineAt(t, filepath.Join(tempDir(t), "d.sock"), body)
+	return newEngineAt(t, filepath.Join(shortTempDir(t), "d.sock"), body)
 }
 
 // newEngineAt starts an engine listening on the unix socket sock, advertising API 1.41.
@@ -109,18 +109,6 @@ func newEngineAt(t *testing.T, sock, body string) *engine {
 	e.srv.Start()
 	t.Cleanup(e.srv.Close)
 	return e
-}
-
-// tempDir is a short temporary directory: a unix socket path is limited to about 100 bytes,
-// which t.TempDir can exceed on macOS.
-func tempDir(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "dd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
 }
 
 // stop shuts the engine down; closing the unix listener removes the socket file.
@@ -351,7 +339,7 @@ func TestFetchUnversionedWithoutAPIVersion(t *testing.T) {
 }
 
 func TestFetchMissingSocket(t *testing.T) {
-	sock := filepath.Join(tempDir(t), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	s, clk := newSource(Endpoint{Network: "unix", Address: sock})
 	got, w := fetch(t, s)
 	if got != nil || w != nil {
@@ -417,7 +405,7 @@ func TestFetchSocketRemovedClearsList(t *testing.T) {
 func TestFetchRefusedSocketIsUnreachable(t *testing.T) {
 	// A socket file nobody listens on (a stopped daemon's leftover): ECONNREFUSED, not
 	// ENOENT, so Docker is there but not answering.
-	sock := filepath.Join(tempDir(t), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -485,7 +473,7 @@ func TestFetchRetryInterval(t *testing.T) {
 		})
 
 		t.Run("missing/"+tick.String(), func(t *testing.T) {
-			sock := filepath.Join(tempDir(t), "d.sock")
+			sock := filepath.Join(shortTempDir(t), "d.sock")
 			s, clk := newSourceTick(Endpoint{Network: "unix", Address: sock}, tick)
 			if got, w := fetch(t, s); got != nil || w != nil {
 				t.Fatalf("Fetch = %+v, %+v; want no containers, no warning", got, w)

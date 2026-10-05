@@ -149,7 +149,7 @@ func TestDiscoverySourceInvalidEndpoint(t *testing.T) {
 // that endpoint, as for NewSource: no containers, no warning, and the same path is asked
 // again 10 ticks later.
 func TestDiscoverySourceLosesSocket(t *testing.T) {
-	sock := filepath.Join(tempDir(t), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	e := newEngineAt(t, sock, dockerBody)
 	disc := &countedDiscover{f: func() (Endpoint, bool, error) { return e.ep, true, nil }}
 	s, clk := newDiscoverySource(disc)
