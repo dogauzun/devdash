@@ -530,7 +530,7 @@ func TestKillSurvivors(t *testing.T) {
 	if !reflect.DeepEqual(fk.plans[1], want) {
 		t.Errorf("force plan %+v, want only esbuild with SIGKILL %+v", fk.plans[1], want)
 	}
-	if m.kill.active() || !strings.Contains(screen(m), "killed 1 process") {
+	if m.kill.active() || !strings.Contains(screen(m), "killed 2 processes") { // both rounds (DEV-155)
 		t.Errorf("after the force kill: modal open %v\n%s", m.kill.active(), screen(m))
 	}
 	if src.refreshes != 2 {
@@ -861,6 +861,33 @@ func TestKillResultPorts(t *testing.T) {
 				t.Errorf("status %q, want %q", got, c.want)
 			}
 		})
+	}
+
+	// A force round is the same kill (DEV-155): vite exits on SIGTERM, esbuild survives and
+	// f kills it; the status counts both and lists both ports.
+	m, _, _, fk := newKillTest(t, 120, 40, withPort)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(proc model.Process) engine.Outcome {
+			return engine.Outcome{Signalled: true, Exited: proc.PID != 102}
+		}), nil
+	})
+	selectRow(t, m, keyOf(withPort, 101))
+	press(m, "x", "t")
+	run(t, m, press(m, "enter"))
+	run(t, m, press(m, "f"))
+	feed(m, afterKill(without(withPort, 101, 102), time.Second))
+	if got, want := status(m), "killed 2 processes · 5173 free · 5174 free"; got != want {
+		t.Errorf("after the force round: %q, want %q", got, want)
+	}
+}
+
+// TestKillTableWide: the modal's columns are padded by display width, so a double-width name
+// does not push its own columns right (DEV-156).
+func TestKillTableWide(t *testing.T) {
+	got := killTable([]string{"101\tvite (node)\tshop\t5173", "102\t服务器服务器\tshop\t-"})
+	want := []string{"101  vite (node)   shop  5173", "102  服务器服务器  shop  -"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("killTable\n%q, want\n%q", got, want)
 	}
 }
 
