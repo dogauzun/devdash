@@ -24,7 +24,19 @@ type procStat struct {
 	flags     uint64
 	utime     uint64 // clock ticks
 	stime     uint64 // clock ticks
+	threads   int    // num_threads
 	starttime uint64 // clock ticks since boot
+}
+
+// gone reports whether kill counts the process as exited: state X, or Z with num_threads 1.
+// The table read skips every Z; kill does not, because a multi-threaded process's leader shows
+// Z as soon as its own thread has exited, while the other threads are still in do_exit: the
+// last of them closes the shared fd table, and the process's sockets with it, before it is
+// released and num_threads drops. Counting that Z as gone let `devdash kill` re-check the port
+// while it still listened, with no fd left to name an owner, so a just-killed Go server's port
+// showed as held by an unknown owner (DEV-83).
+func (s procStat) gone() bool {
+	return s.state == 'X' || s.state == 'Z' && s.threads <= 1
 }
 
 var errMalformed = errors.New("malformed proc file")
@@ -43,12 +55,13 @@ func parseStat(b []byte) (procStat, error) {
 		return procStat{}, errMalformed
 	}
 	s := procStat{name: string(b[open+1 : closing]), state: f[0][0]}
-	var errs [5]error
+	var errs [6]error
 	s.ppid, errs[0] = strconv.Atoi(f[1])
 	s.flags, errs[1] = strconv.ParseUint(f[6], 10, 64)
 	s.utime, errs[2] = strconv.ParseUint(f[11], 10, 64)
 	s.stime, errs[3] = strconv.ParseUint(f[12], 10, 64)
-	s.starttime, errs[4] = strconv.ParseUint(f[19], 10, 64)
+	s.threads, errs[4] = strconv.Atoi(f[17])
+	s.starttime, errs[5] = strconv.ParseUint(f[19], 10, 64)
 	if err := errors.Join(errs[:]...); err != nil {
 		return procStat{}, errMalformed
 	}

@@ -26,18 +26,21 @@ func newLinux(root string) *linuxCollector {
 	c := &linuxCollector{root: root, euid: os.Geteuid(), ptrace: hasPtrace(), sudoPtrace: boundingPtrace(), stat: unix.Stat}
 	// btime is read once: the kernel shifts it when the wall clock is stepped,
 	// which would move every StartTime and break (pid, start time) identity.
-	c.btime = sync.OnceValues(func() (int64, error) {
-		b, err := os.ReadFile(root + "/stat")
-		if err != nil {
-			return 0, err
-		}
-		bt, err := parseBtime(b)
-		if err != nil {
-			return 0, fmt.Errorf("%s/stat: %w", root, err)
-		}
-		return bt, nil
-	})
+	c.btime = sync.OnceValues(func() (int64, error) { return readBtime(root) })
 	return c
+}
+
+// readBtime reads the boot time in Unix seconds from root's stat file.
+func readBtime(root string) (int64, error) {
+	b, err := os.ReadFile(root + "/stat")
+	if err != nil {
+		return 0, err
+	}
+	bt, err := parseBtime(b)
+	if err != nil {
+		return 0, fmt.Errorf("%s/stat: %w", root, err)
+	}
+	return bt, nil
 }
 
 type linuxCollector struct {
@@ -243,7 +246,7 @@ func readProcTable(dir string, pid int, btime int64, pageSize uint64) (p Process
 		PPID:      st.ppid,
 		UID:       uid,
 		Name:      st.name,
-		StartTime: time.Unix(btime, 0).Add(time.Duration(st.starttime) * clockTick),
+		StartTime: st.start(btime),
 		CPUTime:   time.Duration(st.utime+st.stime) * clockTick,
 	}
 	b, err = os.ReadFile(dir + "/statm")

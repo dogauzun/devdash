@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dogauzun/devdash/internal/collector"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -109,15 +110,15 @@ type osys struct {
 	self    func() (pid, ppid int) // devdash's pid and its parent's, read now
 }
 
-var errGone = errors.New("no such process")
+var errGone = collector.ErrGone
 
 func procStart(pid int) (time.Time, error) {
-	t, _, err := procStat(pid)
+	t, _, err := collector.ProcStat(pid)
 	return t, err
 }
 
 func procPPID(pid int) (int, error) {
-	_, ppid, err := procStat(pid)
+	_, ppid, err := collector.ProcStat(pid)
 	return ppid, err
 }
 

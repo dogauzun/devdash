@@ -42,7 +42,7 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 			PID:       int(kp.Proc.P_pid),
 			PPID:      int(kp.Eproc.Ppid),
 			UID:       int(kp.Eproc.Ucred.Uid),
-			StartTime: time.Unix(kp.Proc.P_starttime.Unix()),
+			StartTime: startTime(kp),
 			Name:      cstring(kp.Proc.P_comm[:]),
 		})
 	}
