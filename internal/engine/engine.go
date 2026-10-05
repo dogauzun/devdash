@@ -77,6 +77,7 @@ type Engine struct {
 
 	// Owned by the goroutine running Run (or Snapshot).
 	prev     model.Snapshot
+	base     model.Snapshot // the sample prev's CPU percent was measured from
 	inflight chan outcome // non-nil while an abandoned Collect may still be running
 	interval time.Duration
 	slow     int // consecutive slow ticks
@@ -160,14 +161,22 @@ func (e *Engine) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		var snap model.Snapshot
+		var snap, base model.Snapshot
 		if err == nil {
-			snap = e.build(raw, e.docker.load())
+			// CPU percent spans at least one tick: a Refresh during a tick starts the next one as
+			// that tick ends (a kill asks twice), and measured from prev it would show devdash's
+			// own collection (DEV-181). So a sample sooner than a tick after prev is measured
+			// from prev's base, which is a tick or more older.
+			base = e.prev
+			if raw.TakenAt.Sub(base.TakenAt) < e.o.Tick {
+				base = e.base
+			}
+			snap = e.build(raw, base, e.docker.load())
 			e.procs = len(raw.Processes)
 		}
 		e.adapt(time.Since(start) > slowTick || errors.Is(err, context.DeadlineExceeded))
 		if err == nil {
-			e.prev, e.missed = snap, 0
+			e.prev, e.base, e.missed = snap, base, 0
 		} else {
 			e.missed++
 		}
@@ -194,7 +203,6 @@ func Snapshot(ctx context.Context, o Options) (model.Snapshot, error) {
 // duration is Timing["docker"] and its warning joins Warnings.
 func SnapshotAfter(ctx context.Context, o Options, prev model.Snapshot) (model.Snapshot, error) {
 	e := New(o)
-	e.prev = prev
 	var docker chan dockerResult
 	if o.Docker != nil {
 		ctx, cancel := context.WithCancel(ctx)
@@ -210,7 +218,7 @@ func SnapshotAfter(ctx context.Context, o Options, prev model.Snapshot) (model.S
 	if docker != nil {
 		d = <-docker
 	}
-	return e.build(raw, d), nil
+	return e.build(raw, prev, d), nil
 }
 
 // collect runs Collect in its own goroutine and stops waiting after collectTimeout, because
@@ -260,11 +268,11 @@ func (e *Engine) inProject(procs []model.Process) []bool {
 	return in
 }
 
-// build turns a sample and the latest Docker result into a snapshot, using the previous good
-// one for CPU percent, and fills User on every real process (the PID 0 pseudo-process has no
+// build turns a sample and the latest Docker result into a snapshot, measuring CPU percent from
+// prev, and fills User on every real process (the PID 0 pseudo-process has no
 // owner to name).
-func (e *Engine) build(raw model.Raw, d dockerResult) model.Snapshot {
-	s := model.Build(withDocker(raw, d), e.prev, d.containers, e.o.Resolver)
+func (e *Engine) build(raw model.Raw, prev model.Snapshot, d dockerResult) model.Snapshot {
+	s := model.Build(withDocker(raw, d), prev, d.containers, e.o.Resolver)
 	if d.done {
 		s.Timing["docker"] = d.took
 	}
