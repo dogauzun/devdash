@@ -71,6 +71,14 @@ func TestClassify(t *testing.T) {
 		{argv: "bun --watch run nodemon", want: KindWatcher},
 		{argv: "bun x jest", want: KindTest},
 		{argv: "bun run dev", listeners: listen, want: KindServer},
+		// A flag's separate value is not the tool (DEV-170).
+		{argv: "node -r ts-node/register /app/node_modules/.bin/jest", want: KindTest},
+		{argv: "node --import tsx ./node_modules/vitest/vitest.mjs", want: KindTest},
+		{argv: "node --env-file .env node_modules/nodemon/bin/nodemon.js", want: KindWatcher},
+		{argv: "ruby -I spec /usr/local/bin/rspec", want: KindTest},
+		{argv: "node -r jest app.js", listeners: listen, want: KindServer},
+		{argv: "fish -C jest vitest", want: KindShell},
+		{argv: "sh --rcfile jest vitest", want: KindShell},
 		{argv: "./bin/api", listeners: listen, want: KindServer},
 		{argv: "git status", want: KindOther},
 		{argv: "node", want: KindOther},
@@ -114,7 +122,6 @@ func TestTool(t *testing.T) {
 		{argv: "npx vitest run", tool: "vitest", args: "run"},
 		{argv: "/usr/local/bin/node22 --inspect /app/Server.MJS", tool: "Server.MJS"}, // case and extension kept
 		{argv: "python -m Http.Server 8000", tool: "Http.Server", args: "8000"},       // the module as written
-		{argv: "node -r x app.js", tool: "x", args: "app.js"},                         // the argument Classify reads
 		{argv: "node"},
 		{argv: "node --inspect"},
 		// Inline code is not a tool (DEV-137): the program text follows -c, -e, --eval, -p or --print.
@@ -139,6 +146,31 @@ func TestTool(t *testing.T) {
 		{argv: "python3 -X dev app.py", tool: "app.py"},
 		{argv: "python3 -Wignore app.py", tool: "app.py"},
 		{argv: "python3 -m"},
+		// node's -r, --require, --import and --env-file, ruby's -I, fish's -C, --init-command, -p,
+		// --profile, -d and --debug, and sh's (bash's, as sh) --rcfile and --init-file take the
+		// next argument as their value; with = or attached, the value is part of the flag (DEV-170).
+		{argv: "node -r ./register.js app.js", tool: "app.js"},
+		{argv: "node --require ./register.js app.js", tool: "app.js"},
+		{argv: "node --require=./register.js app.js", tool: "app.js"},
+		{argv: "node --import ./loader.mjs app.js", tool: "app.js"},
+		{argv: "node --import=./loader.mjs app.js", tool: "app.js"},
+		{argv: "node --env-file .env app.js", tool: "app.js"},
+		{argv: "node --env-file=.env app.js", tool: "app.js"},
+		{argv: "nodejs -r ./register.js app.js", tool: "app.js"},
+		{argv: "node22 -r dotenv/config --env-file .env ./server.js 3000", tool: "server.js", args: "3000"},
+		{argv: "node -r ./register.js"},
+		{argv: "ruby -I lib script.rb", tool: "script.rb"},
+		{argv: "ruby -Ilib script.rb", tool: "script.rb"},
+		{argv: "fish -C set@x@1 script.fish", tool: "script.fish"},
+		{argv: "fish --init-command set@x@1 script.fish", tool: "script.fish"},
+		{argv: "fish --init-command=set@x@1 script.fish", tool: "script.fish"},
+		{argv: "fish -p prof.txt script.fish", tool: "script.fish"},
+		{argv: "fish --profile prof.txt script.fish", tool: "script.fish"},
+		{argv: "fish -d proc script.fish", tool: "script.fish"},
+		{argv: "fish --debug proc script.fish", tool: "script.fish"},
+		{argv: "fish -C set@x@1"},
+		{argv: "sh --rcfile rc x.sh", tool: "x.sh"},
+		{argv: "sh --init-file rc x.sh", tool: "x.sh"},
 		// python's -m takes its module attached too, a flag of its own for other interpreters;
 		// bun's run and x are subcommands, the tool follows them (DEV-153).
 		{argv: "python3 -mhttp.server --bind 127.0.0.1 6107", tool: "http.server", args: "--bind 127.0.0.1 6107"},
@@ -216,6 +248,9 @@ func TestToolMatchesClassify(t *testing.T) {
 		"python3 -c import@pytest", "node -e require('jest')", "node --print=x jest",
 		"npx -p nodemon nodemon server.js", "python3 -X dev -m pytest", "ruby -p spec.rb",
 		"python3 -mPyTest", "bun run Vitest", "bun --watch x jest", "bun run",
+		"node -r ./register.js app.js", "node --require ./register.js Jest.js", "node --require=x jest",
+		"node --import ./loader.mjs vitest.mjs", "node --env-file .env nodemon.js", "nodejs -r x jest",
+		"ruby -I lib /usr/local/bin/rspec", "node -r x",
 	} {
 		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
 		for i := range argv {

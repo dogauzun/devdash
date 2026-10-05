@@ -135,10 +135,19 @@ var inlineCodeFlags = map[string]bool{
 // valueFlags: an interpreter's flags that take the next argument as their value, which is
 // therefore not the tool (DEV-138). Python passes -X and -W on to its multiprocessing workers
 // (`python3 -X dev -c …`); -Wignore, with the value attached, is a plain flag. The shells' -o
-// and -O, also at the end of -eo, are read by toolArg (DEV-159).
+// and -O, also at the end of -eo, are read by toolArg (DEV-159). node's preloads and env file
+// (`node -r ./register.js app.js`), ruby's load path, fish's init command, profile and debug
+// categories, and bash's rc file, also as sh (dash refuses long flags) (DEV-170). Written with
+// = (--require=x), the value is part of the flag.
 var valueFlags = map[string]bool{
 	"python -X": true, "python -W": true,
+	"node -r": true, "node --require": true, "node --import": true, "node --env-file": true,
+	"nodejs -r": true, "nodejs --require": true, "nodejs --import": true, "nodejs --env-file": true,
+	"ruby -I":       true,
 	"bash --rcfile": true, "bash --init-file": true,
+	"sh --rcfile": true, "sh --init-file": true,
+	"fish -C": true, "fish --init-command": true, "fish -p": true, "fish --profile": true,
+	"fish -d": true, "fish --debug": true,
 }
 
 // subcommands: an interpreter's first non-flag arguments that name no tool but run the next
