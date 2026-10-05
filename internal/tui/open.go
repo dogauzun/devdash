@@ -31,13 +31,12 @@ type openedMsg struct {
 }
 
 // apply shows the outcome in the footer.
-func (o openedMsg) apply(m *Model) tea.Cmd {
+func (o openedMsg) apply(m *Model) {
 	if o.err != nil {
 		m.status = "open failed: " + o.err.Error()
 	} else {
 		m.status = "opened " + o.url
 	}
-	return nil
 }
 
 // openSelected opens http://localhost:<port> for the selected row's lowest port: its process's

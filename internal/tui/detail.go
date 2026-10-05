@@ -146,11 +146,10 @@ type detailFreeMsg struct {
 }
 
 // apply keeps the answer when it is the latest run's.
-func (msg detailFreeMsg) apply(m *Model) tea.Cmd {
+func (msg detailFreeMsg) apply(m *Model) {
 	if msg.seq == m.dfree.seq {
 		m.dfree.ans, m.dfree.have = msg.ans, true
 	}
-	return nil
 }
 
 // lowestPort is p's lowest TCP port: listeners of any proto but UDP, as holds and freeport.Find

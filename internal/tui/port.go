@@ -43,11 +43,10 @@ type portProbedMsg struct {
 }
 
 // apply keeps the answer when it is the latest run's, for the current port.
-func (msg portProbedMsg) apply(m *Model) tea.Cmd {
+func (msg portProbedMsg) apply(m *Model) {
 	if msg.seq == m.port.seq && m.port.n != 0 {
 		m.port.ans, m.port.have = msg.ans, true
 	}
-	return nil
 }
 
 // portQuery is the port number q stands for: digits only, no leading zero, 1 to 65535; 0 when q

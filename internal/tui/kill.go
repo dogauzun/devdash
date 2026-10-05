@@ -69,7 +69,7 @@ type killDoneMsg struct {
 	done   time.Time
 }
 
-func (msg killDoneMsg) apply(m *Model) tea.Cmd { return m.killDone(msg.result, msg.err, msg.done) }
+func (msg killDoneMsg) apply(m *Model) { m.killDone(msg.result, msg.err, msg.done) }
 
 // killAfter is a finished kill's ports, waiting for the first snapshot taken after it to say
 // whether each is free (spec "Release 1.1", Kill result); the zero value waits for nothing.
@@ -215,9 +215,9 @@ func (m *Model) killSignal(p engine.Plan) tea.Cmd {
 // cover the whole kill, earlier rounds included, so a process an earlier round did not signal
 // keeps the report open (DEV-165); the summary waits for the first snapshot taken after done to
 // add the processes' ports.
-func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
+func (m *Model) killDone(r engine.Result, err error, done time.Time) {
 	if m.kill.stage != killRunning {
-		return nil
+		return
 	}
 	if err == nil {
 		m.o.Source.Refresh()
@@ -238,7 +238,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	if !all {
 		r.Outcomes = outcomes
 		m.kill.stage, m.kill.result, m.kill.err, m.kill.top = killReport, r, err, 0
-		return nil
+		return
 	}
 	m.status = "killed " + model.Count(killed, "process", "processes")
 	if gone > 0 {
@@ -258,7 +258,6 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	}
 	slices.Sort(ports)
 	m.kafter = killAfter{ports: slices.Compact(ports), done: done}
-	return nil
 }
 
 // killPorts adds the last kill's ports to its summary in the status line once a snapshot taken

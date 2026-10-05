@@ -101,7 +101,7 @@ type Model struct {
 
 // action is a message a feature file defines for itself (a finished kill, a failed open);
 // Update hands it back to that file.
-type action interface{ apply(m *Model) tea.Cmd }
+type action interface{ apply(m *Model) }
 
 // updateMsg carries one engine.Update; closedMsg says the engine stopped; tickMsg redraws the
 // snapshot age once a second.
@@ -245,7 +245,7 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 	case tea.PasteMsg:
 		return m.paste(msg.Content)
 	case action:
-		return msg.apply(m)
+		msg.apply(m)
 	}
 	return nil
 }
