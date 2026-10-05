@@ -61,6 +61,9 @@ devdash port 3000 || npm run dev
 PORT=$(devdash free 3000) npm run dev
 ```
 
+The answer means free at the moment of the check, not reserved: another process can take the
+port before your server starts.
+
 **`kill N`** prints the plan first (every pid with its name, project and ports), then asks for
 confirmation. It refuses pid 1, itself and its ancestors, and container-runtime processes, and
 a target outside every project asks a second time.
