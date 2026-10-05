@@ -82,14 +82,15 @@ func TestRunReturnsOnCancel(t *testing.T) {
 }
 
 // runAsked runs the dashboard with S already confirmed by the first message; then, when sig is
-// set, sends sig to this process, and with quit also sends the quit y sends, so the program
-// returns at once and the signal may reach Run's handler only after it. Without quit, Run ends
-// on the signal alone. It fails the test when Run does not return within 5 s.
+// set, sends sig to this process. With quit, once the process has received sig, it also sends
+// the quit y sends, so the program returns at once, likely before Run's handler has acted on
+// sig. Without quit, Run ends on the signal alone. It fails the test when Run does not return
+// within 5 s.
 func runAsked(t *testing.T, sig syscall.Signal, quit bool) (sudo bool, err error) {
 	t.Helper()
+	ch := make(chan os.Signal, 1)
 	if sig != 0 {
 		// Also delivered here, so a signal Run no longer catches does not end the test binary.
-		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, sig)
 		defer signal.Stop(ch)
 	}
@@ -103,6 +104,14 @@ func runAsked(t *testing.T, sig syscall.Signal, quit bool) (sudo bool, err error
 		if sig != 0 {
 			if err := syscall.Kill(os.Getpid(), sig); err != nil {
 				t.Error(err)
+			}
+		}
+		if quit {
+			// macOS may deliver a signal sent to the process after kill returns.
+			select {
+			case <-ch:
+			case <-time.After(5 * time.Second):
+				t.Errorf("%v not received", sig)
 			}
 		}
 		if sig == 0 || quit {
