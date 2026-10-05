@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -78,14 +81,66 @@ func TestRunReturnsOnCancel(t *testing.T) {
 	}
 }
 
-// TestRunReturnsOnInterrupt: SIGINT, which Bubble Tea turns into an InterruptMsg, quits like
-// ctrl-c: no error, no sudo (DEV-147).
-func TestRunReturnsOnInterrupt(t *testing.T) {
-	src := &fakeSource{ch: make(chan engine.Update)}
-	var out strings.Builder
-	interrupt := tea.WithFilter(func(tea.Model, tea.Msg) tea.Msg { return tea.InterruptMsg{} })
-	sudo, err := Run(context.Background(), Options{Source: src, Kill: failKill(t)}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24), interrupt)
-	if err != nil || sudo {
-		t.Errorf("Run interrupted: sudo %v, %v; want false, nil", sudo, err)
+// runAsked runs the dashboard with S already confirmed by the first message; then, when sig is
+// set, sends sig to this process and lets Run end on it alone. It fails the test when Run
+// does not return within 5 s.
+func runAsked(t *testing.T, sig syscall.Signal) (sudo bool, err error) {
+	t.Helper()
+	if sig != 0 {
+		// Also delivered here, so a signal Run no longer catches does not end the test binary.
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, sig)
+		defer signal.Stop(ch)
+	}
+	first := true
+	filter := tea.WithFilter(func(tm tea.Model, msg tea.Msg) tea.Msg {
+		if !first {
+			return msg
+		}
+		first = false
+		tm.(*Model).sudo.asked = true
+		if sig == 0 {
+			return tea.QuitMsg{} // the quit y sends
+		}
+		if err := syscall.Kill(os.Getpid(), sig); err != nil {
+			t.Error(err)
+		}
+		return msg
+	})
+	type result struct {
+		sudo bool
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		src := &fakeSource{ch: make(chan engine.Update)}
+		var out strings.Builder
+		sudo, err := Run(context.Background(), Options{Source: src, Kill: failKill(t)}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24), filter)
+		done <- result{sudo, err}
+	}()
+	select {
+	case r := <-done:
+		return r.sudo, r.err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Run did not return on %v", sig)
+		return false, nil
+	}
+}
+
+// TestRunSudo: the quit y sends, with no signal, reports the sudo request (DEV-144).
+func TestRunSudo(t *testing.T) {
+	if sudo, err := runAsked(t, 0); err != nil || !sudo {
+		t.Errorf("Run after y: sudo %v, %v; want true, nil", sudo, err)
+	}
+}
+
+// TestRunReturnsOnSignal: SIGINT, SIGTERM and SIGHUP each end the dashboard like ctrl-c, with
+// no error, and never with the sudo request, even one y has already recorded (DEV-147,
+// DEV-164, DEV-167).
+func TestRunReturnsOnSignal(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+		if sudo, err := runAsked(t, sig); err != nil || sudo {
+			t.Errorf("Run on %v: sudo %v, %v; want false, nil", sig, sudo, err)
+		}
 	}
 }
