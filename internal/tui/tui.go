@@ -40,8 +40,9 @@ type Options struct {
 	Source Source
 	// Plan computes what a kill would signal (engine.NewPlan when nil).
 	Plan func(model.Snapshot, model.RowKey, engine.KillOptions) (engine.Plan, error)
-	// Kill signals a plan and waits up to the timeout ((*engine.Engine).Kill in production,
-	// which also asks for a refresh; engine.Kill when nil). It runs off the UI goroutine.
+	// Kill signals a plan and waits up to the timeout (engine.Kill when nil, as in production).
+	// It runs off the UI goroutine and asks for no refresh: killDone asks for the kill's one
+	// refresh once it has returned (DEV-185).
 	Kill        func(engine.Plan, time.Duration) (engine.Result, error)
 	KillTimeout time.Duration // engine.DefaultKillTimeout when 0
 	// Open opens a URL in the browser (open on macOS, xdg-open on Linux, when nil).

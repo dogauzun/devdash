@@ -162,8 +162,10 @@ func TestTUIDockerSocket(t *testing.T) {
 			if *calls != tt.discover {
 				t.Errorf("discover called %d times, want %d", *calls, tt.discover)
 			}
-			if to.Source != e || to.Kill == nil || !to.ShowAll {
-				t.Errorf("Source %v (want the engine), Kill set %v, ShowAll %v", to.Source, to.Kill != nil, to.ShowAll)
+			// Kill is left to the TUI's default, engine.Kill, which asks for no refresh: the TUI
+			// asks for the kill's one refresh itself, once Kill has returned (DEV-185).
+			if to.Source != e || to.Kill != nil || !to.ShowAll {
+				t.Errorf("Source %v (want the engine), Kill set %v (want unset), ShowAll %v", to.Source, to.Kill != nil, to.ShowAll)
 			}
 			switch {
 			case tt.want == "" && to.DockerSocket != nil && to.DockerSocket() != "":
