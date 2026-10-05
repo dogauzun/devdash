@@ -33,17 +33,22 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   (`writePort`, the v0.1.1 lines; `writeAnswer`, the terminal answer built around them), `portjson.go` (`port N --json`),
   `free.go` (`runFree`; the package var `probe` that tests replace), `kill.go` (`runKill`: plan, confirmation, exit
   codes), `tty_darwin.go` / `tty_linux.go` (the termios and winsize ioctls that `isTerminal` and `stdoutWidth` use).
-- `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`)
-  and the raw input types in `build.go`; one file per seam: `project.go` (`Resolver`), `kind.go` (`Classify`),
-  `rows.go` (`Row`, `Flatten`), `reconcile.go` (`Reconcile`), `tags.go` (`Tag`), `holders.go` (`Holders`: a TCP
-  port's holders, as `kill N` and the TUI's kill result check them). `format.go` holds the text both the dashboard and
-  `port N` show: `Project.Label`, `Uptime`, `Clean`, `Location`.
+- `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`),
+  the raw input types and `NeedsArgv` (the names whose argv is read over the process limit) in `build.go`; one file
+  per seam: `project.go` (`Resolver`), `kind.go` (`Classify`), `rows.go` (`Row`, `Flatten`), `reconcile.go`
+  (`Reconcile`), `tags.go` (`Tag`), `holders.go` (`Listener.TCP` and `PortMapping.TCP`, which sockets hold a TCP port;
+  `Holders`: a TCP port's holders, as `kill N` and the TUI's kill result check them). `format.go` holds the text the
+  dashboard, `port N` and `kill N` show: `Project.Label`, `Uptime`, `Clean`, `Location`, `Count`, `Process.PortList`,
+  `Snapshot.ProjectNames`.
 - `internal/collector` — `Collector` interface in `collector.go` (no build tag, nothing OS-specific; `Result`, `Process`,
   `Listener` alias `model.Raw`, `model.Process`, `model.RawListener`); `fake.go` is the scripted test `Fake`;
-  one implementation per OS in `collector_darwin.go` / `collector_linux.go` and sibling files with the same build tag.
+  one implementation per OS in `collector_darwin.go` / `collector_linux.go` and sibling files with the same build tag;
+  `procstat_darwin.go` / `procstat_linux.go` (`ProcStat`: a pid's start time and parent as the snapshot has them, or
+  `ErrGone`; what kill's pid-reuse check re-reads).
 - Everything lives under `internal/`; no public Go API is promised.
-- `internal/engine` — the refresh loop (`Run`, `Updates`, `Refresh`), the one-shot `Snapshot` for the CLI, and
-  uid-to-user naming; tested with `testing/synctest` against `collector.Fake`. `TestTagsLiveRemovedWorktree` is the
+- `internal/engine` — the refresh loop (`Run`, `Updates`, `Refresh`), the one-shot `Snapshot` for the CLI,
+  uid-to-user naming, and the kill both `kill N` and the dashboard run: `kill.go` (`NewPlan`, `Kill`), `killtext.go`
+  (`KillOptions.Mode`); tested with `testing/synctest` against `collector.Fake`. `TestTagsLiveRemovedWorktree` is the
   phase 6 gate (a server in a removed worktree carries both tags).
 - `internal/freeport` — the free-port search behind `free N` and `port N`'s next free line: `Find` (the first port from
   N to `Last(N)` that the snapshot does not hold and the probe can bind) and `Probe`, a raw-socket bind (not
@@ -55,10 +60,11 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   (a folded chain's label: `drawnLinks`, `chainLabel`), `rows.go` (selection by row key, filter, `unfold`: the TUI
   unfolds chains itself, not `model.Flatten`), `port.go` (digits start a port search, the holder is selected, the
   port line; its bind probe is `Options.Probe`, a fake in every test), `detail.go`, `help.go`, `open.go`, `kill.go`,
-  `sudo.go` (`S`, the rerun under sudo). Tested by sending `tea.Msg`s to the model and asserting on `View()`;
-  shared fixture in `helpers_test.go`, folded and unfolded chains in `fold_test.go`. Golden views at
-  80x24 and 120x40 in `golden_test.go`, files `testdata/*.golden`, rewritten with
-  `go test ./internal/tui -run TestGolden -update`.
+  `sudo.go` (`S`, the rerun under sudo); `pager.go` is the paged window the help overlay, the kill modal and the detail
+  pane share. Tested by sending `tea.Msg`s to the model and asserting on `View()`; shared fixture and helpers in
+  `helpers_test.go` (`selectRow`, `rowsKeys`, `drop`, `key()` with pgup, pgdown, home and end), folded and unfolded
+  chains in `fold_test.go`. Golden views at 80x24 and 120x40 in `golden_test.go`, files `testdata/*.golden`, rewritten
+  with `go test ./internal/tui -run TestGolden -update`.
 
 ## Conventions
 
