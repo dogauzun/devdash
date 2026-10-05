@@ -3,7 +3,9 @@
 Terminal dashboard: what is running on this machine, grouped by git repository.
 Spec: `docs/SPEC.md` (the authority). Work is tracked in the maintainer's private Jira project DEV;
 `DEV-n` keys in code, commits and `DECISIONS.md` refer to its tickets.
-Non-obvious choices go in `DECISIONS.md`, one dated line each.
+Non-obvious choices get one dated line each in `DECISIONS.md`, but a PR does not edit that file: it puts its lines,
+ready to paste, under `## Decisions` in the PR body, and the merger adds them to `DECISIONS.md` after the merge, in
+one docs PR per batch (DEV-173).
 
 ## Commands
 
@@ -15,7 +17,8 @@ make check      # the pre-push gate: lint + vet (darwin and linux), the four cro
 make licenses   # rewrite THIRD_PARTY_LICENSES (shipped in the archives) after a dependency change
 make fmt        # gofmt + goimports rewrite (golangci-lint fmt)
 make build      # ./devdash for this machine
-make snapshot   # goreleaser check + release --snapshot --clean into dist/ (goreleaser v2.18.2)
+make snapshot   # goreleaser check + release --snapshot --clean into dist/ (goreleaser v2.18.2), then CI's archive
+                #   check, scripts/check-archives.sh
 make demo       # re-record docs/demo.gif from demo.tape (Linux as root; vhs, ttyd, ffmpeg, Chromium)
 ```
 
