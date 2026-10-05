@@ -300,6 +300,25 @@ func TestFoldUnfoldHiddenLinks(t *testing.T) {
 	}
 }
 
+// TestFoldUnfoldHiddenSelection (DEV-193): a selected link of an unfolded chain that `a` then
+// hides has no row any more; the selection goes to the chain's first drawn row, not up to the
+// group header.
+func TestFoldUnfoldHiddenSelection(t *testing.T) {
+	s := chainFixture()
+	for _, pid := range []int{10, 13} { // the first link, and one inside the chain
+		m, _ := newTest(t, 160, 30)
+		feed(m, s)
+		press(m, "a")
+		selectKey(t, m, keyOf(s, 16))
+		press(m, "right")
+		selectKey(t, m, keyOf(s, pid))
+		press(m, "a")
+		if m.sel != keyOf(s, 11) {
+			t.Errorf("bash %d hidden: selection %+v, want claude 11\n%s", pid, m.sel, screen(m))
+		}
+	}
+}
+
 func TestFoldUnfoldedSurvivesRefresh(t *testing.T) {
 	s := chainFixture()
 	m, _ := newTest(t, 160, 30)

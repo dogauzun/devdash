@@ -40,7 +40,8 @@ func (m *Model) rebuild() {
 	if m.filter != "" {
 		view.Collapsed, view.Search, view.HideContainers = nil, true, false
 	}
-	m.all = m.unfold(model.Flatten(m.upd.Snapshot, view))
+	var left map[model.RowKey]model.RowKey
+	m.all, left = m.unfold(model.Flatten(m.upd.Snapshot, view))
 	m.rows = model.Filter(m.all, m.filter)
 	if m.filter != "" && (!m.view.ShowAll || m.view.HideContainers) {
 		m.rows = searchHidden(m.rows, m.filter, m.view)
@@ -54,6 +55,11 @@ func (m *Model) rebuild() {
 		at[r.Key] = i
 		for _, l := range r.Links { // a process folded into a chain's row selects that row (DEV-157)
 			at[l.Key()] = i
+		}
+	}
+	for k, first := range left { // a link an unfolded chain leaves out selects its first row (DEV-193)
+		if i, ok := at[first]; ok {
+			at[k] = i
 		}
 	}
 	if i, ok := at[m.sel]; ok {
@@ -77,13 +83,15 @@ func (m *Model) rebuild() {
 // when m.view.Unfolded holds any of its links; the key is moved to the first link drawn, the
 // row where ← looks for it, so the chain stays unfolded when `a` or a filter changes which
 // link comes first. A chain whose label names no link has nothing to unfold and loses its key.
-func (m *Model) unfold(rows []model.Row) []model.Row {
+// left maps each link an unfolded chain leaves out to the chain's first row, for the selection.
+func (m *Model) unfold(rows []model.Row) (out []model.Row, left map[model.RowKey]model.RowKey) {
 	if len(m.view.Unfolded) == 0 {
-		return rows
+		return rows, nil
 	}
 	type moved struct{ depth, by int } // rows deeper than depth (before unfold) move down by rows
 	var stack []moved
-	out := make([]model.Row, 0, len(rows))
+	out = make([]model.Row, 0, len(rows))
+	left = map[model.RowKey]model.RowKey{}
 	for _, r := range rows {
 		for len(stack) > 0 && stack[len(stack)-1].depth >= r.Depth {
 			stack = stack[:len(stack)-1]
@@ -103,6 +111,11 @@ func (m *Model) unfold(rows []model.Row) []model.Row {
 			continue
 		}
 		m.view.Unfolded[ls[0].Key()] = true
+		for _, l := range r.Links {
+			if !slices.Contains(ls, l) {
+				left[l.Key()] = ls[0].Key()
+			}
+		}
 		for i, l := range ls {
 			out = append(out, model.Row{Key: l.Key(), Process: l, Depth: r.Depth + i})
 		}
@@ -111,7 +124,7 @@ func (m *Model) unfold(rows []model.Row) []model.Row {
 		r.Links = nil
 		out = append(out, r)
 	}
-	return out
+	return out, left
 }
 
 // searchHidden takes rows flattened with every row shown and filtered by query, and draws
