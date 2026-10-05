@@ -68,13 +68,14 @@ Sleep 4.5s
 Escape
 Sleep 1s
 
-# Kill nodemon and its child together: x shows the plan, t switches it to the tree.
-Type "/"
-Sleep 400ms
-Type@120ms "nodemon"
-Sleep 800ms
-Enter
+# Kill nodemon and its child together. They fold into one row, nodemon (node) › server.js
+# (node), which is server.js: → unfolds the chain with server.js selected, ↑ selects nodemon,
+# x shows the plan, t switches it to the tree.
 Down
+Sleep 1.2s
+Right
+Sleep 1.5s
+Up
 Sleep 800ms
 Type "x"
 Sleep 2s
@@ -82,8 +83,6 @@ Type "t"
 Sleep 3s
 Enter
 Sleep 4s
-Escape
-Sleep 1.5s
 Type "q"
 Sleep 800ms
 

@@ -15,7 +15,8 @@
 # of shop), whose parent exited and whose worktree was then removed, so it carries the orphaned
 # and cwd deleted tags. The dev tools are demoproc linked under their names; nodemon, vite and
 # vitest run as node node_modules/.bin/<tool>, as npm scripts start them, so their rows read
-# nodemon (node), vite (node) and vitest (node). When every port listens, it clears the screen
+# vite (node) and vitest (node), and the two chains fold into one row each: nodemon (node) ›
+# server.js (node) and air › api. When every port listens, it clears the screen
 # and runs an interactive bash with the prompt "$ " in /home/me. A subshell that plays
 # the terminal is the parent of that bash and of every other dev tool, so only the leftover has
 # pid 1 as its parent; exiting the bash ends the namespace and every process in it.
