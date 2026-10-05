@@ -42,10 +42,9 @@ type killTarget struct {
 
 // killState is the kill modal's state; the zero value is closed.
 type killState struct {
-	stage      killStage
-	killTarget // what the plan is from and the titles name: own, or tree in tree mode
+	stage killStage
 	// own is the selected row's process; tree is where tree mode plans from: on a folded row
-	// the chain's first process the view shows (DEV-179, DEV-191), otherwise own.
+	// the chain's first process the view shows (DEV-179, DEV-191), otherwise own. target picks.
 	own, tree killTarget
 	opts      engine.KillOptions
 	// plan is what is shown and exactly what Kill gets: it changes only on p, t, f and the
@@ -79,6 +78,14 @@ type killAfter struct {
 	done  time.Time // when Kill returned: a snapshot taken before may still list them
 }
 
+// target is what the plan is from and the titles name: tree in tree mode, own otherwise.
+func (k *killState) target() killTarget {
+	if k.opts.Tree {
+		return k.tree
+	}
+	return k.own
+}
+
 // active reports whether the kill modal has the keyboard.
 func (k *killState) active() bool { return k.stage != killClosed }
 
@@ -110,11 +117,11 @@ func (m *Model) startKill() tea.Cmd {
 	var ref *engine.Refusal
 	switch {
 	case errors.As(err, &ref):
-		m.kill = killState{stage: killRefused, killTarget: own, refusal: ref.Reason}
+		m.kill = killState{stage: killRefused, own: own, refusal: ref.Reason}
 	case err != nil:
 		m.status = "cannot kill " + name + ": " + err.Error()
 	default:
-		m.kill = killState{stage: killConfirm, killTarget: own, own: own, tree: tree, plan: p, projects: s.ProjectNames()}
+		m.kill = killState{stage: killConfirm, own: own, tree: tree, plan: p, projects: s.ProjectNames()}
 	}
 	return nil
 }
@@ -123,12 +130,9 @@ func (m *Model) startKill() tea.Cmd {
 // mode, from k.own otherwise.
 func (m *Model) killReplan(o engine.KillOptions) {
 	k := &m.kill
-	k.opts, k.killTarget = o, k.own
-	if o.Tree {
-		k.killTarget = k.tree
-	}
+	k.opts = o
 	s := m.upd.Snapshot
-	p, err := m.o.Plan(s, k.key, o)
+	p, err := m.o.Plan(s, k.target().key, o)
 	if err != nil {
 		k.plan, k.refusal = engine.Plan{}, err.Error()
 		if ref := (*engine.Refusal)(nil); errors.As(err, &ref) {
@@ -308,10 +312,11 @@ func killHolder(s model.Snapshot, h model.Holder) string {
 // errors are snapshot text, cleaned here.
 func (m *Model) killView(w, h int) string {
 	k := &m.kill
-	name := model.Clean(k.name)
+	t := k.target()
+	name := model.Clean(t.name)
 	head, rest := "kill ", "" // the title is head, name, rest: killTitle cuts name
-	if k.key.PID > 0 {
-		rest = fmt.Sprintf(" (pid %d)", k.key.PID)
+	if t.key.PID > 0 {
+		rest = fmt.Sprintf(" (pid %d)", t.key.PID)
 	}
 	var list, tail []string
 	switch k.stage {
