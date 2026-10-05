@@ -70,6 +70,7 @@ const (
 	SortPort                    // lowest port first
 	SortCPU                     // highest CPU percent first
 	SortStart                   // most recently started first
+	SortName                    // by the name column's label, case-insensitive
 )
 
 // ViewOptions are the view toggles Flatten honours. The text filter is not one: it runs on
@@ -114,6 +115,9 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 			groups[header] = g
 		}
 		g.nodes = append(g.nodes, n)
+		if opts.Sort == SortName {
+			n.name = strings.ToLower(n.sortName())
+		}
 		if n.start.After(g.active) {
 			g.active = n.start
 		}
@@ -207,13 +211,28 @@ type node struct {
 	row      Row
 	start    time.Time
 	cpu      float64
-	port     int // lowest listener or published port, noPort when none
+	port     int    // lowest listener or published port, noPort when none
+	name     string // sortName lower-cased, set for SortName only
 	hidden   bool
 	show     bool // not hidden, or has a descendant that is not hidden
 	children []*node
 }
 
 const noPort = 1 << 16 // sorts after every real port
+
+// sortName is what SortName sorts n by, the text the TUI's name column draws for it: the
+// container's name for a row drawn as a container, `unknown` for the PID 0 owner, else the
+// process's Label.
+func (n *node) sortName() string {
+	r := n.row
+	switch {
+	case r.Container != nil:
+		return r.Container.Name
+	case r.Process.PID == 0:
+		return "unknown"
+	}
+	return r.Process.Label()
+}
 
 // here reports whether g is the project devdash was run from.
 func (g *group) here() bool { return g.header.Project != nil && g.header.Project.Here }
@@ -288,6 +307,8 @@ func compareNodes(a, b *node, by SortMode) int {
 		c = cmp.Compare(b.cpu, a.cpu) // cmp.Compare sorts NaN lowest, so unknown CPU goes last
 	case SortStart:
 		c = b.start.Compare(a.start)
+	case SortName:
+		c = cmp.Compare(a.name, b.name)
 	}
 	ka, kb := a.row.Key, b.row.Key
 	return cmp.Or(c,

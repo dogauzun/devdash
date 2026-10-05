@@ -237,7 +237,7 @@ The dashboard's keys; `?` shows the same table inside it.
 | `o` | open http://localhost:&lt;port&gt; (the lowest port) |
 | `a` | show or hide shells and editors |
 | `d` | show or hide container rows |
-| `s` | cycle sort within groups: default, port, cpu, start time |
+| `s` | cycle sort within groups: default, port, cpu, start time, name |
 | `r` | refresh now |
 | `?` | this help |
 | `q ctrl-c` | quit |

@@ -275,7 +275,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `o` | open `http://localhost:<port>` |
 | `a` | show or hide shells and editors |
 | `d` | show or hide container rows |
-| `s` | cycle sort within groups: default, port, cpu, start time |
+| `s` | cycle sort within groups: default, port, cpu, start time, name |
 | `r` | refresh now |
 | `?` | help overlay |
 | `q` `ctrl-c` | quit |

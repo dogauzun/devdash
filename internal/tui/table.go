@@ -199,6 +199,7 @@ func (m *Model) nameTitle() string {
 // sortNames are the sort modes as the title line names them, in the order s cycles them.
 var sortNames = [...]string{
 	model.SortDefault: "default", model.SortPort: "port", model.SortCPU: "cpu", model.SortStart: "start",
+	model.SortName: "name",
 }
 
 // pad cuts s to width cells, with an ellipsis, and pads it with spaces to exactly width.
@@ -300,20 +301,9 @@ func rowLabel(r model.Row) string {
 	case r.Process != nil && r.Process.PID == 0:
 		return "unknown"
 	case r.Process != nil:
-		return procLabel(r.Process)
+		return r.Process.Label()
 	}
 	return ""
-}
-
-// procLabel is how the dashboard names process p (spec "Release 1.1", tool labels): `<tool>
-// (<name>)` when it is an interpreter running a tool (model.Tool: `vite (node)`, `server.js
-// (node)`), else its name. The table, the detail pane's title and the kill modal use it; JSON,
-// `port N` and `kill N` keep the name. It is snapshot text, not yet cleaned.
-func procLabel(p *model.Process) string {
-	if tool, _, ok := model.Tool(*p); ok {
-		return tool + " (" + p.Name + ")"
-	}
-	return p.Name
 }
 
 // argText is what follows a process row's label and tags below commandWidth columns, where the

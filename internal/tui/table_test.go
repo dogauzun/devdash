@@ -478,9 +478,9 @@ func TestTableToggles(t *testing.T) {
 	if !strings.HasPrefix(titles(m), "NAME · sort: port · all · no containers ") {
 		t.Errorf("toggles title %q", titles(m))
 	}
-	press(m, "s", "s", "s", "a", "d")
+	press(m, "s", "s", "s", "s", "a", "d")
 
-	// s cycles default, port, cpu, start time, default.
+	// s cycles default, port, cpu, start time, name, default.
 	order := func() (api, test int) {
 		for i, k := range rowKeys(m) {
 			switch k {
@@ -499,6 +499,7 @@ func TestTableToggles(t *testing.T) {
 		{model.SortPort, "sort: port"},
 		{model.SortCPU, "sort: cpu"},
 		{model.SortStart, "sort: start"},
+		{model.SortName, "sort: name"},
 		{model.SortDefault, ""},
 	} {
 		press(m, "s")
@@ -702,7 +703,7 @@ func TestTableToolLabels(t *testing.T) {
 		t.Errorf("120 columns: longest name cell %d, want %d", got, want)
 	}
 
-	// procLabel is the one place the label is built: a module after -m keeps its case, a script
+	// model.Process.Label is the one place the label is built: a module after -m keeps its case, a script
 	// its extension, and a process with no tool (no argv, or not an interpreter) its name.
 	for _, tc := range []struct {
 		name string
@@ -716,8 +717,8 @@ func TestTableToolLabels(t *testing.T) {
 		{"node", nil, "node"},
 		{"go", []string{"go", "test", "./..."}, "go"},
 	} {
-		if got := procLabel(&model.Process{Name: tc.name, Argv: tc.argv}); got != tc.want {
-			t.Errorf("procLabel(%q, %q) = %q, want %q", tc.name, tc.argv, got, tc.want)
+		if got := (model.Process{Name: tc.name, Argv: tc.argv}).Label(); got != tc.want {
+			t.Errorf("Label(%q, %q) = %q, want %q", tc.name, tc.argv, got, tc.want)
 		}
 	}
 }
@@ -842,7 +843,7 @@ func TestTableInlineCode(t *testing.T) {
 	if l, want := line(m, "multiprocessing"), "    python3  -c from multiprocessing.spawn i… "; !strings.HasPrefix(l, want) {
 		t.Errorf("row %q, want it to start %q", l, want)
 	}
-	if got := procLabel(&s.Processes[5]); got != "python3" {
-		t.Errorf("procLabel = %q, want python3", got)
+	if got := s.Processes[5].Label(); got != "python3" {
+		t.Errorf("Label = %q, want python3", got)
 	}
 }

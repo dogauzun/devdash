@@ -212,11 +212,13 @@ func TestFlattenRowFields(t *testing.T) {
 func TestFlattenSort(t *testing.T) {
 	const s = "/src/shop"
 	cpu := func(p Process, c float64) Process { p.CPUPercent = c; return p }
+	vite := cpu(fp(11, 1, 1, "node", s, KindServer, 8080), 1)
+	vite.Argv = []string{"node", "node_modules/.bin/vite"} // labelled `vite (node)`
 	procs := []Process{
 		cpu(fp(10, 1, 0, "old", s, KindOther), 5),
-		cpu(fp(11, 1, 1, "web", s, KindServer, 8080), 1),
+		vite,
 		cpu(fp(12, 1, 2, "db", s, KindServer, 5432, 80), 50),
-		fp(13, 1, 3, "new", s, KindOther), // CPU unknown (NaN)
+		fp(13, 1, 3, "New", s, KindOther), // CPU unknown (NaN)
 		cpu(fp(14, 12, 4, "kid-a", s, KindOther), 1),
 		cpu(fp(15, 12, 5, "kid-b", s, KindServer, 9000), 9),
 	}
@@ -224,10 +226,11 @@ func TestFlattenSort(t *testing.T) {
 		mode SortMode
 		want string
 	}{
-		{SortDefault, "web db kid-b kid-a old new"},
-		{SortPort, "db kid-b kid-a web old new"}, // portless last, then oldest first
-		{SortCPU, "db kid-b kid-a old web new"},
-		{SortStart, "new db kid-b kid-a web old"},
+		{SortDefault, "node db kid-b kid-a old New"},
+		{SortPort, "db kid-b kid-a node old New"}, // portless last, then oldest first
+		{SortCPU, "db kid-b kid-a old node New"},
+		{SortStart, "New db kid-b kid-a node old"},
+		{SortName, "db kid-a kid-b New old node"}, // by label, case-insensitive: `vite (node)` under v
 	}
 	for _, tt := range tests {
 		var got []string
