@@ -78,7 +78,7 @@ type Engine struct {
 	// Owned by the goroutine running Run (or Snapshot).
 	prev     model.Snapshot
 	base     model.Snapshot // the sample prev's CPU percent was measured from
-	inflight chan outcome // non-nil while an abandoned Collect may still be running
+	inflight chan outcome   // non-nil while an abandoned Collect may still be running
 	interval time.Duration
 	slow     int // consecutive slow ticks
 	fast     int // consecutive fast ticks
