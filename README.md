@@ -9,7 +9,7 @@ Docker containers to the processes that own them, and lets you kill any of it. I
 static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
 shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
-![The devdash dashboard: four repositories grouped with their dev servers, watchers, a test runner and an agent; typing a port number selects its holder, the detail pane explains its tags, a kill frees the port, a folded nodemon chain unfolds and is killed as a tree, and devdash port and devdash free answer from the shell](docs/demo.gif)
+![The devdash dashboard: four repositories grouped with their dev servers, watchers, a test runner and an agent; typing a port number selects its holder, the detail pane explains its tags, a kill frees the port, a folded nodemon chain unfolds and is killed as a tree, and devdash port and devdash free answer from the shell](https://raw.githubusercontent.com/dogauzun/devdash/main/docs/demo.gif)
 
 ## Install
 
@@ -146,15 +146,18 @@ make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI
 `make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
 `go test -race ./...`.
 
-`make demo` re-records the GIF above from [demo.tape](demo.tape) (Linux only, as root).
+`make demo` re-records the GIF above from [demo.tape](https://github.com/dogauzun/devdash/blob/main/demo.tape) (Linux only, as root).
 
 ## Contributing
 
-The spec in [docs/SPEC.md](docs/SPEC.md) is the authority. [CLAUDE.md](CLAUDE.md) has the
+The spec in [docs/SPEC.md](https://github.com/dogauzun/devdash/blob/main/docs/SPEC.md) is the
+authority. [CLAUDE.md](https://github.com/dogauzun/devdash/blob/main/CLAUDE.md) has the
 layout, commands and conventions (conventional commits, tests first, no cgo, a short
-dependency list). Non-obvious choices get one dated line in [DECISIONS.md](DECISIONS.md).
+dependency list). Non-obvious choices get one dated line in
+[DECISIONS.md](https://github.com/dogauzun/devdash/blob/main/DECISIONS.md).
 
-Please report security bugs privately, as [SECURITY.md](SECURITY.md) describes, not in a
+Please report security bugs privately, as
+[SECURITY.md](https://github.com/dogauzun/devdash/blob/main/SECURITY.md) describes, not in a
 public issue.
 
 ## License

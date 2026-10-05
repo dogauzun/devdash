@@ -112,37 +112,9 @@ jobs:
           version: v2.18.2
           args: release --snapshot --clean
 
+      # Also runs by hand after `make snapshot`, on macOS too (DEV-187).
       - name: Check archives, notices and cask
-        run: |
-          set -eu
-          for target in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do
-            ls dist/devdash_*_"$target".tar.gz
-          done
-          (cd dist && sha256sum -c checksums.txt)
-          tar -xzf dist/devdash_*_linux_amd64.tar.gz -C "$RUNNER_TEMP" devdash
-          out=$("$RUNNER_TEMP/devdash" version)
-          echo "$out"
-          sha=$(git rev-parse HEAD)
-          case "$out" in
-            "devdash v"*"-snapshot."*" (commit $sha, built "*")") ;;
-            *) echo "unexpected version output"; exit 1 ;;
-          esac
-          # Every archive carries the notices and the docs the README links to, byte for
-          # byte the committed files (DEV-98, DEV-183), and every entry, the binary
-          # included, is owned by root/root whoever builds (DEV-183).
-          for archive in dist/devdash_*.tar.gz; do
-            for f in THIRD_PARTY_LICENSES docs/usage.md docs/limitations.md docs/json-schema.md; do
-              tar -xzOf "$archive" "$f" | cmp - "$f" \
-                || { echo "::error::$archive: $f missing or not the committed file"; exit 1; }
-            done
-            if tar -tzvf "$archive" | grep -v ' root/root '; then
-              echo "::error::$archive: entries above are not owned by root/root"; exit 1
-            fi
-          done
-          cask=dist/homebrew/Casks/devdash.rb
-          cat "$cask"
-          test "$(grep -c '^ *url ' "$cask")" -eq 4
-          grep -q 'com.apple.quarantine' "$cask"
+        run: sh scripts/check-archives.sh
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
