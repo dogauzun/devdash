@@ -153,8 +153,9 @@ make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI
 The spec in [docs/SPEC.md](https://github.com/dogauzun/devdash/blob/main/docs/SPEC.md) is the
 authority. [CLAUDE.md](https://github.com/dogauzun/devdash/blob/main/CLAUDE.md) has the
 layout, commands and conventions (conventional commits, tests first, no cgo, a short
-dependency list). Non-obvious choices get one dated line in
-[DECISIONS.md](https://github.com/dogauzun/devdash/blob/main/DECISIONS.md).
+dependency list). Put a dated line for each non-obvious choice in your pull request's body under
+`## Decisions`; the maintainer adds them to
+[DECISIONS.md](https://github.com/dogauzun/devdash/blob/main/DECISIONS.md) after the merge.
 
 Please report security bugs privately, as
 [SECURITY.md](https://github.com/dogauzun/devdash/blob/main/SECURITY.md) describes, not in a
