@@ -127,10 +127,17 @@ jobs:
             "devdash v"*"-snapshot."*" (commit $sha, built "*")") ;;
             *) echo "unexpected version output"; exit 1 ;;
           esac
-          # Every archive carries the notices, byte for byte the committed file (DEV-98).
+          # Every archive carries the notices and the docs the README links to, byte for
+          # byte the committed files (DEV-98, DEV-183), and every entry, the binary
+          # included, is owned by root/root whoever builds (DEV-183).
           for archive in dist/devdash_*.tar.gz; do
-            tar -xzOf "$archive" THIRD_PARTY_LICENSES | cmp - THIRD_PARTY_LICENSES \
-              || { echo "::error::$archive: THIRD_PARTY_LICENSES missing or not the committed file"; exit 1; }
+            for f in THIRD_PARTY_LICENSES docs/usage.md docs/limitations.md docs/json-schema.md; do
+              tar -xzOf "$archive" "$f" | cmp - "$f" \
+                || { echo "::error::$archive: $f missing or not the committed file"; exit 1; }
+            done
+            if tar -tzvf "$archive" | grep -v ' root/root '; then
+              echo "::error::$archive: entries above are not owned by root/root"; exit 1
+            fi
           done
           cask=dist/homebrew/Casks/devdash.rb
           cat "$cask"
