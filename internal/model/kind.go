@@ -19,8 +19,8 @@ func Classify(p Process) Kind {
 		return KindOther
 	}
 	cmds := []command{{name: baseName(p.Name)}}
-	if len(p.Argv) > 0 {
-		cmds[0] = command{baseName(p.Argv[0]), p.Argv[1:]}
+	if prog := program(p); prog != "" {
+		cmds[0] = command{baseName(prog), p.Argv[1:]}
 		if c, ok := cmds[0].unwrap(); ok {
 			cmds = append(cmds, c)
 		}
@@ -68,6 +68,29 @@ var kindRules = []struct {
 	{KindShell, func(c command) bool { return shellNames[c.name] }},
 }
 
+// program is the path of the program p runs as argv[0] gives it, "" when there is none. A
+// one-element argv holding a space is either a path with spaces or a title rewritten with
+// setproctitle (Chromium's and Electron's children on Linux), the whole command line in one
+// string whose last "/" may be a later argument's: its text up to the first space, else the
+// whole string, is the program only when its basename is the kernel name or, cut, starts with
+// it (as fullName reads it); otherwise there is none and Name stands for it (DEV-168).
+func program(p Process) string {
+	if len(p.Argv) == 0 {
+		return ""
+	}
+	a := p.Argv[0]
+	if len(p.Argv) > 1 || !strings.Contains(a, " ") {
+		return a
+	}
+	first, _, _ := strings.Cut(a, " ")
+	for _, s := range []string{first, a} {
+		if b := strings.TrimPrefix(path.Base(s), "-"); b == p.Name || len(p.Name) >= commCut && strings.HasPrefix(b, p.Name) {
+			return s
+		}
+	}
+	return ""
+}
+
 // baseName lower-cases the basename of s and drops a login shell's leading "-".
 func baseName(s string) string {
 	return strings.ToLower(strings.TrimPrefix(path.Base(s), "-"))
@@ -82,11 +105,12 @@ func baseName(s string) string {
 // or names no tool. It is the argument Classify unwraps, a shell's script aside: both use
 // toolArg.
 func Tool(p Process) (tool string, args []string, ok bool) {
-	if len(p.Argv) == 0 {
+	prog := program(p)
+	if prog == "" {
 		return "", nil, false
 	}
 	rest := p.Argv[1:]
-	i, tool, module := toolArg(baseName(p.Argv[0]), rest)
+	i, tool, module := toolArg(baseName(prog), rest)
 	if i < 0 {
 		return "", nil, false
 	}

@@ -232,3 +232,45 @@ func TestToolMatchesClassify(t *testing.T) {
 		}
 	}
 }
+
+// TestOneStringArgv: a process that rewrote its title on Linux (Chromium's and Electron's
+// children, setproctitle) has the whole command line in one argv string, whose last "/" may be
+// a later argument's. Classify, Tool and the runtime match read the program from the start of
+// the string when its basename is the kernel name, else the kernel name alone; a path with
+// spaces run with no arguments is still read whole (DEV-168).
+func TestOneStringArgv(t *testing.T) {
+	const chrome = "/opt/google/chrome/chrome --type=renderer --user-data-dir=/tmp/playwright_chromiumdev_profile-AbC123 --num-raster-threads=4"
+	listen := []Listener{{Proto: "tcp4", Addr: lo, Port: 3000}}
+	tests := []struct {
+		name, argv string
+		listeners  []Listener
+		kind       Kind
+		runtime    bool
+	}{
+		{"chrome", chrome, nil, KindOther, false},
+		{"code", "/usr/share/code/code --type=renderer --user-data-dir=/home/u/.config/Code --lang=en-US", nil, KindEditor, false},
+		{"chrome", "/opt/google/chrome/chrome --type=renderer --user-data-dir=/tmp/zsh", nil, KindOther, false},
+		{"foo", "/usr/bin/foo --config=/etc/dockerd", listen, KindServer, false},
+		{"foo", "/usr/bin/foo --log=/var/log/claude", nil, KindOther, false},
+		{"dockerd", "/usr/bin/dockerd --config=/etc/foo", nil, KindOther, true},
+		{"nginx", "nginx: master process /usr/sbin/nginx -g daemon off;", listen, KindServer, false},
+		{"containerd-shim", "/usr/bin/containerd-shim-runc-v2 -namespace moby", nil, KindOther, true},
+		// a path with spaces and no arguments
+		{"Code Helper", "/Applications/My Apps/Code Helper", nil, KindOther, false},
+		{"OrbStack Helper", "/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app/Contents/MacOS/OrbStack Helper", nil, KindOther, true},
+		{"com.docker.backe", "/Users/u/My Apps/Docker.app/Contents/MacOS/com.docker.backend", nil, KindOther, true},
+		{"Google Chrome He", "/Applications/Google Chrome.app/x/Google Chrome Helper (Renderer)", nil, KindOther, false},
+	}
+	for _, tt := range tests {
+		p := Process{PID: 42, Name: tt.name, Argv: []string{tt.argv}, Listeners: tt.listeners}
+		if got := Classify(p); got != tt.kind {
+			t.Errorf("Classify(%q, %q) = %v, want %v", tt.name, tt.argv, got, tt.kind)
+		}
+		if tool, _, ok := Tool(p); ok {
+			t.Errorf("Tool(%q, %q) = %q, want none", tt.name, tt.argv, tool)
+		}
+		if got := IsContainerRuntime(p); got != tt.runtime {
+			t.Errorf("IsContainerRuntime(%q, %q) = %v, want %v", tt.name, tt.argv, got, tt.runtime)
+		}
+	}
+}

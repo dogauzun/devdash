@@ -538,6 +538,68 @@ func TestKillSurvivors(t *testing.T) {
 	}
 }
 
+// TestKillForceKeepsUnsignalled: a process the first round did not signal is still running
+// after the force round killed the survivors, so the report stays open and names it, with
+// S when sudo can help; the force round signals the survivors only (DEV-165).
+func TestKillForceKeepsUnsignalled(t *testing.T) {
+	for _, sudo := range []bool{false, true} {
+		s := fixture()
+		fp, fk := &fakePlanner{}, &fakeKiller{}
+		m, _ := newTest(t, 80, 24, func(o *Options) { o.Plan, o.Kill, o.Sudo = fp.plan, fk.kill, sudo })
+		feed(m, s)
+		fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+			return outcomes(p, func(proc model.Process) engine.Outcome {
+				if proc.PID == 101 {
+					return engine.Outcome{Err: engine.ErrPermission}
+				}
+				return engine.Outcome{Signalled: true}
+			}), nil
+		})
+		selectRow(t, m, keyOf(s, 101))
+		press(m, "x", "t")
+		run(t, m, press(m, "enter"))
+		run(t, m, press(m, "f"))
+		want := engine.Plan{Procs: []model.Process{s.Processes[2]}, Signal: syscall.SIGKILL}
+		if len(fk.plans) != 2 || !reflect.DeepEqual(fk.plans[1], want) {
+			t.Fatalf("sudo %v: kills %+v, want the force round to SIGKILL only esbuild", sudo, fk.plans)
+		}
+		if !m.kill.active() || strings.Contains(screen(m), "killed ") {
+			t.Fatalf("sudo %v: the force round reads as a complete kill:\n%s", sudo, screen(m))
+		}
+		if !strings.Contains(line(m, "101 "), "permission denied, run with sudo") || line(m, "102 ") != "" {
+			t.Errorf("sudo %v: report does not name only vite as still running:\n%s", sudo, screen(m))
+		}
+		if line(m, "1 of 2 processes exited") == "" || line(m, "force-kill") != "" {
+			t.Errorf("sudo %v: report title or hints:\n%s", sudo, screen(m))
+		}
+		if got := line(m, "esc close, then S rerun with sudo") != ""; got != sudo {
+			t.Errorf("sudo %v: S named %v:\n%s", sudo, got, screen(m))
+		}
+	}
+
+	// A second force round counts each process once: esbuild survives SIGTERM and the first
+	// SIGKILL, then exits.
+	s := fixture()
+	m, _, _, fk := newKillTest(t, 80, 24, s)
+	survive := func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(proc model.Process) engine.Outcome {
+			return engine.Outcome{Signalled: true, Exited: proc.PID != 102}
+		}), nil
+	}
+	fk.results = append(fk.results, survive, survive)
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "x", "t")
+	run(t, m, press(m, "enter"))
+	run(t, m, press(m, "f"))
+	if line(m, "1 of 2 processes exited") == "" || line(m, "101 ") != "" || line(m, "102 ") == "" {
+		t.Errorf("after one force round:\n%s", screen(m))
+	}
+	run(t, m, press(m, "f"))
+	if m.kill.active() || status(m) != "killed 2 processes" {
+		t.Errorf("after two force rounds: modal open %v, status %q", m.kill.active(), status(m))
+	}
+}
+
 func TestKillReportErrors(t *testing.T) {
 	s := fixture()
 	m, _, _, fk := newKillTest(t, 80, 24, s)
