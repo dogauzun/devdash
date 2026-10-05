@@ -155,7 +155,9 @@ func Tool(p Process) (tool string, args []string, ok bool) {
 // of short ones holding c (inline code) or s (standard input) names no tool, and one ending in
 // o or O takes the next argument as its value (`-eo pipefail`) (DEV-159). fish's clusters are
 // read as its getopt reads them: the first of fishValueOpts takes the rest as its value, or
-// the next argument when it ends the cluster, and is inline code when it is c (DEV-176).
+// the next argument when it ends the cluster, and is inline code when it is c (DEV-176); fish
+// stops at the first argument not starting with -, so +o is its script. After bun's x
+// subcommand the flags are read as bunx's, -p being --package (DEV-194).
 func toolArg(name string, args []string) (i int, tool string, module bool) {
 	shell := scriptShells[name]
 	name = strings.TrimRight(name, "0123456789.")
@@ -179,7 +181,7 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 			}
 			skip = j == len(a)-2
 			continue
-		case shell && len(a) > 1 && (a[0] == '-' || a[0] == '+') && a[1] != '-':
+		case shell && name != "fish" && len(a) > 1 && (a[0] == '-' || a[0] == '+') && a[1] != '-':
 			if strings.ContainsAny(a, "cs") {
 				return -1, "", false
 			}
@@ -193,6 +195,9 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 			return -1, "", false
 		case !sub && subcommands[name+" "+a]:
 			sub = true
+			if a == "x" { // bun x is bunx, which reads the options after it (DEV-194)
+				name = "bunx"
+			}
 			continue
 		case strings.HasPrefix(a, "-"):
 			continue

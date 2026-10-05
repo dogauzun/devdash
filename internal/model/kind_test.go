@@ -79,6 +79,8 @@ func TestClassify(t *testing.T) {
 		{argv: "node -r jest app.js", listeners: listen, want: KindServer},
 		{argv: "fish -C jest vitest", want: KindShell},
 		{argv: "sh --rcfile jest vitest", want: KindShell},
+		{argv: "bun x -p jest-cli jest", want: KindTest},    // bunx's -p, not bun's --print (DEV-194)
+		{argv: "npx --cache /tmp/c vitest", want: KindTest}, // DEV-194
 		{argv: "./bin/api", listeners: listen, want: KindServer},
 		{argv: "git status", want: KindOther},
 		{argv: "node", want: KindOther},
@@ -206,6 +208,22 @@ func TestTool(t *testing.T) {
 		{argv: "fish -lc make@dev"},
 		{argv: "fish -Ccd@/x -c make@dev"},
 		{argv: "bash -Cs script.sh"}, // other shells keep reading c and s anywhere in a cluster
+		// After `bun x` the options are bunx's, so -p is --package, not --print; npx's --cache,
+		// --userconfig, --shell, --npm, --node-arg and -n take a value (npx-cli.js's opts); fish
+		// stops at the first argument not starting with -, so +o is its script (DEV-194).
+		{argv: "bun x -p @angular/cli ng serve", tool: "ng", args: "serve"},
+		{argv: "bun x --package @angular/cli ng", tool: "ng"},
+		{argv: "bun --watch x -p @angular/cli ng", tool: "ng"},
+		{argv: "bun -p x"},
+		{argv: "npx --cache /tmp/c vite", tool: "vite"},
+		{argv: "npx --userconfig ./npmrc vite", tool: "vite"},
+		{argv: "npx --shell /bin/sh vite", tool: "vite"},
+		{argv: "npx --npm ./npm vite", tool: "vite"},
+		{argv: "npx --node-arg --inspect vite", tool: "vite"},
+		{argv: "npx -n --inspect vite", tool: "vite"},
+		{argv: "npx -n vite"}, // npx drops the removed -n with its value
+		{argv: "fish +o", tool: "+o"},
+		{argv: "fish -n +x args", tool: "+x", args: "args"},
 		// python's -m takes its module attached too, a flag of its own for other interpreters;
 		// bun's run and x are subcommands, the tool follows them (DEV-153).
 		{argv: "python3 -mhttp.server --bind 127.0.0.1 6107", tool: "http.server", args: "--bind 127.0.0.1 6107"},
@@ -288,6 +306,7 @@ func TestToolMatchesClassify(t *testing.T) {
 		"ruby -I lib /usr/local/bin/rspec", "node -r x",
 		"npx -p jest-cli jest", "npx --package @vitest/ui vitest", "bunx -p x Jest --ci", "ruby -r json /usr/local/bin/rspec",
 		"bun -r ./x.ts jest.ts", "bun --preload ./x.ts vitest", "bun --import x run jest", "node --env-file-if-exists .env nodemon.js",
+		"bun x -p jest-cli Jest", "bun x --package x vitest", "npx --cache /tmp/c jest", "npx -n --inspect nodemon",
 	} {
 		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
 		for i := range argv {
