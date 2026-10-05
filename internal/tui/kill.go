@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"golang.org/x/sys/unix"
 
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
@@ -115,7 +115,7 @@ func (m *Model) startKill() tea.Cmd {
 	case err != nil:
 		m.status = "cannot kill " + name + ": " + err.Error()
 	default:
-		m.kill = killState{stage: killConfirm, killTarget: own, own: own, tree: tree, plan: p, projects: killProjects(s)}
+		m.kill = killState{stage: killConfirm, killTarget: own, own: own, tree: tree, plan: p, projects: s.ProjectNames()}
 	}
 	return nil
 }
@@ -137,16 +137,7 @@ func (m *Model) killReplan(o engine.KillOptions) {
 		}
 		return
 	}
-	k.plan, k.refusal, k.projects, k.top = p, "", killProjects(s), 0
-}
-
-// killProjects maps project IDs to names in s.
-func killProjects(s model.Snapshot) map[string]string {
-	ns := make(map[string]string, len(s.Projects))
-	for _, p := range s.Projects {
-		ns[p.ID] = p.Name
-	}
-	return ns
+	k.plan, k.refusal, k.projects, k.top = p, "", s.ProjectNames(), 0
 }
 
 // killKey handles keys while the modal is open. tui.go routes every key but ctrl+c here.
@@ -256,7 +247,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 		m.kill.stage, m.kill.result, m.kill.err, m.kill.top = killReport, r, err, 0
 		return nil
 	}
-	m.status = "killed " + killCount(killed, "process")
+	m.status = "killed " + model.Count(killed, "process", "processes")
 	if gone > 0 {
 		m.status += fmt.Sprintf(", %d already gone", gone)
 	}
@@ -341,15 +332,15 @@ func (m *Model) killView(w, h int) string {
 	case killConfirm, killOutside, killRunning:
 		switch {
 		case k.refusal != "":
-			rest += ": " + killMode(k.opts)
+			rest += ": " + k.opts.Mode()
 			tail = killReason(model.Clean(k.refusal))
 			tail[0] = "refused: " + tail[0]
 			tail = append(tail, "", "p process  t tree  f force  esc cancel")
 			return m.killLayout(w, h, killTitle(head, name, rest, w), nil, tail)
 		case k.survivors:
-			rest += ": force-kill survivors, SIGKILL to " + killCount(len(k.plan.Procs), "process")
+			rest += ": force-kill survivors, SIGKILL to " + model.Count(len(k.plan.Procs), "process", "processes")
 		default:
-			rest += fmt.Sprintf(": %s, %s to %s", killMode(k.opts), killSig(k.plan.Signal), killCount(len(k.plan.Procs), "process"))
+			rest += fmt.Sprintf(": %s, %s to %s", k.opts.Mode(), unix.SignalName(k.plan.Signal), model.Count(len(k.plan.Procs), "process", "processes"))
 		}
 		list = m.killPlanLines(k.plan)
 		if k.plan.Group != 0 {
@@ -365,7 +356,7 @@ func (m *Model) killView(w, h int) string {
 		case killOutside:
 			hint = "Confirm again: press Y (shift+y)  esc cancel"
 		case killRunning:
-			hint = fmt.Sprintf("signalling %s, waiting up to %s", killSig(k.plan.Signal), m.o.KillTimeout)
+			hint = fmt.Sprintf("signalling %s, waiting up to %s", unix.SignalName(k.plan.Signal), m.o.KillTimeout)
 		}
 		// Confirm only what can be seen: when not one pid line fits beside the hints, confirm
 		// is off until the terminal grows.
@@ -393,11 +384,11 @@ func (m *Model) killView(w, h int) string {
 			}
 			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Label()), outcome))
 		}
-		sig := killSig(k.plan.Signal)
+		sig := unix.SignalName(k.plan.Signal)
 		if k.survivors && !k.opts.Force { // the report covers the whole kill (DEV-165), so both rounds' signals (DEV-178)
 			sig = "SIGTERM, then SIGKILL"
 		}
-		rest += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), sig)
+		rest += fmt.Sprintf(": %d of %s exited after %s", exited, model.Count(len(k.result.Outcomes), "process", "processes"), sig)
 		list = killTable(rows)
 		tail = []string{"esc close"}
 		if len(k.result.Survivors()) > 0 {
@@ -439,7 +430,7 @@ func (m *Model) killPlanLines(p engine.Plan) []string {
 		if project == "" {
 			project = "-"
 		}
-		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, model.Clean(proc.Label()), model.Clean(project), killPorts(proc)))
+		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, model.Clean(proc.Label()), model.Clean(project), proc.PortList()))
 	}
 	return killTable(rows)
 }
@@ -542,52 +533,6 @@ func (m *Model) killScroll(d int) {
 		}
 	}
 	k.top = max(min(k.top+d, n-max(k.page, 1)), 0)
-}
-
-// killMode names the options as the CLI does: "process mode", "tree mode, force".
-func killMode(o engine.KillOptions) string {
-	mode := "process mode"
-	if o.Tree {
-		mode = "tree mode"
-	}
-	if o.Force {
-		mode += ", force"
-	}
-	return mode
-}
-
-// killSig names a plan's signal.
-func killSig(s syscall.Signal) string {
-	if s == syscall.SIGKILL {
-		return "SIGKILL"
-	}
-	return "SIGTERM"
-}
-
-// killCount is "1 process", "3 processes".
-func killCount(n int, what string) string {
-	if n == 1 {
-		return "1 " + what
-	}
-	return fmt.Sprintf("%d %ses", n, what)
-}
-
-// killPorts lists p's listening ports, sorted and without repeats, or "-".
-func killPorts(p model.Process) string {
-	var ns []int
-	for _, l := range p.Listeners {
-		ns = append(ns, int(l.Port))
-	}
-	slices.Sort(ns)
-	ns = slices.Compact(ns)
-	if len(ns) == 0 {
-		return "-"
-	}
-	ss := make([]string, len(ns))
-	for i, n := range ns {
-		ss[i] = strconv.Itoa(n)
-	}
-	return strings.Join(ss, ",")
 }
 
 // killOutcome says why a planned process is still there after Kill.

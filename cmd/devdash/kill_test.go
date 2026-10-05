@@ -120,7 +120,7 @@ func TestKill(t *testing.T) {
 			stdout: []string{"kill port 3000: process mode, SIGTERM to 1 process:\n5000001  node1  code  3000\n",
 				"5000001  node1  signalled, exited\n", "every signalled process exited\n", "port 3000 is free\n"}},
 		{name: "tree force", args: []string{"--yes", "--tree", "--force"}, steps: []collector.Step{held, free}, res: exited, want: 0, wantPlans: [][]int{{a, b}},
-			stdout: []string{"tree, force mode, SIGKILL to 2 processes:\n5000001  node1  code  3000\n5000002  node2  code  -\n"}},
+			stdout: []string{"tree mode, force, SIGKILL to 2 processes:\n5000001  node1  code  3000\n5000002  node2  code  -\n"}},
 		{name: "permission denied", args: []string{"--yes"}, steps: []collector.Step{held}, res: denied, want: 3, wantPlans: [][]int{{a}},
 			stdout: []string{"not signalled: permission denied, run with sudo"}},
 		{name: "survivors", args: []string{"--yes", "--timeout", "1s"}, steps: []collector.Step{held}, res: survives, want: 4, wantPlans: [][]int{{a}},

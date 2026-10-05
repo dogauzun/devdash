@@ -9,9 +9,7 @@ import (
 	"io"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 
 	"golang.org/x/sys/unix"
@@ -107,7 +105,7 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 			fmt.Fprint(stderr, plan)
 		}
 		in := bufio.NewReader(stdin)
-		ok := confirm(in, stderr, fmt.Sprintf("Send %s to %s?", sigName(plans[0].Signal), count(n, "process")))
+		ok := confirm(in, stderr, fmt.Sprintf("Send %s to %s?", unix.SignalName(plans[0].Signal), model.Count(n, "process", "processes")))
 		if ok && slices.ContainsFunc(plans, func(p engine.Plan) bool { return p.Outside }) {
 			ok = confirm(in, stderr, "The target belongs to no project, so it may be a system service. Kill it anyway?")
 		}
@@ -227,19 +225,9 @@ func dedupe(plans []engine.Plan) []engine.Plan {
 // planText is what kill will do: the mode and signal to n processes, then one line per pid in
 // signal order with its name, project and ports.
 func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port uint16, n int) string {
-	projects := map[string]string{}
-	for _, p := range s.Projects {
-		projects[p.ID] = p.Name
-	}
-	mode := "process"
-	if ko.Tree {
-		mode = "tree"
-	}
-	if ko.Force {
-		mode += ", force"
-	}
+	projects := s.ProjectNames()
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "kill port %d: %s mode, %s to %s:\n", port, mode, sigName(plans[0].Signal), count(n, "process"))
+	fmt.Fprintf(&b, "kill port %d: %s, %s to %s:\n", port, ko.Mode(), unix.SignalName(plans[0].Signal), model.Count(n, "process", "processes"))
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, pl := range plans {
 		for _, p := range pl.Procs {
@@ -247,7 +235,7 @@ func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port
 			if project == "" {
 				project = "-"
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, ports(p))
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, p.PortList())
 		}
 	}
 	_ = tw.Flush()
@@ -257,24 +245,6 @@ func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port
 		}
 	}
 	return b.String()
-}
-
-// ports lists p's listening ports, sorted and without repeats, or "-".
-func ports(p model.Process) string {
-	var ns []int
-	for _, l := range p.Listeners {
-		ns = append(ns, int(l.Port))
-	}
-	slices.Sort(ns)
-	ns = slices.Compact(ns)
-	if len(ns) == 0 {
-		return "-"
-	}
-	ss := make([]string, len(ns))
-	for i, n := range ns {
-		ss[i] = strconv.Itoa(n)
-	}
-	return strings.Join(ss, ",")
 }
 
 func outcome(o engine.Outcome) string {
@@ -352,18 +322,4 @@ func write(stdout, stderr io.Writer, text string, code int) int {
 		return exitFailed
 	}
 	return code
-}
-
-func sigName(s syscall.Signal) string {
-	if s == syscall.SIGKILL {
-		return "SIGKILL"
-	}
-	return "SIGTERM"
-}
-
-func count(n int, what string) string {
-	if n == 1 {
-		return "1 " + what
-	}
-	return fmt.Sprintf("%d %ses", n, what)
 }

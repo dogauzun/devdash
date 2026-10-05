@@ -138,3 +138,35 @@ func TestLocation(t *testing.T) {
 		}
 	}
 }
+
+func TestCount(t *testing.T) {
+	for _, tt := range []struct {
+		n    int
+		want string
+	}{
+		{0, "0 processes"},
+		{1, "1 process"},
+		{3, "3 processes"},
+	} {
+		if got := Count(tt.n, "process", "processes"); got != tt.want {
+			t.Errorf("Count(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestPortList(t *testing.T) {
+	l := func(proto string, port uint16) Listener { return Listener{Proto: proto, Port: port} }
+	for _, tt := range []struct {
+		ls   []Listener
+		want string
+	}{
+		{nil, "-"},
+		{[]Listener{l("tcp4", 3000)}, "3000"},
+		// sorted, each port once, every proto (no filter)
+		{[]Listener{l("tcp6", 9229), l("tcp4", 3000), l("tcp6", 3000), l("udp4", 5353)}, "3000,5353,9229"},
+	} {
+		if got := (Process{Listeners: tt.ls}).PortList(); got != tt.want {
+			t.Errorf("%v: PortList() = %q, want %q", tt.ls, got, tt.want)
+		}
+	}
+}

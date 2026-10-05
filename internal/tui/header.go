@@ -41,7 +41,11 @@ func (m *Model) headerView(w int) string {
 		for _, p := range s.Processes {
 			listeners += len(p.Listeners)
 		}
-		counts = []string{plural(len(s.Projects), "project"), plural(listeners, "listener"), plural(len(s.Containers), "container")}
+		counts = []string{
+			model.Count(len(s.Projects), "project", "projects"),
+			model.Count(listeners, "listener", "listeners"),
+			model.Count(len(s.Containers), "container", "containers"),
+		}
 	}
 	var prefix, query, cursor string
 	switch {
@@ -107,13 +111,6 @@ func ago(d time.Duration) string {
 		return fmt.Sprintf("%d m", int(d/time.Minute))
 	}
 	return fmt.Sprintf("%d h", int(d/time.Hour))
-}
-
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // footerKeys are the key hints, most useful first; footerTail always ends the line, so help

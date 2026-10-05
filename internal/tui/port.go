@@ -156,7 +156,7 @@ func (m *Model) portLine(w int) string {
 	p := m.port
 	parts := []string{"port " + strconv.Itoa(int(p.n))}
 	if p.holders > 0 {
-		parts = append(parts, count(p.holders, "holder", "holders"))
+		parts = append(parts, model.Count(p.holders, "holder", "holders"))
 	}
 	if a := p.ans; p.have && a.self == (p.holders == 0) {
 		switch {
