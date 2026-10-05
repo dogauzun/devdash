@@ -291,21 +291,25 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 	if m := model.Location(pr, here); m != "" {
 		rest = append(rest, m)
 	}
-	var where string
+	// Where gives way so that the uptime stays on the line: a cwd keeps its end, the directory that
+	// names it, and is cut on the left (DEV-146); a project label keeps its start, the project's
+	// name, and is cut on the right (DEV-171).
+	where := model.Clean(cmp.Or(p.Cwd, "-"))
 	if pr != nil {
 		where = model.Clean(pr.Label())
-	} else {
-		// A cwd keeps its end, the directory that names it, and gives way on the left so that the
-		// uptime stays on the line (DEV-146).
-		where = model.Clean(cmp.Or(p.Cwd, "-"))
-		ww := ansi.StringWidth(where)
-		if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 && ww > 1 {
-			cut := ansi.TruncateLeft(where, over+1, "…")
+	}
+	ww := ansi.StringWidth(where)
+	if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 && ww > 1 {
+		var cut string
+		if pr != nil {
+			cut = ansi.Truncate(where, ww-over, "…") // a two-cell character that does not fit is dropped whole
+		} else {
+			cut = ansi.TruncateLeft(where, over+1, "…")
 			if ansi.StringWidth(cut) > ww-over { // the cut fell inside a two-cell character, which TruncateLeft keeps
 				cut = ansi.TruncateLeft(where, over+2, "…")
 			}
-			where = cmp.Or(cut, "…") // "" when every cell is cut
 		}
+		where = cmp.Or(cut, "…") // "" when every cell is cut
 	}
 	lines = append(lines, strings.Join(append([]string{where}, rest...), ", "))
 	if p.Tags != 0 {
