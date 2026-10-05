@@ -222,6 +222,24 @@ func TestCollectArgvExact(t *testing.T) {
 // kern.procargs2 fills the buffer with the tail of the strings area while argc stays the real
 // one. The row stays, with argv unknown and no environment in it (DEV-40 review).
 func TestCollectArgvTooLarge(t *testing.T) {
+	pid := startArgvTooLarge(t)
+	res, err := New().Collect(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == pid })
+	if i < 0 {
+		t.Fatalf("child %d dropped", pid)
+	}
+	if p := res.Processes[i]; p.Unknown != model.FieldArgv || p.Argv != nil {
+		t.Errorf("child unknown %v argv %.80q, want argv unknown and nil", p.Unknown.Names(), p.Argv)
+	}
+}
+
+// startArgvTooLarge starts a child whose kern.procargs2 read fills the kern.argmax buffer and
+// returns its pid; it is killed at cleanup.
+func startArgvTooLarge(t *testing.T) int {
+	t.Helper()
 	lib, err := loadLibSystem()
 	if err != nil {
 		t.Fatal(err)
@@ -261,22 +279,15 @@ func TestCollectArgvTooLarge(t *testing.T) {
 	if pid == 0 {
 		t.Fatal("no child filled the kern.procargs2 buffer")
 	}
-	res, err := New().Collect(context.Background(), Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == pid })
-	if i < 0 {
-		t.Fatalf("child %d dropped", pid)
-	}
-	if p := res.Processes[i]; p.Unknown != model.FieldArgv || p.Argv != nil {
-		t.Errorf("child unknown %v argv %.80q, want argv unknown and nil", p.Unknown.Names(), p.Argv)
-	}
+	return pid
 }
 
 // TestCollectChurn: while children are spawned and reaped, own-uid rows are complete or absent,
-// never half-filled (DEV-41).
+// never half-filled (DEV-41). The one own-uid exception is a row whose argv fills kern.argmax:
+// argv alone unknown (DEV-40). big is one, and so is TestCollectArgvTooLarge's child when another
+// test binary runs it beside this one (DEV-174); the churned children never are.
 func TestCollectChurn(t *testing.T) {
+	big := startArgvTooLarge(t)
 	var stop atomic.Bool
 	var spawned atomic.Int64
 	var wg sync.WaitGroup
@@ -299,7 +310,8 @@ func TestCollectChurn(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, p := range res.Processes {
-			if p.UID == os.Geteuid() && p.Unknown != 0 {
+			tooLarge := p.Unknown == model.FieldArgv && p.Argv == nil && (p.PID == big || p.PPID != os.Getpid())
+			if p.UID == os.Geteuid() && p.Unknown != 0 && !tooLarge {
 				t.Errorf("run %d: own-uid row half-filled: %+v", runs, p)
 			}
 		}
