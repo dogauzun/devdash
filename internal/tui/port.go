@@ -152,7 +152,7 @@ func (m *Model) portShown() bool { return m.port.n != 0 && m.have }
 // probe's answer once it has come for the current query: `next free P`, `no free port in A-B`
 // or `next free: <error>` in the warning colour, none for 65535; with no holder, `free` when N
 // binds, else, when its bind failed, that part and then `bind refused` (a probe error on N
-// itself shows only the error). An answer that was for holders while there
+// itself shows only `probe failed: <error>`, for 65535 too). An answer that was for holders while there
 // are none now, or the other way round, waits for the next one. "" when the line is not shown.
 func (m *Model) portLine(w int) string {
 	if !m.portShown() {
@@ -167,6 +167,8 @@ func (m *Model) portLine(w int) string {
 		switch {
 		case a.self && a.free:
 			parts = append(parts, "free")
+		case a.err != nil && a.self && !a.refused: // the probe of n itself failed
+			parts = append(parts, styleWarn.Render("probe failed: "+model.Clean(a.err.Error())))
 		case a.err != nil:
 			parts = append(parts, styleWarn.Render("next free: "+model.Clean(a.err.Error())))
 		case p.n == 65535:

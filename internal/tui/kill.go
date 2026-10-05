@@ -1,14 +1,12 @@
 package tui
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
-	"text/tabwriter"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -49,6 +47,7 @@ type killState struct {
 	projects  map[string]string // project names by ID, from the snapshot plan was made from
 	refusal   string            // why the target, or the current options, cannot be planned
 	result    engine.Result     // killReport
+	exited    []engine.Outcome  // the earlier rounds' exited processes, for the summary after a force round
 	err       error             // killReport: Kill's own error, nothing was signalled
 	top       int               // first list line shown when the list scrolls
 	page      int               // list lines the last render showed (the pgup/pgdown step)
@@ -185,6 +184,11 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 			// Every survivor passed NewPlan's refusals when the target was planned, and Kill
 			// re-checks each pid (never 0, 1 or devdash's chain) and its start time.
 			k.survivors = true
+			for _, o := range k.result.Outcomes {
+				if o.Exited {
+					k.exited = append(k.exited, o)
+				}
+			}
 			return m.killSignal(engine.Plan{Procs: sv, Signal: syscall.SIGKILL})
 		}
 	}
@@ -203,7 +207,8 @@ func (m *Model) killSignal(p engine.Plan) tea.Cmd {
 
 // killDone takes Kill's answer: it asks for a refresh when anything may have been signalled,
 // then closes the modal with a summary when every planned process is gone, or reports. The
-// summary waits for the first snapshot taken after done to add the processes' ports.
+// summary covers the whole kill, the processes that exited in earlier rounds included, and
+// waits for the first snapshot taken after done to add the processes' ports.
 func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	if m.kill.stage != killRunning {
 		return nil
@@ -213,7 +218,8 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	}
 	all := err == nil && len(r.Outcomes) > 0
 	killed, gone := 0, 0
-	for _, o := range r.Outcomes {
+	outcomes := slices.Concat(m.kill.exited, r.Outcomes) // the earlier rounds' all exited: all is r's
+	for _, o := range outcomes {
 		m.sudo.denied = m.sudo.denied || errors.Is(o.Err, engine.ErrPermission) // sudo.go
 		all = all && o.Exited
 		switch {
@@ -233,7 +239,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	}
 	m.kill = killState{}
 	var ports []uint16
-	for _, o := range r.Outcomes {
+	for _, o := range outcomes {
 		if !o.Signalled { // gone before the signal: not one of the processes this kill stopped
 			continue
 		}
@@ -399,18 +405,31 @@ func (m *Model) killPlanLines(p engine.Plan) []string {
 	return killTable(rows)
 }
 
-// killTable aligns tab-separated rows into columns two spaces apart.
+// killTable aligns tab-separated rows into columns two spaces apart, padded by display width
+// as the table's are; the last column is not padded.
 func killTable(rows []string) []string {
 	if len(rows) == 0 {
 		return nil
 	}
-	var b bytes.Buffer
-	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	for _, r := range rows {
-		fmt.Fprintln(tw, r)
+	cells := make([][]string, len(rows))
+	var widths []int
+	for i, r := range rows {
+		cells[i] = strings.Split(r, "\t")
+		for j, c := range cells[i][:len(cells[i])-1] {
+			if j == len(widths) {
+				widths = append(widths, 0)
+			}
+			widths[j] = max(widths[j], ansi.StringWidth(c))
+		}
 	}
-	_ = tw.Flush()
-	return strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+	lines := make([]string, len(rows))
+	for i, cs := range cells {
+		for j, c := range cs[:len(cs)-1] {
+			lines[i] += pad(c, widths[j]+2, false)
+		}
+		lines[i] += cs[len(cs)-1]
+	}
+	return lines
 }
 
 // killWrap wraps tail lines (reasons, prompts, key hints) to the modal's width, indent

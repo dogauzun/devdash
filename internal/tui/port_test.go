@@ -291,7 +291,9 @@ func TestPortLine(t *testing.T) {
 		{"probe failed", fixture(), &fakeProbe{err: errMFILE}, "5173",
 			"port 5173 · 1 holder · next free: socket: too many open files", 1},
 		{"probe failed, no holder", fixture(), &fakeProbe{err: errMFILE}, "3000",
-			"port 3000 · next free: socket: too many open files", 1},
+			"port 3000 · probe failed: socket: too many open files", 1},
+		{"65535 probe failed", fixture(), &fakeProbe{err: errMFILE}, "65535",
+			"port 65535 · probe failed: socket: too many open files", 1},
 		{"bind refused, then the probe failed", fixture(),
 			&fakeProbe{taken: map[uint16]bool{3000: true}, err: errMFILE, failAt: map[uint16]bool{3001: true}}, "3000",
 			"port 3000 · next free: socket: too many open files · bind refused", 2},
@@ -309,8 +311,10 @@ func TestPortLine(t *testing.T) {
 			if c.calls >= 0 && len(c.probe.calls) != c.calls {
 				t.Errorf("%d probe calls, want %d: %v", len(c.probe.calls), c.calls, c.probe.calls)
 			}
-			if c.probe.err != nil && !warned(t, m, "port "+c.query, "next free: "+c.probe.err.Error()) {
-				t.Errorf("the error is not in the warning colour:\n%q", styled(t, m, colorprofile.ANSI))
+			for _, part := range strings.Split(c.want, headerSep) { // the error part, its label included
+				if c.probe.err != nil && strings.HasSuffix(part, c.probe.err.Error()) && !warned(t, m, "port "+c.query, part) {
+					t.Errorf("the error is not in the warning colour:\n%q", styled(t, m, colorprofile.ANSI))
+				}
 			}
 		})
 	}
