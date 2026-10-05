@@ -44,7 +44,10 @@ func (p Process) Label() string {
 // and JSON keep the full path. Snapshot text, not yet cleaned.
 func (p Process) Command() string {
 	argv := p.Argv
-	if len(argv) > 0 && strings.HasPrefix(argv[0], "/") {
+	// A one-element argv holding spaces is a title rewritten with setproctitle (Chromium's
+	// children on Linux), the whole command line in one string: its last "/" may be a later
+	// argument's, so it is left as it is.
+	if len(argv) > 0 && strings.HasPrefix(argv[0], "/") && (len(argv) > 1 || !strings.Contains(argv[0], " ")) {
 		argv = append([]string{path.Base(argv[0])}, argv[1:]...)
 	}
 	return strings.Join(argv, " ")
