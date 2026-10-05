@@ -3,6 +3,7 @@ package model
 import (
 	"cmp"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -35,6 +36,18 @@ func (p Process) Label() string {
 		return tool + " (" + p.Name + ")"
 	}
 	return p.Name
+}
+
+// Command is p's argv as the dashboard's command column and `port N`'s command line show it:
+// joined with single spaces, an absolute argv[0] by its basename, so that what runs fits the
+// width (a macOS framework Python's argv[0] is over 100 cells long) (DEV-146). The detail pane
+// and JSON keep the full path. Snapshot text, not yet cleaned.
+func (p Process) Command() string {
+	argv := p.Argv
+	if len(argv) > 0 && strings.HasPrefix(argv[0], "/") {
+		argv = append([]string{path.Base(argv[0])}, argv[1:]...)
+	}
+	return strings.Join(argv, " ")
 }
 
 // Uptime formats a duration as its largest whole unit: 45s, 12m, 3h, 2d.

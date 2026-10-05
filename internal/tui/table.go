@@ -397,7 +397,7 @@ func (m *Model) cell(i int, c col) string {
 		case len(p.Argv) == 0:
 			return model.Clean(p.Name)
 		}
-		return model.Clean(strings.Join(p.Argv, " "))
+		return model.Clean(p.Command())
 	}
 	return ""
 }

@@ -9,7 +9,7 @@
     claude                     agent                     103  20m     –   50M me       claude                           
 [1m▾ shop (compose) · 2 containers · 2 ports                                                                               [m
     shop-web-1 (nginx:1.27)    container *8000                                                                          
-    shop-db-1 (postgres:16)    container *5432           300   4h     –     – root     /usr/bin/docker-proxy -proto tcp…
+    shop-db-1 (postgres:16)    container *5432           300   4h     –     – root     docker-proxy -proto tcp -host-ip…
 [1m▸ other · 2 processes · 2 ports                                                                                         [m
                                                                                                                         
                                                                                                                         

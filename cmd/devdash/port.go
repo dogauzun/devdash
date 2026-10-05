@@ -278,24 +278,31 @@ func cleanText(s model.Snapshot) model.Snapshot {
 func holderLines(p model.Process, pr, here *model.Project, now time.Time, width int) []string {
 	var lines []string
 	if len(p.Argv) > 0 {
-		cmd := model.Clean(strings.Join(p.Argv, " "))
+		cmd := model.Clean(p.Command())
 		if width > 0 {
 			cmd = ansi.Truncate(cmd, max(width-len(detailIndent), 1), "…")
 		}
 		lines = append(lines, cmd)
 	}
-	where := cmp.Or(p.Cwd, "-")
-	if pr != nil {
-		where = pr.Label()
-	}
-	parts := []string{model.Clean(where)}
+	var rest []string
 	if !p.StartTime.IsZero() {
-		parts = append(parts, "up "+model.Uptime(now.Sub(p.StartTime)))
+		rest = append(rest, "up "+model.Uptime(now.Sub(p.StartTime)))
 	}
 	if m := model.Location(pr, here); m != "" {
-		parts = append(parts, m)
+		rest = append(rest, m)
 	}
-	lines = append(lines, strings.Join(parts, ", "))
+	var where string
+	if pr != nil {
+		where = model.Clean(pr.Label())
+	} else {
+		// A cwd keeps its end, the directory that names it, and gives way on the left so that the
+		// uptime stays on the line (DEV-146).
+		where = model.Clean(cmp.Or(p.Cwd, "-"))
+		if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 {
+			where = ansi.TruncateLeft(where, min(over+1, ansi.StringWidth(where)-1), "…")
+		}
+	}
+	lines = append(lines, strings.Join(append([]string{where}, rest...), ", "))
 	if p.Tags != 0 {
 		lines = append(lines, strings.Join(p.Tags.Labels(), ", "))
 	}

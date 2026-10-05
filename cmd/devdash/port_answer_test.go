@@ -162,6 +162,31 @@ func TestWriteAnswer(t *testing.T) {
 				"       serve 日本…\n" +
 				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
 				"next free: 5174\n"},
+		{"an absolute argv[0] by its basename (DEV-146)", with(func(s *model.Snapshot) {
+			proc(s).Name, proc(s).Tags = "Python", 0
+			proc(s).Argv = []string{"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+				"-m", "http.server", "--bind", "127.0.0.1", "5173"}
+		}), 5173, 80,
+			"15669  Python  shop  0.0.0.0:5173\n" +
+				"       Python -m http.server --bind 127.0.0.1 5173\n" +
+				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+				"next free: 5174\n"},
+		{"a long cwd keeps its end, the uptime and the marker on the line (DEV-146)", with(func(s *model.Snapshot) {
+			proc(s).ProjectID, proc(s).Tags = "", model.TagCwdDeleted
+			proc(s).Cwd = "/private/tmp/claude-501/scratchpad/a4a5b6b7-73ad-4566-9633-84c0719ffa45/fx/shop-search"
+		}), 5173, 40,
+			"15669  python3  -  0.0.0.0:5173\n" +
+				"       uvicorn app:main --reload --port…\n" +
+				"       …c0719ffa45/fx/shop-search, up 3h\n" +
+				"       cwd deleted\n" +
+				"next free: 5174\n"},
+		{"a cwd that fits exactly is not cut", with(func(s *model.Snapshot) {
+			proc(s).ProjectID, proc(s).Tags, proc(s).Cwd = "", 0, "/wt/shop-login"
+		}), 5173, 7 + 21, // "/wt/shop-login, up 3h" is 21 cells
+			"15669  python3  -  0.0.0.0:5173\n" +
+				"       uvicorn app:main --r…\n" +
+				"       /wt/shop-login, up 3h\n" +
+				"next free: 5174\n"},
 		{"width unknown: not cut", answerFixture(), 5173, 0,
 			"15669  python3  shop  0.0.0.0:5173\n" +
 				"       uvicorn app:main --reload --port 5173\n" +
