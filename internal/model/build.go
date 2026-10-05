@@ -25,6 +25,9 @@ type Raw struct {
 	// OwnerHint replaces the listener_owner_unreadable hint when the collector knows sudo
 	// cannot help (devdash already runs as root on Linux); "" keeps "run with sudo to see owners".
 	OwnerHint string
+	// OwnerSudo marks the listener_owner_unreadable warning as fixed by sudo (Warning.Sudo):
+	// the collector is not root and root would see the owners it could not.
+	OwnerSudo bool
 }
 
 // RawListener is a listening socket with the pid that owns it, 0 when no owner was readable.
@@ -145,7 +148,7 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 	}
 	if unowned > 0 {
 		hint := cmp.Or(raw.OwnerHint, "run with sudo to see owners")
-		warnings = append(warnings, Warning{Code: "listener_owner_unreadable", Count: unowned, Hint: hint})
+		warnings = append(warnings, Warning{Code: "listener_owner_unreadable", Count: unowned, Hint: hint, Sudo: raw.OwnerSudo})
 	}
 
 	return Snapshot{

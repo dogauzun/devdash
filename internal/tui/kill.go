@@ -214,6 +214,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	all := err == nil && len(r.Outcomes) > 0
 	killed, gone := 0, 0
 	for _, o := range r.Outcomes {
+		m.sudo.denied = m.sudo.denied || errors.Is(o.Err, engine.ErrPermission) // sudo.go
 		all = all && o.Exited
 		switch {
 		case o.Signalled:
@@ -368,6 +369,9 @@ func (m *Model) killView(w, h int) string {
 		tail = []string{"esc close"}
 		if len(k.result.Survivors()) > 0 {
 			tail = []string{"f force-kill survivors (SIGKILL)  esc close"}
+		}
+		if m.o.Sudo && slices.ContainsFunc(k.result.Outcomes, func(o engine.Outcome) bool { return errors.Is(o.Err, engine.ErrPermission) }) {
+			tail[0] += ", then " + sudoHint // S works in the table, not in this modal (sudo.go)
 		}
 	}
 	return m.killLayout(w, h, styleBold.Render(title), list, tail)

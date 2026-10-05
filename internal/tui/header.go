@@ -122,11 +122,12 @@ var footerKeys = []string{"↑↓ move", "←→ fold", "enter detail", "/ filte
 
 const footerTail = "? help  q quit"
 
-// footerHints is the key hint line for width w: footerKeys in order as long as they fit
+// footerHints is the key hint line for width w: first (S when sudo is offered, ahead of the
+// rest because it answers the warning above it), then footerKeys, in order as long as they fit
 // before footerTail, never a hint cut in the middle.
-func footerHints(w int) string {
+func footerHints(w int, first ...string) string {
 	s := ""
-	for _, k := range footerKeys {
+	for _, k := range append(first, footerKeys...) {
 		if ansi.StringWidth(s+k+"  "+footerTail) > w {
 			break
 		}
@@ -168,7 +169,11 @@ func (m *Model) footerView(w int) string {
 			lines = append(lines, styleWarn.Render(l))
 		}
 	}
-	return strings.Join(append(lines, styleDim.Render(footerHints(w))), "\n")
+	var first []string
+	if m.sudoOffered() {
+		first = []string{sudoHint}
+	}
+	return strings.Join(append(lines, styleDim.Render(footerHints(w, first...))), "\n")
 }
 
 // warnings returns the snapshot's and then the engine's warnings, one per distinct hint (the

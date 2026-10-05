@@ -72,8 +72,8 @@ func TestRunReturnsOnCancel(t *testing.T) {
 	cancel()
 	src := &fakeSource{ch: make(chan engine.Update)}
 	var out strings.Builder
-	err := Run(ctx, Options{Source: src, Kill: failKill(t)}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24))
-	if err != nil {
-		t.Errorf("Run with a cancelled ctx: %v, want nil", err)
+	sudo, err := Run(ctx, Options{Source: src, Kill: failKill(t)}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24))
+	if err != nil || sudo {
+		t.Errorf("Run with a cancelled ctx: sudo %v, %v; want false, nil", sudo, err)
 	}
 }

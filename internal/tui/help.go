@@ -28,6 +28,7 @@ var helpKeys = [][2]string{
 	{"d", "show or hide container rows"},
 	{"s", "cycle sort within groups: default, port, cpu, start time"},
 	{"r", "refresh now"},
+	{"S", "rerun under sudo (asks first) when a warning or a kill needs root"},
 	{"?", "this help"},
 	{"q ctrl-c", "quit"},
 }
