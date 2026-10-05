@@ -18,16 +18,6 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// detailSelect selects the row with key k as if the user had moved to it.
-func detailSelect(t *testing.T, m *Model, k model.RowKey) {
-	t.Helper()
-	m.sel = k
-	m.rebuild()
-	if r, ok := m.selected(); !ok || r.Key != k {
-		t.Fatalf("row %+v is not in the table", k)
-	}
-}
-
 // bodyLines returns the screen lines between the header and the footer.
 func bodyLines(m *Model) []string {
 	lines := strings.Split(screen(m), "\n")
@@ -61,7 +51,7 @@ func TestDetailSplit(t *testing.T) {
 	m, _ := newTest(t, 120, 30)
 	s := fixture()
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	press(m, "enter")
 	body := bodyLines(m)
 	// Every body line: the table in the first 80 columns, then the pane behind a plain bar.
@@ -82,7 +72,7 @@ func TestDetailSplit(t *testing.T) {
 	}
 
 	// In the 38-column value area a note wraps as a whole, onto an indented line.
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	for _, want := range []string{"| listeners tcp6 [::]:5173", "|           (every interface)"} {
 		if got := ansi.Cut(line(m, want), 80, 120); got != want {
 			t.Errorf("pane line %q, want %q", got, want)
@@ -95,7 +85,7 @@ func TestDetailOverlay(t *testing.T) {
 		m, _ := newTest(t, w, 30)
 		s := fixture()
 		feed(m, s)
-		detailSelect(t, m, keyOf(s, 200))
+		selectRow(t, m, keyOf(s, 200))
 		press(m, "enter")
 		if got := bodyLines(m)[0]; !strings.HasPrefix(got, "api 200 · server") {
 			t.Errorf("width %d: overlay starts with %q, want the pane title at column 0", w, got)
@@ -132,7 +122,7 @@ func TestDetailStartedLocalZone(t *testing.T) {
 			s := fixture()
 			s.Processes[1].StartTime = s.Processes[1].StartTime.In(zone) // node vite, 101
 			feed(m, s)
-			detailSelect(t, m, keyOf(s, 101))
+			selectRow(t, m, keyOf(s, 101))
 			press(m, "enter")
 			hasLine(t, m, "started   2026-10-02 09:00:00 (3 h ago)")
 		})
@@ -143,7 +133,7 @@ func TestDetailProcess(t *testing.T) {
 	m, _ := newTest(t, 100, 40)
 	s := fixture()
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	press(m, "enter")
 	for _, want := range []string{
 		"vite (node) 101 · server",
@@ -166,15 +156,15 @@ func TestDetailProcess(t *testing.T) {
 	}
 
 	// Two listeners, one line each; a first CPU sample; a process outside every project.
-	detailSelect(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	hasLine(t, m, "listeners tcp4 127.0.0.1:8080")
 	hasLine(t, m, "          tcp6 [::1]:8081")
 	hasLine(t, m, "parents   sshd 1")
-	detailSelect(t, m, keyOf(s, 103))
+	selectRow(t, m, keyOf(s, 103))
 	hasLine(t, m, "cpu       –")
 	hasLine(t, m, "listeners none")
 	openOther(m)
-	detailSelect(t, m, keyOf(s, 1))
+	selectRow(t, m, keyOf(s, 1))
 	hasLine(t, m, "project   none")
 	hasLine(t, m, "cwd       unknown")
 	hasLine(t, m, "user      root (uid 0)")
@@ -204,7 +194,7 @@ func TestDetailParentChain(t *testing.T) {
 			s := model.Snapshot{SchemaVersion: 1, TakenAt: at(0), Processes: tc.procs}
 			feed(m, s)
 			openOther(m) // no project: every process is in other
-			detailSelect(t, m, keyOf(s, 101))
+			selectRow(t, m, keyOf(s, 101))
 			press(m, "enter")
 			hasLine(t, m, "parents   "+tc.want)
 		})
@@ -228,7 +218,7 @@ func TestDetailContainer(t *testing.T) {
 			press(m, "enter")
 
 			// docker-proxy holding shop-db-1's published port.
-			detailSelect(t, m, keyOf(s, 300))
+			selectRow(t, m, keyOf(s, 300))
 			for _, want := range []string{
 				"docker-proxy 300 · container",
 				"cwd       unknown",
@@ -248,7 +238,7 @@ func TestDetailContainer(t *testing.T) {
 			}
 
 			// A container with no process behind it.
-			detailSelect(t, m, model.RowKey{ContainerID: "4e5d6c7b8a90"})
+			selectRow(t, m, model.RowKey{ContainerID: "4e5d6c7b8a90"})
 			for _, want := range []string{
 				"shop-web-1 · container",
 				"container shop-web-1",
@@ -263,7 +253,7 @@ func TestDetailContainer(t *testing.T) {
 			}
 
 			// A host process is not a container row: no socket line even when one is known.
-			detailSelect(t, m, keyOf(s, 200))
+			selectRow(t, m, keyOf(s, 200))
 			if strings.Contains(screen(m), "docker socket") {
 				t.Errorf("socket shown for a host process:\n%s", screen(m))
 			}
@@ -275,7 +265,7 @@ func TestDetailWrap(t *testing.T) {
 	m, _ := newTest(t, 50, 30)
 	s := fixture()
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 102))
+	selectRow(t, m, keyOf(s, 102))
 	press(m, "enter")
 	// The value column is 40 wide: the path is cut at 40 cells, the flags fill the next line.
 	hasLine(t, m, "command   /src/shop/node_modules/@esbuild/darwin-a")
@@ -284,7 +274,7 @@ func TestDetailWrap(t *testing.T) {
 	// Word wrapping keeps whole arguments together.
 	s.Processes[1].Argv = []string{"node", "node_modules/.bin/vite", "--port", "5173", "--host", "0.0.0.0", "--strictPort"}
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	hasLine(t, m, "command   node node_modules/.bin/vite --port 5173")
 	hasLine(t, m, "          --host 0.0.0.0 --strictPort")
 
@@ -342,7 +332,7 @@ func TestDetailWrapWideAtWidthOne(t *testing.T) {
 	s := fixture()
 	s.Processes[4].Argv = []string{"漢字"}
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	press(m, "enter")
 	if line(m, "command") == "" {
 		t.Errorf("the 11-column overlay does not show the command field:\n%s", screen(m))
@@ -363,7 +353,7 @@ func TestDetailContainerForwarder(t *testing.T) {
 	feed(m, s)
 	press(m, "enter")
 	for _, id := range []string{"4e5d6c7b8a90", "aaa"} {
-		detailSelect(t, m, model.RowKey{ContainerID: id})
+		selectRow(t, m, model.RowKey{ContainerID: id})
 		hasLine(t, m, "held by OrbStack Helper 400 (forwards the container's port)")
 		if strings.Contains(screen(m), "no process holds the port") {
 			t.Errorf("%s: forwarded port reads as held by no process:\n%s", id, screen(m))
@@ -389,7 +379,7 @@ func TestDetailContainerUnheldPort(t *testing.T) {
 	s.Processes = model.Reconcile(append(s.Processes, helper), s.Containers)
 	feed(m, s)
 	press(m, "enter")
-	detailSelect(t, m, model.RowKey{ContainerID: "aaa"})
+	selectRow(t, m, model.RowKey{ContainerID: "aaa"})
 	hasLine(t, m, "held by OrbStack Helper 400 (forwards the container's port)")
 	hasLine(t, m, "no process holds port 6001 (published by Docker)")
 	if n := strings.Count(screen(m), "no process holds"); n != 1 {
@@ -411,7 +401,7 @@ func TestDetailProcessRowUnheldPort(t *testing.T) {
 				model.PortMapping{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 5434, ContainerPort: 5434, Proto: "udp"})
 			feed(m, s)
 			press(m, "enter")
-			detailSelect(t, m, s.Processes[slices.IndexFunc(s.Processes, func(p model.Process) bool { return p.ContainerID != "" })].Key())
+			selectRow(t, m, s.Processes[slices.IndexFunc(s.Processes, func(p model.Process) bool { return p.ContainerID != "" })].Key())
 			hasLine(t, m, "no process holds port 5433 (published by Docker)")
 			body := strings.Join(bodyLines(m), "\n")
 			if n := strings.Count(body, "no process holds"); n != 1 {
@@ -452,7 +442,7 @@ func TestDetailUnknownOwnerContainer(t *testing.T) {
 			s := hiddenProxy()
 			feed(m, s)
 			press(m, "enter")
-			detailSelect(t, m, s.Processes[len(s.Processes)-1].Key())
+			selectRow(t, m, s.Processes[len(s.Processes)-1].Key())
 			for _, want := range []string{
 				"shop-db-1 · container",
 				"listeners tcp4 0.0.0.0:5432 (every interface)",
@@ -476,7 +466,7 @@ func TestDetailUnknownOwnerContainer(t *testing.T) {
 			// Docker's list no longer has the container: its ID stands in for the name.
 			s.Containers = s.Containers[1:]
 			feed(m, s)
-			detailSelect(t, m, s.Processes[len(s.Processes)-1].Key())
+			selectRow(t, m, s.Processes[len(s.Processes)-1].Key())
 			hasLine(t, m, "container 9f1c2a7b0d3e")
 			if strings.Contains(strings.Join(bodyLines(m), "\n"), "sudo") {
 				t.Errorf("container's port shows the sudo hint:\n%s", screen(m))
@@ -500,7 +490,7 @@ func TestDetailSplitNotesWrap(t *testing.T) {
 		{keyOf(s, 0), []string{"| the process holding this port could", "|   not be read"}},
 		{model.RowKey{Header: model.GroupOther}, []string{"| processes outside every project"}},
 	} {
-		detailSelect(t, m, tc.key)
+		selectRow(t, m, tc.key)
 		for _, want := range tc.want {
 			if got := ansi.Cut(line(m, want), 80, 120); got != want {
 				t.Errorf("row %+v: pane line %q, want %q\n%s", tc.key, got, want, screen(m))
@@ -516,12 +506,12 @@ func TestDetailHeader(t *testing.T) {
 	feed(m, s)
 	press(m, "enter")
 
-	detailSelect(t, m, model.RowKey{Header: model.GroupProject, Group: shopID})
+	selectRow(t, m, model.RowKey{Header: model.GroupProject, Group: shopID})
 	for _, want := range []string{"shop @ feat/cart (worktree)", "root      /src/shop", "branch    feat/cart",
 		"main repo /src/shop-main"} {
 		hasLine(t, m, want)
 	}
-	detailSelect(t, m, model.RowKey{Header: model.GroupProject, Group: apiID})
+	selectRow(t, m, model.RowKey{Header: model.GroupProject, Group: apiID})
 	hasLine(t, m, "api @ abc1234")
 	hasLine(t, m, "branch    detached at abc1234")
 	if strings.Contains(screen(m), "main repo") {
@@ -531,15 +521,15 @@ func TestDetailHeader(t *testing.T) {
 	// the title (DEV-163).
 	s.Projects[1].ShortSHA = ""
 	feed(m, s)
-	detailSelect(t, m, model.RowKey{Header: model.GroupProject, Group: apiID})
+	selectRow(t, m, model.RowKey{Header: model.GroupProject, Group: apiID})
 	hasLine(t, m, "api")
 	if strings.Contains(screen(m), "branch") {
 		t.Errorf("branch field shown for an unknown branch:\n%s", screen(m))
 	}
-	detailSelect(t, m, model.RowKey{Header: model.GroupCompose, Group: "shop"})
+	selectRow(t, m, model.RowKey{Header: model.GroupCompose, Group: "shop"})
 	hasLine(t, m, "shop (compose)")
 	hasLine(t, m, "members   shop-db-1, shop-web-1")
-	detailSelect(t, m, model.RowKey{Header: model.GroupOther})
+	selectRow(t, m, model.RowKey{Header: model.GroupOther})
 	hasLine(t, m, "other")
 	hasLine(t, m, "processes outside every project")
 }
@@ -549,7 +539,7 @@ func TestDetailUnknownOwner(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	openOther(m)
-	detailSelect(t, m, keyOf(s, 0))
+	selectRow(t, m, keyOf(s, 0))
 	press(m, "enter")
 	for _, want := range []string{
 		"unknown owner",
@@ -631,7 +621,7 @@ func paneDocument(t *testing.T, m *Model) []string {
 		if last == n {
 			return doc
 		}
-		scroll(m, "pgdown")
+		press(m, "pgdown")
 	}
 	t.Fatal("pgdown never reaches the end of the pane")
 	return nil
@@ -646,7 +636,7 @@ func TestDetailLongArgv(t *testing.T) {
 			s.Processes[1].Argv = argv
 			feed(m, s)
 			k := keyOf(s, 101)
-			detailSelect(t, m, k)
+			selectRow(t, m, k)
 			press(m, "enter")
 
 			// At the top: the command is capped at a third of the pane and ends with the count
@@ -696,7 +686,7 @@ func TestDetailLongArgv(t *testing.T) {
 
 			// pgup goes back to the top.
 			for range 50 {
-				scroll(m, "pgup")
+				press(m, "pgup")
 			}
 			if first, _, _, _ := panePosition(m); first != 1 || !strings.HasPrefix(paneLines(m)[0], "node 101") {
 				t.Errorf("pgup does not return to the top:\n%s", screen(m))
@@ -712,9 +702,9 @@ func TestDetailScrollResets(t *testing.T) {
 		s.Processes[1].Argv = longArgv()
 		s.Processes[2].Argv = longArgv()
 		feed(m, s)
-		detailSelect(t, m, keyOf(s, 101))
+		selectRow(t, m, keyOf(s, 101))
 		press(m, "enter")
-		scroll(m, "pgdown")
+		press(m, "pgdown")
 		if first, _, _, ok := panePosition(m); !ok || first == 1 {
 			t.Fatalf("width %d: pgdown does not scroll the pane:\n%s", w, screen(m))
 		}
@@ -724,17 +714,17 @@ func TestDetailScrollResets(t *testing.T) {
 			t.Errorf("width %d: a new selection does not start at the top:\n%s", w, screen(m))
 		}
 		// So does the pane after closing and opening it again.
-		scroll(m, "pgdown", "enter", "enter")
+		press(m, "pgdown", "enter", "enter")
 		if first, _, _, _ := panePosition(m); first != 1 {
 			t.Errorf("width %d: enter, enter does not start the pane at the top:\n%s", w, screen(m))
 		}
-		scroll(m, "pgdown", "esc", "enter")
+		press(m, "pgdown", "esc", "enter")
 		if first, _, _, _ := panePosition(m); first != 1 {
 			t.Errorf("width %d: esc, enter does not start the pane at the top:\n%s", w, screen(m))
 		}
 		// A pane that fits has no position line, and pgdown does not move it.
-		detailSelect(t, m, keyOf(s, 200))
-		scroll(m, "pgdown")
+		selectRow(t, m, keyOf(s, 200))
+		press(m, "pgdown")
 		if _, _, _, ok := panePosition(m); ok || !strings.HasPrefix(paneLines(m)[0], "api 200") {
 			t.Errorf("width %d: a short pane scrolls or shows a position line:\n%s", w, screen(m))
 		}
@@ -748,9 +738,9 @@ func TestDetailClosedPageKeysMoveTable(t *testing.T) {
 	m, _ := newTest(t, 120, 24)
 	s := fixture()
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	before := m.selIdx
-	scroll(m, "pgdown")
+	press(m, "pgdown")
 	if m.selIdx == before {
 		t.Error("with the pane closed, pgdown no longer moves the table")
 	}
@@ -776,7 +766,7 @@ func TestDetailTags(t *testing.T) {
 			s.Processes[4].PPID = tc.ppid
 			s.Processes = append(s.Processes, systemd)
 			feed(m, s)
-			detailSelect(t, m, keyOf(s, 200))
+			selectRow(t, m, keyOf(s, 200))
 			press(m, "enter")
 			hasLine(t, m, "tags      orphaned: "+tc.want)
 			hasLine(t, m, "          cwd deleted: working directory deleted")
@@ -787,7 +777,7 @@ func TestDetailTags(t *testing.T) {
 	m, _ := newTest(t, 100, 40)
 	s := fixture()
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	press(m, "enter")
 	if line(m, "tags") != "" {
 		t.Errorf("an untagged process lists tags:\n%s", screen(m))
@@ -799,10 +789,10 @@ func TestDetailTags(t *testing.T) {
 func TestDetailLocation(t *testing.T) {
 	s := fixture()
 	m := newPortTest(t, 100, 40, s, &fakeProbe{})
-	detailSelect(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	press(m, "enter")
 	hasLine(t, m, "project   api @ main · this repo")
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	hasLine(t, m, "project   shop @ feat/cart (worktree)")
 
 	// devdash run from shop's main repository: the feat/cart worktree is another worktree of it.
@@ -810,17 +800,17 @@ func TestDetailLocation(t *testing.T) {
 	s.Projects[1].Here = false
 	s.Projects = append(s.Projects, model.Project{ID: "/src/shop-main", Root: "/src/shop-main", Name: "shop", Branch: "main", Here: true})
 	m = newPortTest(t, 100, 40, s, &fakeProbe{})
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	press(m, "enter")
 	hasLine(t, m, "project   shop @ feat/cart (worktree) · this repo, other worktree")
-	detailSelect(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	hasLine(t, m, "project   api @ main")
 
 	// No Here project: no marker.
 	s = fixture()
 	s.Projects[1].Here = false
 	m = newPortTest(t, 100, 40, s, &fakeProbe{})
-	detailSelect(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	press(m, "enter")
 	hasLine(t, m, "project   api @ main")
 }
@@ -917,7 +907,7 @@ func TestDetailNextFreeRuns(t *testing.T) {
 	}
 
 	// Pane closed: moving and refreshing never probe.
-	selectRow(t, m, keyOf(s, 200))
+	rowsSelect(t, m, keyOf(s, 200))
 	runAll(m, refresh(s, time.Second))
 	if len(fp.calls) != 0 {
 		t.Fatalf("probed with the pane closed: %v", fp.calls)
@@ -943,7 +933,7 @@ func TestDetailNextFreeRuns(t *testing.T) {
 	hasLine(t, m, "next free 5174")
 
 	// A key that changes nothing shown asks for nothing.
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown}); cmd != nil {
+	if cmd := press(m, "pgdown"); cmd != nil {
 		t.Error("a key on the same row and snapshot returned a command")
 	}
 

@@ -40,27 +40,6 @@ func selLine(m *Model) string {
 // titles returns the table's column-title line.
 func titles(m *Model) string { return line(m, "PORTS") }
 
-// rowKeys returns the keys of the model's rows, in order.
-func rowKeys(m *Model) []model.RowKey {
-	var ks []model.RowKey
-	for _, r := range m.rows {
-		ks = append(ks, r.Key)
-	}
-	return ks
-}
-
-// selectKey moves the selection to the row with key k.
-func selectKey(t *testing.T, m *Model, k model.RowKey) {
-	t.Helper()
-	for i, r := range m.rows {
-		if r.Key == k {
-			m.moveTo(i)
-			return
-		}
-	}
-	t.Fatalf("no row %+v", k)
-}
-
 var (
 	apiHeader     = model.RowKey{Header: model.GroupProject, Group: apiID}
 	shopHeader    = model.RowKey{Header: model.GroupProject, Group: shopID}
@@ -243,7 +222,7 @@ func TestTableHeaders(t *testing.T) {
 	if line(m, "api @ 1a2b3c4 (here) · 3 processes · 2 ports") == "" {
 		t.Errorf("with a, nvim counts:\n%s", screen(m))
 	}
-	selectKey(t, m, apiHeader)
+	selectRow(t, m, apiHeader)
 	press(m, "left")
 	if line(m, "▸ api @ 1a2b3c4 (here) · 3 processes · 2 ports") == "" {
 		t.Errorf("collapsed header keeps its counts:\n%s", screen(m))
@@ -266,7 +245,7 @@ func TestTableStyles(t *testing.T) {
 	if l := rawLine(m, "claude"); strings.Contains(l, faint) {
 		t.Errorf("claude is faint: %q", l)
 	}
-	selectKey(t, m, keyOf(fixture(), 103))
+	selectRow(t, m, keyOf(fixture(), 103))
 	l := rawLine(m, "claude")
 	if !strings.HasPrefix(l, reverse) || ansi.StringWidth(l) != 120 {
 		t.Errorf("selected row is not one reverse-video line across the width: %q", l)
@@ -308,19 +287,19 @@ func TestTableMovement(t *testing.T) {
 	if m.sel != apiHeader {
 		t.Errorf("g: %+v", m.sel)
 	}
-	m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	press(m, "end")
 	if m.sel != last {
 		t.Errorf("end: %+v", m.sel)
 	}
-	m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	press(m, "home")
 	if m.sel != apiHeader {
 		t.Errorf("home: %+v", m.sel)
 	}
-	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	press(m, "pgdown")
 	if m.selIdx != len(m.rows)-1 {
 		t.Errorf("pgdown on a 30-line screen: index %d, want the last", m.selIdx)
 	}
-	m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	press(m, "pgup")
 	if m.selIdx != 0 {
 		t.Errorf("pgup: index %d", m.selIdx)
 	}
@@ -347,11 +326,11 @@ func TestTableScroll(t *testing.T) {
 		t.Errorf("back at the top:\n%s", screen(m))
 	}
 	// A page is the table's visible rows: four here.
-	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	press(m, "pgdown")
 	if screen(m); m.selIdx != 4 || m.top != 1 {
 		t.Errorf("pgdown from the top: index %d, top %d, want 4 and 1", m.selIdx, m.top)
 	}
-	m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	press(m, "pgup")
 	if m.selIdx != 0 {
 		t.Errorf("pgup back: index %d", m.selIdx)
 	}
@@ -370,7 +349,7 @@ func TestTableCollapse(t *testing.T) {
 	openOther(m) // nothing collapsed
 
 	// left on an expanded header collapses it; right expands it.
-	selectKey(t, m, shopHeader)
+	selectRow(t, m, shopHeader)
 	press(m, "left")
 	if !m.view.Collapsed[shopHeader] || line(m, "claude") != "" || line(m, "▸ shop @ feat/cart") == "" {
 		t.Errorf("left did not collapse shop:\n%s", screen(m))
@@ -387,7 +366,7 @@ func TestTableCollapse(t *testing.T) {
 	// A tree node: h collapses node (esbuild disappears), h again goes to its parent, the
 	// header: zsh is folded into node's row (DEV-157).
 	vite := keyOf(s, 101)
-	selectKey(t, m, vite)
+	selectRow(t, m, vite)
 	press(m, "h")
 	if !m.view.Collapsed[vite] || line(m, "esbuild") != "" || line(m, "  ▸ vite (node)") == "" {
 		t.Errorf("h did not collapse node:\n%s", screen(m))
@@ -402,7 +381,7 @@ func TestTableCollapse(t *testing.T) {
 	}
 
 	// left on a leaf moves to its parent; right on a leaf does nothing.
-	selectKey(t, m, keyOf(s, 102))
+	selectRow(t, m, keyOf(s, 102))
 	press(m, "right")
 	if m.sel != keyOf(s, 102) || len(m.view.Collapsed) != 0 {
 		t.Errorf("right on a leaf: sel %+v, collapsed %v", m.sel, m.view.Collapsed)
@@ -411,14 +390,14 @@ func TestTableCollapse(t *testing.T) {
 	if m.sel != vite || m.view.Collapsed[vite] {
 		t.Errorf("left on a leaf: %+v, want node, not collapsed", m.sel)
 	}
-	selectKey(t, m, keyOf(s, 103))
+	selectRow(t, m, keyOf(s, 103))
 	press(m, "left")
 	if m.sel != shopHeader {
 		t.Errorf("left on a root goes to its header: %+v", m.sel)
 	}
 
 	// A collapsed node whose children exited shows no marker.
-	selectKey(t, m, vite)
+	selectRow(t, m, vite)
 	press(m, "h")
 	gone := fixture()
 	gone.Processes = slices.DeleteFunc(gone.Processes, func(p model.Process) bool { return p.PID == 102 })
@@ -433,14 +412,14 @@ func TestTableCollapse(t *testing.T) {
 	press(m, "l")
 
 	// The unknown-owner row's parent is the other header.
-	selectKey(t, m, keyOf(s, 0))
+	selectRow(t, m, keyOf(s, 0))
 	press(m, "h")
 	if m.sel != otherHeader {
 		t.Errorf("h on the unknown row: %+v, want other", m.sel)
 	}
 
 	// Collapse survives a refresh.
-	selectKey(t, m, shopHeader)
+	selectRow(t, m, shopHeader)
 	press(m, "left")
 	feed(m, fixture())
 	if !m.view.Collapsed[shopHeader] || line(m, "claude") != "" {
@@ -471,7 +450,7 @@ func TestTableToggles(t *testing.T) {
 
 	// d hides container rows.
 	press(m, "d")
-	if !m.view.HideContainers || slices.Contains(rowKeys(m), composeHeader) || line(m, "*5432") != "" {
+	if !m.view.HideContainers || slices.Contains(rowsKeys(m), composeHeader) || line(m, "*5432") != "" {
 		t.Errorf("d: HideContainers=%v\n%s", m.view.HideContainers, screen(m))
 	}
 	if !strings.Contains(titles(m), "no containers") {
@@ -491,7 +470,7 @@ func TestTableToggles(t *testing.T) {
 
 	// s cycles default, port, cpu, start time, name, default.
 	order := func() (api, test int) {
-		for i, k := range rowKeys(m) {
+		for i, k := range rowsKeys(m) {
 			switch k {
 			case keyOf(s, 200):
 				api = i
@@ -673,7 +652,7 @@ func TestTableTags(t *testing.T) {
 	if !strings.Contains(l, faint+"  orphaned, cwd deleted") || strings.HasPrefix(l, faint) {
 		t.Errorf("only the tags are faint: %q", l)
 	}
-	selectKey(t, m, keyOf(s, 200))
+	selectRow(t, m, keyOf(s, 200))
 	l = rawLine(m, "8080")
 	for _, part := range []string{"api", "orphaned", "server", "-addr"} {
 		if sgr := sgrBefore(l, part); !strings.Contains(sgr, "7") {
@@ -782,7 +761,7 @@ func TestTableArgs(t *testing.T) {
 			t.Errorf("no row %q:\n%s", want, screen(m))
 		}
 	}
-	selectKey(t, m, model.RowKey{Header: model.GroupOther})
+	selectRow(t, m, model.RowKey{Header: model.GroupOther})
 	press(m, "right") // other starts collapsed
 	if l := line(m, "sshd"); !strings.HasPrefix(l, "    sshd  -D ") {
 		t.Errorf("sshd's row %q, want its arguments:\n%s", l, screen(m))
@@ -811,7 +790,7 @@ func TestTableArgs(t *testing.T) {
 	if l := rawLine(m, "8080"); !strings.Contains(l, faint+"  !  -addr :8080") {
 		t.Errorf("api's tags and arguments are not one faint piece: %q", l)
 	}
-	selectKey(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	l := rawLine(m, "5173")
 	for _, part := range []string{"vite", "--port", "server"} {
 		if sgr := sgrBefore(l, part); !strings.Contains(sgr, "7") {

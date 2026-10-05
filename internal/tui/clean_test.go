@@ -147,7 +147,7 @@ func TestCleanDetail(t *testing.T) {
 			m, _ := newTest(t, size[0], size[1])
 			feed(m, s)
 			openOther(m) // the unknown owner's row
-			detailSelect(t, m, k)
+			selectRow(t, m, k)
 			press(m, "enter")
 			where := fmt.Sprintf("detail %s %dx%d", name, size[0], size[1])
 			assertNoControl(t, m, where)
@@ -156,7 +156,7 @@ func TestCleanDetail(t *testing.T) {
 	// The pane quotes: the exact bytes stay readable.
 	m, _ := newTest(t, 80, 40)
 	feed(m, s)
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	press(m, "enter")
 	for _, want := range []string{`"vitea\x1b[31mb`, ` (nodea\x1b[31mb`} {
 		if !strings.Contains(screen(m), want) {
@@ -244,7 +244,7 @@ func TestCleanFooter(t *testing.T) {
 			t.Errorf("the footer does not show %q:\n%s", want, screen(m))
 		}
 	}
-	detailSelect(t, m, keyOf(s, 101))
+	selectRow(t, m, keyOf(s, 101))
 	m.Update(press(m, "o")())
 	assertNoControl(t, m, "footer open error")
 	if line(m, "open failed: xdg-open: "+evilShown) == "" {

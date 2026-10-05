@@ -156,18 +156,18 @@ func TestHelpScroll(t *testing.T) {
 	if got := bodyLines(m)[10]; got != pos(2, 10) {
 		t.Errorf("after k: %q", got)
 	}
-	scroll(m, "pgdown", "pgdown", "pgdown") // clamped at the end
+	press(m, "pgdown", "pgdown", "pgdown") // clamped at the end
 	if got := bodyLines(m)[10]; got != pos(total-8, total) {
 		t.Errorf("after pgdown: %q", got)
 	}
 	for _, want := range []string{"r           refresh now", "?           this help", "q ctrl-c    quit", "run with sudo to see owners"} {
 		hasLine(t, m, want)
 	}
-	scroll(m, "pgup", "up", "up")
+	press(m, "pgup", "up", "up")
 	if got := bodyLines(m)[10]; got != pos(1, 9) {
 		t.Errorf("after pgup, up, up: %q", got)
 	}
-	scroll(m, "pgdown", "x") // any other key closes and does nothing else
+	press(m, "pgdown", "x") // any other key closes and does nothing else
 	if m.help || m.kill.active() {
 		t.Error("x did not just close help")
 	}
