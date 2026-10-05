@@ -275,7 +275,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	d.blank()
 	detailContainer(d, r)
 	if p == nil {
-		detailForwarders(d, s, r.Container.ID)
+		detailForwarders(d, s, r.Container)
 	}
 	if m.o.DockerSocket != nil {
 		if sock := m.o.DockerSocket(); sock != "" {
@@ -288,17 +288,31 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 // detailForwarders names the processes holding container id's published ports for a container
 // row that has no process of its own: a forwarder Reconcile matched to several containers
 // (OrbStack Helper, com.docker.backend) keeps its own row, as `port N` names it. With none, the
-// port has no host socket (iptables only).
-func detailForwarders(d *detailDoc, s model.Snapshot, id string) {
-	held := false
+// port has no host socket (iptables only); with some, each published tcp port none of them
+// holds is named (DEV-186).
+func detailForwarders(d *detailDoc, s model.Snapshot, c *model.Container) {
+	held := map[uint16]bool{}
 	for i := range s.Processes {
-		if p := &s.Processes[i]; slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.ContainerID == id }) {
-			held = true
+		p := &s.Processes[i]
+		forwards := false
+		for _, l := range p.Listeners {
+			if l.ContainerID == c.ID {
+				held[l.Port], forwards = true, true
+			}
+		}
+		if forwards {
 			d.wrap(fmt.Sprintf("held by %s %d (forwards the container's port)", quote(p.Name), p.PID))
 		}
 	}
-	if !held {
+	if len(held) == 0 {
 		d.wrap("no process holds the port (published by Docker)")
+		return
+	}
+	for _, pm := range c.Ports {
+		if pm.Proto == "tcp" && pm.HostPort != 0 && !held[pm.HostPort] {
+			held[pm.HostPort] = true // once per port, not per family
+			d.wrap(fmt.Sprintf("no process holds port %d (published by Docker)", pm.HostPort))
+		}
 	}
 }
 
