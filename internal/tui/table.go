@@ -346,7 +346,8 @@ func rowLabel(r model.Row) string {
 
 // argText is what follows a process row's label and tags below commandWidth columns, where the
 // command column is not shown (spec "Release 1.1", tool labels): its arguments after the tool
-// for an interpreter, else after argv[0], joined by single spaces and cleaned; "" for a header,
+// for an interpreter, else after argv[0] (for a title rewritten into one argv string, its text
+// after the program: model.TitleArgs, DEV-175), joined by single spaces and cleaned; "" for a header,
 // a container's row (whose label is the container's), the unknown owner and a process without
 // argv. tableView draws it faint, two spaces after the tags.
 func argText(r model.Row) string {
@@ -358,7 +359,7 @@ func argText(r model.Row) string {
 	if _, a, ok := model.Tool(*p); ok {
 		args = a
 	}
-	return model.Clean(strings.Join(args, " "))
+	return model.Clean(cmp.Or(strings.Join(args, " "), model.TitleArgs(*p)))
 }
 
 // argsMin is the fewest cells the arguments are drawn in; with fewer left in the name column

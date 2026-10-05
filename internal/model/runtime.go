@@ -58,13 +58,13 @@ func isProxy(p Process) bool {
 	return false
 }
 
-// names are the lower-case basenames of p's Name and argv[0] (its program), the forms runtime
-// lists are matched on; none for the PID 0 "unknown owner" pseudo-process.
+// names are p's Name (kernelName) and the lower-case basename of argv[0] (its program), the
+// forms runtime lists are matched on; none for the PID 0 "unknown owner" pseudo-process.
 func names(p Process) []string {
 	if p.PID == 0 {
 		return nil
 	}
-	ns := []string{baseName(p.Name)}
+	ns := []string{kernelName(p)}
 	if prog := program(p); prog != "" {
 		ns = append(ns, baseName(prog))
 	}

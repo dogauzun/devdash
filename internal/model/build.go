@@ -45,15 +45,23 @@ const commCut = 15
 
 // fullName undoes the kernel's truncation of Name: when Name is at least commCut long and is
 // a strict prefix of the basename of a known argv[0] (its program; a login shell's "-" dropped,
-// as Classify does), that basename is the name. Otherwise Name is kept, so a rewritten title
-// ("nginx: master process ...") or a symlinked argv[0] never invents a name.
+// as Classify does), that basename is the name; else, likewise, the basename of the script an
+// interpreter or shell runs (toolArg), since Linux names a #! script's process after the
+// script while argv[0] is the interpreter (DEV-175). Otherwise Name is kept, so a rewritten
+// title ("nginx: master process ...") or a symlinked argv[0] never invents a name.
 func fullName(p Process) string {
 	prog := program(p)
 	if len(p.Name) < commCut || p.Unknown&FieldArgv != 0 || prog == "" {
 		return p.Name
 	}
-	if b := strings.TrimPrefix(path.Base(prog), "-"); len(b) > len(p.Name) && strings.HasPrefix(b, p.Name) {
-		return b
+	names := []string{strings.TrimPrefix(path.Base(prog), "-")}
+	if i, tool, module := toolArg(baseName(prog), p.Argv[1:]); i >= 0 && !module {
+		names = append(names, path.Base(tool))
+	}
+	for _, b := range names {
+		if len(b) > len(p.Name) && strings.HasPrefix(b, p.Name) {
+			return b
+		}
 	}
 	return p.Name
 }

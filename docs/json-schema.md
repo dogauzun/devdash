@@ -80,7 +80,7 @@ The top-level object of `devdash port N --json`. Like `--json`, it samples twice
 | `start_time` | string or null | always | Start time (RFC 3339, UTC). With `pid` it identifies the process, since pids are reused. `null` for `pid: 0`. |
 | `uid` | integer or null | always | Effective uid; `null` for `pid: 0`. |
 | `user` | string or null | always | User name of `uid`, or the uid as a string when it has no name; `null` for `pid: 0`. |
-| `name` | string | always | Kernel name (Linux comm, 15 bytes; macOS p_comm, 16), or the basename of `argv[0]` when the kernel name was cut short. `unknown` for `pid: 0`. |
+| `name` | string | always | Kernel name (Linux comm, 15 bytes; macOS p_comm, 16), or, when the kernel name was cut short, the basename of `argv[0]` or, for a `#!` script on Linux, of the script the interpreter runs. `unknown` for `pid: 0`. |
 | `argv` | string array or null | always | Command line; `[]` when the process has none (blanked, or mid-exec), `null` when unreadable (`argv` in `unknown`). |
 | `cwd` | string or null | always | Working directory; `null` when unreadable (`cwd` in `unknown`). |
 | `cpu_percent` | number or null | always | See Conventions, CPU. `null` when unreadable or when the process was not in the first sample (`cpu` in `unknown`). |

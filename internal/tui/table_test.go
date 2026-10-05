@@ -817,6 +817,21 @@ func TestTableArgs(t *testing.T) {
 	if got := argText(model.Row{Key: noArgv.Key(), Process: &noArgv}); got != "" {
 		t.Errorf("a process without argv has arguments %q", got)
 	}
+	// A title rewritten into one argv string (Chromium's and Electron's children, setproctitle)
+	// shows its text after the program; a path with spaces run without arguments, and a title
+	// that names no program, have none (DEV-175).
+	for _, tc := range []struct{ name, argv, want string }{
+		{"chrome", "/opt/google/chrome/chrome --type=renderer --lang=en-US", "--type=renderer --lang=en-US"},
+		{"postgres", "postgres: checkpointer", "checkpointer"},
+		{"Code Helper", "/Applications/My Apps/Code Helper", ""},
+		{"node", "my-app worker 3", ""},
+	} {
+		p := s.Processes[5]
+		p.Name, p.Argv = tc.name, []string{tc.argv}
+		if got := argText(model.Row{Key: p.Key(), Process: &p}); got != tc.want {
+			t.Errorf("argText(%q) = %q, want %q", tc.argv, got, tc.want)
+		}
+	}
 	s.Processes[6].Argv = []string{"nvim", "a\x1b[2Jb"}
 	m, _ = newTest(t, 80, 30)
 	feed(m, s)
