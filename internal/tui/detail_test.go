@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -356,6 +357,28 @@ func TestDetailWrapWideAtWidthOne(t *testing.T) {
 // hiddenProxy is the fixture as a non-root user in the docker group sees it: docker-proxy is
 // root's, so shop-db-1's published port 5432 has a PID 0 owner that Reconcile gave the
 // container's ID (DEV-89).
+// TestDetailContainerForwarder is DEV-180: OrbStack Helper holds two containers' ports, so it
+// keeps its own row and the container rows have no process; the pane names it as the holder of
+// the container's port, as `port N` does, instead of saying no process holds it.
+func TestDetailContainerForwarder(t *testing.T) {
+	m, _ := newTest(t, 100, 40)
+	s := fixture()
+	s.Containers = append(s.Containers, model.Container{ID: "aaa", Name: "qa-api", Image: "nginx:alpine", State: "running",
+		Ports: []model.PortMapping{{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 6000, ContainerPort: 80, Proto: "tcp"}}})
+	helper := model.Process{PID: 400, PPID: 1, StartTime: at(time.Hour), UID: 501, Name: "OrbStack Helper", Argv: []string{"OrbStack Helper"},
+		Listeners: []model.Listener{lis("tcp6", "::", 8000), lis("tcp6", "::", 6000)}}
+	s.Processes = model.Reconcile(append(s.Processes, helper), s.Containers)
+	feed(m, s)
+	press(m, "enter")
+	for _, id := range []string{"4e5d6c7b8a90", "aaa"} {
+		detailSelect(t, m, model.RowKey{ContainerID: id})
+		hasLine(t, m, "held by OrbStack Helper 400 (forwards the container's port)")
+		if strings.Contains(screen(m), "no process holds the port") {
+			t.Errorf("%s: forwarded port reads as held by no process:\n%s", id, screen(m))
+		}
+	}
+}
+
 func hiddenProxy() model.Snapshot {
 	s := fixture()
 	s.Processes = slices.DeleteFunc(s.Processes, func(p model.Process) bool { return p.PID == 300 })
