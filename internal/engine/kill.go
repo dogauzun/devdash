@@ -132,25 +132,60 @@ func NewPlan(s model.Snapshot, key model.RowKey, o KillOptions) (Plan, error) {
 }
 
 func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, error) {
-	container := func(id string) string {
-		for _, c := range s.Containers {
-			if c.ID == id && c.Name != "" {
-				return c.Name
-			}
-		}
-		return id
-	}
 	if key.ContainerID != "" {
-		name := container(key.ContainerID)
+		name := containerName(s, key.ContainerID)
 		return Plan{}, refuse("container %s: use docker stop %s", name, name)
 	}
 	if key.Header != model.GroupNone {
 		return Plan{}, refuse("not a process")
 	}
+	target, byPID, children := index(s, key)
+	if target == nil {
+		if key.PID <= 0 {
+			return Plan{}, refuse("pid %d is not a process", key.PID)
+		}
+		return Plan{}, refuse("pid %d is gone, or its pid was reused", key.PID)
+	}
+	refused := refusedPIDs(sy, byPID)
 
-	byPID := map[int]*model.Process{}
-	children := map[int][]*model.Process{}
-	var target *model.Process
+	plan := Plan{Procs: []model.Process{*target}, Signal: syscall.SIGTERM, Outside: target.ProjectID == ""}
+	if o.Force {
+		plan.Signal = syscall.SIGKILL
+	}
+	// No tree for the unknown owner (PID 0) or init: every process whose ppid is 0 or 1 would
+	// join the plan, kept from the signal only by the refusals below (DEV-67). Both are refused.
+	if o.Tree && target.PID > 1 {
+		var in map[int]bool
+		plan.Procs, in = tree(*target, children)
+		if err := addGroup(&plan, s, in, refused, sy); err != nil {
+			return Plan{}, err
+		}
+	}
+
+	// One refused process refuses the whole action; nothing is skipped silently.
+	for _, p := range plan.Procs {
+		if err := refusal(s, p, refused); err != nil {
+			return Plan{}, err
+		}
+	}
+	return plan, nil
+}
+
+// containerName is the name of container id in s, or id when Docker gave it no name.
+func containerName(s model.Snapshot, id string) string {
+	for _, c := range s.Containers {
+		if c.ID == id && c.Name != "" {
+			return c.Name
+		}
+	}
+	return id
+}
+
+// index finds the process with row key key in s (nil when there is none) and indexes the real
+// processes (pid > 0) by pid and by parent.
+func index(s model.Snapshot, key model.RowKey) (target *model.Process, byPID map[int]*model.Process, children map[int][]*model.Process) {
+	byPID = map[int]*model.Process{}
+	children = map[int][]*model.Process{}
 	for i := range s.Processes {
 		p := &s.Processes[i]
 		if p.Key() == key {
@@ -161,15 +196,12 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 			children[p.PPID] = append(children[p.PPID], p)
 		}
 	}
-	if target == nil {
-		if key.PID <= 0 {
-			return Plan{}, refuse("pid %d is not a process", key.PID)
-		}
-		return Plan{}, refuse("pid %d is gone, or its pid was reused", key.PID)
-	}
+	return target, byPID, children
+}
 
-	// devdash and its ancestors, read fresh from the OS and also from the snapshot's ppid map,
-	// so a chain cut short in either one is still covered.
+// refusedPIDs maps devdash and its ancestors to why they are refused, read fresh from the OS
+// and also from the snapshot's ppid map, so a chain cut short in either one is still covered.
+func refusedPIDs(sy osys, byPID map[int]*model.Process) map[int]string {
 	refused := map[int]string{}
 	for _, pid := range sy.chain() {
 		refused[pid] = "runs devdash"
@@ -186,65 +218,74 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 		}
 		pid = p.PPID
 	}
+	return refused
+}
 
-	plan := Plan{Procs: []model.Process{*target}, Signal: syscall.SIGTERM, Outside: target.ProjectID == ""}
-	if o.Force {
-		plan.Signal = syscall.SIGKILL
-	}
-	// No tree for the unknown owner (PID 0) or init: every process whose ppid is 0 or 1 would
-	// join the plan, kept from the signal only by the refusals below (DEV-67). Both are refused.
-	if o.Tree && target.PID > 1 {
-		in := map[int]bool{target.PID: true}
-		for i := 0; i < len(plan.Procs); i++ { // breadth first: parents before children
-			for _, c := range children[plan.Procs[i].PID] {
-				if !in[c.PID] {
-					in[c.PID] = true
-					plan.Procs = append(plan.Procs, *c)
-				}
-			}
-		}
-		if pg, err := sy.getpgid(target.PID); err == nil && pg == target.PID && target.PID > 1 {
-			for pid, why := range refused {
-				if g, err := sy.getpgid(pid); err == nil && g == pg {
-					return Plan{}, refuse("process group %d contains pid %d, which %s", pg, pid, why)
-				}
-			}
-			plan.Group = pg
-			for i := range s.Processes {
-				p := &s.Processes[i]
-				if p.PID > 0 && !in[p.PID] {
-					if g, err := sy.getpgid(p.PID); err == nil && g == pg {
-						in[p.PID] = true
-						plan.Procs = append(plan.Procs, *p)
-					}
-				}
+// tree is target and its descendants, breadth first (parents before children), and the set of
+// their pids.
+func tree(target model.Process, children map[int][]*model.Process) ([]model.Process, map[int]bool) {
+	procs := []model.Process{target}
+	in := map[int]bool{target.PID: true}
+	for i := 0; i < len(procs); i++ {
+		for _, c := range children[procs[i].PID] {
+			if !in[c.PID] {
+				in[c.PID] = true
+				procs = append(procs, *c)
 			}
 		}
 	}
+	return procs, in
+}
 
-	// One refused process refuses the whole action; nothing is skipped silently.
-	for _, p := range plan.Procs {
-		// The container is named only when it accounts for every port p holds: with a socket
-		// that matched nothing (Docker Desktop's Kubernetes on 6443 next to a database's 5432),
-		// docker stop would stop the database and leave that port held. Reconcile no longer gives
-		// such a process a ContainerID (PR #52 review); the check stays for any snapshot that does.
-		whole := p.ContainerID != "" && !slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.ContainerID == "" })
-		switch {
-		case whole:
-			return Plan{}, refuseContainer(p, container(p.ContainerID))
-		case model.IsContainerRuntime(p):
-			return Plan{}, refuse("pid %d (%s) is part of the container runtime, not your service: %s", p.PID, p.Name, runtimeHint(p))
-		case p.PID == 0:
-			return Plan{}, refuse("pid 0 is not a process (the owner of this port is unknown)")
-		case p.PID == 1:
-			return Plan{}, refuse("pid 1 (%s) is init", p.Name)
-		case refused[p.PID] != "":
-			return Plan{}, refuse("pid %d (%s) %s", p.PID, p.Name, refused[p.PID])
-		case p.ContainerID != "": // Reconcile marks only runtime processes and PID 0, refused above; kept refused all the same
-			return Plan{}, refuseContainer(p, container(p.ContainerID))
+// addGroup, when the target (plan.Procs[0]) leads its process group, sets plan.Group and
+// appends the group members s shows that are not in the plan yet (in, updated). A group holding
+// a refused pid refuses the action.
+func addGroup(plan *Plan, s model.Snapshot, in map[int]bool, refused map[int]string, sy osys) error {
+	pg, err := sy.getpgid(plan.Procs[0].PID)
+	if err != nil || pg != plan.Procs[0].PID {
+		return nil
+	}
+	for pid, why := range refused {
+		if g, err := sy.getpgid(pid); err == nil && g == pg {
+			return refuse("process group %d contains pid %d, which %s", pg, pid, why)
 		}
 	}
-	return plan, nil
+	plan.Group = pg
+	for i := range s.Processes {
+		p := &s.Processes[i]
+		if p.PID <= 0 || in[p.PID] {
+			continue
+		}
+		if g, err := sy.getpgid(p.PID); err == nil && g == pg {
+			in[p.PID] = true
+			plan.Procs = append(plan.Procs, *p)
+		}
+	}
+	return nil
+}
+
+// refusal is why p may not be signalled, or nil.
+func refusal(s model.Snapshot, p model.Process, refused map[int]string) error {
+	// The container is named only when it accounts for every port p holds: with a socket
+	// that matched nothing (Docker Desktop's Kubernetes on 6443 next to a database's 5432),
+	// docker stop would stop the database and leave that port held. Reconcile no longer gives
+	// such a process a ContainerID (PR #52 review); the check stays for any snapshot that does.
+	whole := p.ContainerID != "" && !slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.ContainerID == "" })
+	switch {
+	case whole:
+		return refuseContainer(p, containerName(s, p.ContainerID))
+	case model.IsContainerRuntime(p):
+		return refuse("pid %d (%s) is part of the container runtime, not your service: %s", p.PID, p.Name, runtimeHint(p))
+	case p.PID == 0:
+		return refuse("pid 0 is not a process (the owner of this port is unknown)")
+	case p.PID == 1:
+		return refuse("pid 1 (%s) is init", p.Name)
+	case refused[p.PID] != "":
+		return refuse("pid %d (%s) %s", p.PID, p.Name, refused[p.PID])
+	case p.ContainerID != "": // Reconcile marks only runtime processes and PID 0, refused above; kept refused all the same
+		return refuseContainer(p, containerName(s, p.ContainerID))
+	}
+	return nil
 }
 
 func refuseContainer(p model.Process, name string) error {
@@ -293,91 +334,107 @@ func kill(p Plan, timeout time.Duration, sy osys) (Result, error) {
 		r.Outcomes[i].Process = proc
 	}
 
-	// alive re-validates o against a start time read from the OS now; when the process is
-	// gone, reused or unreadable it records that on o and reports false.
-	//
-	// ponytail: the read happens microseconds before kill(2); a pid that exits and is reused
-	// inside that window would still be signalled. Closing it needs pidfd (Linux only); macOS
-	// has no race-free way.
-	alive := func(o *Outcome) bool {
-		start, err := sy.start(o.Process.PID)
-		switch {
-		case errors.Is(err, errGone):
-			o.Exited = true
-		case err != nil:
-			o.Err = fmt.Errorf("cannot read start time, not signalled: %w", err)
-		case !start.Equal(o.Process.StartTime):
-			o.Err = ErrStartTime
-		default:
-			return true
-		}
-		return false
-	}
-	send := func(pid int, os ...*Outcome) {
-		err := sy.kill(pid, p.Signal)
-		for _, o := range os {
-			switch {
-			case err == nil:
-				o.Signalled = true
-			case errors.Is(err, syscall.ESRCH):
-				o.Exited = true
-			case errors.Is(err, syscall.EPERM):
-				o.Err = ErrPermission
-			default:
-				o.Err = err
-			}
-		}
-		if err == nil && pid < 0 {
-			r.Group = -pid
-		}
-	}
-
-	// A target that still leads its group gets one signal to -pgid, which reaches the whole
-	// group at the same moment, so no member can respawn another first. Members are found
-	// (and validated) just before, so they are reported as signalled even if they die at once.
-	// A planned member still in the group that fails validation (reused, or unreadable) would
-	// be reached by -pgid too, so then there is no group signal: the leader goes first alone
-	// and the validated rest one by one below.
-	done := make([]bool, len(p.Procs))
+	done := make([]bool, len(p.Procs)) // handled by the group step, skipped one by one below
 	if p.Group != 0 {
-		done[0] = true
-		if leader := &r.Outcomes[0]; alive(leader) {
-			g, err := sy.getpgid(p.Group)
-			group := err == nil && g == p.Group
-			members := []*Outcome{leader}
-			var idx []int
-			for i := 1; group && i < len(r.Outcomes); i++ {
-				if g, err := sy.getpgid(p.Procs[i].PID); err == nil && g == p.Group {
-					switch o := &r.Outcomes[i]; {
-					case alive(o):
-						members, idx = append(members, o), append(idx, i)
-					case o.Err != nil:
-						group, done[i] = false, true
-					default:
-						done[i] = true // gone (or a zombie) already
-					}
-				}
-			}
-			if group {
-				for _, i := range idx {
-					done[i] = true
-				}
-				send(-p.Group, members...)
-			} else {
-				send(leader.Process.PID, leader)
-			}
-		}
+		signalGroup(p, &r, done, sy)
 	}
 	for i := range r.Outcomes {
-		if o := &r.Outcomes[i]; !done[i] && alive(o) {
-			send(o.Process.PID, o)
+		if o := &r.Outcomes[i]; !done[i] && valid(o, sy) {
+			send(sy, o.Process.PID, p.Signal, o)
 		}
 	}
+	wait(r.Outcomes, deadline, sy)
+	return r, nil
+}
 
+// valid re-validates o against a start time read from the OS now; when the process is
+// gone, reused or unreadable it records that on o and reports false.
+//
+// ponytail: the read happens microseconds before kill(2); a pid that exits and is reused
+// inside that window would still be signalled. Closing it needs pidfd (Linux only); macOS
+// has no race-free way.
+func valid(o *Outcome, sy osys) bool {
+	start, err := sy.start(o.Process.PID)
+	switch {
+	case errors.Is(err, errGone):
+		o.Exited = true
+	case err != nil:
+		o.Err = fmt.Errorf("cannot read start time, not signalled: %w", err)
+	case !start.Equal(o.Process.StartTime):
+		o.Err = ErrStartTime
+	default:
+		return true
+	}
+	return false
+}
+
+// send signals pid (a negative pid is a process group) and records the result on every
+// outcome it stands for.
+func send(sy osys, pid int, sig syscall.Signal, outs ...*Outcome) {
+	err := sy.kill(pid, sig)
+	for _, o := range outs {
+		switch {
+		case err == nil:
+			o.Signalled = true
+		case errors.Is(err, syscall.ESRCH):
+			o.Exited = true
+		case errors.Is(err, syscall.EPERM):
+			o.Err = ErrPermission
+		default:
+			o.Err = err
+		}
+	}
+}
+
+// signalGroup signals the leader of p.Group (r.Outcomes[0]) and marks in done what it settled.
+// A target that still leads its group gets one signal to -pgid, which reaches the whole
+// group at the same moment, so no member can respawn another first. Members are found
+// (and validated) just before, so they are reported as signalled even if they die at once.
+// A planned member still in the group that fails validation (reused, or unreadable) would
+// be reached by -pgid too, so then there is no group signal: the leader goes first alone
+// and the validated rest one by one after it.
+func signalGroup(p Plan, r *Result, done []bool, sy osys) {
+	done[0] = true
+	leader := &r.Outcomes[0]
+	if !valid(leader, sy) {
+		return
+	}
+	g, err := sy.getpgid(p.Group)
+	group := err == nil && g == p.Group
+	members := []*Outcome{leader}
+	var idx []int
+	for i := 1; group && i < len(r.Outcomes); i++ {
+		if g, err := sy.getpgid(p.Procs[i].PID); err == nil && g == p.Group {
+			switch o := &r.Outcomes[i]; {
+			case valid(o, sy):
+				members, idx = append(members, o), append(idx, i)
+			case o.Err != nil:
+				group, done[i] = false, true
+			default:
+				done[i] = true // gone (or a zombie) already
+			}
+		}
+	}
+	if !group {
+		send(sy, leader.Process.PID, p.Signal, leader)
+		return
+	}
+	for _, i := range idx {
+		done[i] = true
+	}
+	send(sy, -p.Group, p.Signal, members...)
+	if leader.Signalled {
+		r.Group = p.Group
+	}
+}
+
+// wait polls the signalled outcomes every killPoll until each has exited (gone, a zombie, or
+// its pid reused) or deadline has passed.
+func wait(outs []Outcome, deadline time.Time, sy osys) {
 	for {
 		pending := false
-		for i := range r.Outcomes {
-			o := &r.Outcomes[i]
+		for i := range outs {
+			o := &outs[i]
 			if !o.Signalled || o.Exited {
 				continue
 			}
@@ -389,7 +446,7 @@ func kill(p Plan, timeout time.Duration, sy osys) (Result, error) {
 			}
 		}
 		if !pending || !time.Now().Before(deadline) {
-			return r, nil
+			return
 		}
 		sy.sleep(killPoll)
 	}
