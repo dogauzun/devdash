@@ -9,9 +9,7 @@ import (
 	"io"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 
 	"golang.org/x/sys/unix"
@@ -64,6 +62,41 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	}
 
 	ko := engine.KillOptions{Tree: o.Tree, Force: o.Force}
+	plans, code := planTargets(s, ts, ko, stderr)
+	if code != 0 {
+		return code
+	}
+	n := 0
+	for _, p := range plans {
+		n += len(p.Procs)
+	}
+	plan := planText(s, plans, ko, port, n)
+	if code := write(stdout, stderr, plan, 0); code != 0 {
+		return code
+	}
+	if !o.Yes {
+		if code := confirmKill(plans, plan, n, stdout, stderr); code != 0 {
+			return code
+		}
+	}
+	var b bytes.Buffer
+	code, signalled, ran := signalPlans(&b, plans, o, stderr)
+	if !ran {
+		fmt.Fprintln(stderr, "devdash: nothing was signalled")
+		return exitRefused
+	}
+	recheckPort(ctx, &b, eo, port, signalled, o.Tree, stderr)
+	// Signals were sent, so the code is their result even when the report cannot be written.
+	if _, err := io.WriteString(stdout, b.String()); err != nil {
+		fmt.Fprintln(stderr, "devdash:", err)
+	}
+	return code
+}
+
+// planTargets plans each target with ko, deduped. When any target is refused, it says why on
+// stderr, then that nothing was signalled, and returns the exit code: 3 when every refusal is an
+// unknown owner's (sudo might see it), else exitRefused.
+func planTargets(s model.Snapshot, ts []target, ko engine.KillOptions, stderr io.Writer) ([]engine.Plan, int) {
 	var plans []engine.Plan
 	code := 0
 	for _, t := range ts {
@@ -86,44 +119,43 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	}
 	if code != 0 {
 		fmt.Fprintln(stderr, "devdash: nothing was signalled")
-		return code
+		return nil, code
 	}
-	plans = dedupe(plans)
+	return dedupe(plans), 0
+}
 
-	n := 0
-	for _, p := range plans {
-		n += len(p.Procs)
+// confirmKill asks on the terminal before n processes are signalled, a second time when a plan
+// is outside every project. It returns 0 on yes, else the exit code after saying why on stderr.
+func confirmKill(plans []engine.Plan, plan string, n int, stdout, stderr io.Writer) int {
+	if !stdinTerminal() {
+		fmt.Fprintln(stderr, "devdash: confirmation needs a terminal; pass --yes to kill without asking")
+		return 2
 	}
-	plan := planText(s, plans, ko, port, n)
-	if code := write(stdout, stderr, plan, 0); code != 0 {
-		return code
+	if !stdoutTerminal(stdout) { // redirected: the user must still see what they confirm
+		fmt.Fprint(stderr, plan)
 	}
-	if !o.Yes {
-		if !stdinTerminal() {
-			fmt.Fprintln(stderr, "devdash: confirmation needs a terminal; pass --yes to kill without asking")
-			return 2
-		}
-		if !stdoutTerminal(stdout) { // redirected: the user must still see what they confirm
-			fmt.Fprint(stderr, plan)
-		}
-		in := bufio.NewReader(stdin)
-		ok := confirm(in, stderr, fmt.Sprintf("Send %s to %s?", sigName(plans[0].Signal), count(n, "process")))
-		if ok && slices.ContainsFunc(plans, func(p engine.Plan) bool { return p.Outside }) {
-			ok = confirm(in, stderr, "The target belongs to no project, so it may be a system service. Kill it anyway?")
-		}
-		if !ok {
-			fmt.Fprintln(stderr, "devdash: nothing was signalled")
-			return exitRefused
-		}
+	in := bufio.NewReader(stdin)
+	ok := confirm(in, stderr, fmt.Sprintf("Send %s to %s?", unix.SignalName(plans[0].Signal), model.Count(n, "process", "processes")))
+	if ok && slices.ContainsFunc(plans, func(p engine.Plan) bool { return p.Outside }) {
+		ok = confirm(in, stderr, "The target belongs to no project, so it may be a system service. Kill it anyway?")
 	}
+	if !ok {
+		fmt.Fprintln(stderr, "devdash: nothing was signalled")
+		return exitRefused
+	}
+	return 0
+}
 
-	var b bytes.Buffer
-	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+// signalPlans runs Kill on each plan and writes to b one line per outcome, the signalled
+// process groups, then the survivors or that every signalled process exited. It returns the
+// exit code, whether each process (by pid and start time) was signalled, and whether any plan
+// reached kill(2); when none did, b is not complete.
+func signalPlans(b *bytes.Buffer, plans []engine.Plan, o options, stderr io.Writer) (code int, signalled map[model.RowKey]bool, ran bool) {
+	tw := tabwriter.NewWriter(b, 0, 0, 2, ' ', 0)
 	var survivors []string
 	var groups []int
 	// Keyed by (pid, start time): a pid reused by a new holder within the wait was not signalled.
-	signalled := map[model.RowKey]bool{}
-	ran := false // some plan reached kill(2): the code is then its result, not "nothing signalled"
+	signalled = map[model.RowKey]bool{}
 	for _, p := range plans {
 		r, err := killFn(p, o.Timeout)
 		if err != nil { // a plan NewPlan could not have made, or devdash's ancestry changed since; nothing in it was signalled
@@ -131,7 +163,7 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 			code = rank(code, 4) // its processes are still there, as Result.ExitCode counts an unsignalled pid
 			continue
 		}
-		ran = true
+		ran = true // some plan reached kill(2): the code is then its result, not "nothing signalled"
 		code = rank(code, r.ExitCode())
 		if r.Group != 0 {
 			groups = append(groups, r.Group)
@@ -146,48 +178,50 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	}
 	_ = tw.Flush()
 	if !ran {
-		fmt.Fprintln(stderr, "devdash: nothing was signalled")
-		return exitRefused
+		return code, signalled, false
 	}
 	for _, g := range groups {
-		fmt.Fprintf(&b, "process group %d signalled\n", g)
+		fmt.Fprintf(b, "process group %d signalled\n", g)
 	}
 	switch {
 	case len(survivors) > 0 && !o.Force:
-		fmt.Fprintf(&b, "survivors: %s (try --force)\n", strings.Join(survivors, ", "))
+		fmt.Fprintf(b, "survivors: %s (try --force)\n", strings.Join(survivors, ", "))
 	case len(survivors) > 0:
-		fmt.Fprintf(&b, "survivors: %s\n", strings.Join(survivors, ", "))
+		fmt.Fprintf(b, "survivors: %s\n", strings.Join(survivors, ", "))
 	case code == 0:
-		fmt.Fprintln(&b, "every signalled process exited")
+		fmt.Fprintln(b, "every signalled process exited")
 	}
+	return code, signalled, true
+}
 
-	// A socket shared after fork is credited to the lowest pid only (DEV-45), so a forked
-	// child can still hold the port. It is reported but does not change the exit code, which
-	// is about the processes that were signalled.
+// recheckPort takes a new snapshot and writes to b whether port is free or who still holds it.
+// A socket shared after fork is credited to the lowest pid only (DEV-45), so a forked child
+// can still hold the port: a holder that was not signalled gets the --tree hint outside tree
+// mode. It is reported but does not change the exit code, which is about the processes that
+// were signalled.
+func recheckPort(ctx context.Context, b *bytes.Buffer, eo engine.Options, port uint16, signalled map[model.RowKey]bool, tree bool, stderr io.Writer) {
 	after, err := snapshotFn(ctx, eo)
 	after = cleanText(after)
 	if err != nil {
 		fmt.Fprintln(stderr, "devdash: cannot check the port again:", err)
-	} else if held := targets(after, port); len(held) > 0 {
-		var who []string
-		other := false // a holder that was not signalled
-		for _, t := range held {
-			who = append(who, describe(after, t))
-			other = other || t.key.ContainerID == "" && !signalled[t.key]
-		}
-		fmt.Fprintf(&b, "port %d is still held by %s", port, strings.Join(who, ", "))
-		if other && !o.Tree {
-			b.WriteString("; a forked child can hold it after its parent exits: try --tree")
-		}
-		b.WriteString("\n")
-	} else {
-		fmt.Fprintf(&b, "port %d is free\n", port)
+		return
 	}
-	// Signals were sent, so the code is their result even when the report cannot be written.
-	if _, err := io.WriteString(stdout, b.String()); err != nil {
-		fmt.Fprintln(stderr, "devdash:", err)
+	held := targets(after, port)
+	if len(held) == 0 {
+		fmt.Fprintf(b, "port %d is free\n", port)
+		return
 	}
-	return code
+	var who []string
+	other := false // a holder that was not signalled
+	for _, t := range held {
+		who = append(who, describe(after, t))
+		other = other || t.key.ContainerID == "" && !signalled[t.key]
+	}
+	fmt.Fprintf(b, "port %d is still held by %s", port, strings.Join(who, ", "))
+	if other && !tree {
+		b.WriteString("; a forked child can hold it after its parent exits: try --tree")
+	}
+	b.WriteString("\n")
 }
 
 // targets are the rows holding TCP port N, model.Holders: every process with a listener on it,
@@ -227,19 +261,9 @@ func dedupe(plans []engine.Plan) []engine.Plan {
 // planText is what kill will do: the mode and signal to n processes, then one line per pid in
 // signal order with its name, project and ports.
 func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port uint16, n int) string {
-	projects := map[string]string{}
-	for _, p := range s.Projects {
-		projects[p.ID] = p.Name
-	}
-	mode := "process"
-	if ko.Tree {
-		mode = "tree"
-	}
-	if ko.Force {
-		mode += ", force"
-	}
+	projects := s.ProjectNames()
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "kill port %d: %s mode, %s to %s:\n", port, mode, sigName(plans[0].Signal), count(n, "process"))
+	fmt.Fprintf(&b, "kill port %d: %s, %s to %s:\n", port, ko.Mode(), unix.SignalName(plans[0].Signal), model.Count(n, "process", "processes"))
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, pl := range plans {
 		for _, p := range pl.Procs {
@@ -247,7 +271,7 @@ func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port
 			if project == "" {
 				project = "-"
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, ports(p))
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, p.PortList())
 		}
 	}
 	_ = tw.Flush()
@@ -257,24 +281,6 @@ func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port
 		}
 	}
 	return b.String()
-}
-
-// ports lists p's listening ports, sorted and without repeats, or "-".
-func ports(p model.Process) string {
-	var ns []int
-	for _, l := range p.Listeners {
-		ns = append(ns, int(l.Port))
-	}
-	slices.Sort(ns)
-	ns = slices.Compact(ns)
-	if len(ns) == 0 {
-		return "-"
-	}
-	ss := make([]string, len(ns))
-	for i, n := range ns {
-		ss[i] = strconv.Itoa(n)
-	}
-	return strings.Join(ss, ",")
 }
 
 func outcome(o engine.Outcome) string {
@@ -352,18 +358,4 @@ func write(stdout, stderr io.Writer, text string, code int) int {
 		return exitFailed
 	}
 	return code
-}
-
-func sigName(s syscall.Signal) string {
-	if s == syscall.SIGKILL {
-		return "SIGKILL"
-	}
-	return "SIGTERM"
-}
-
-func count(n int, what string) string {
-	if n == 1 {
-		return "1 " + what
-	}
-	return fmt.Sprintf("%d %ses", n, what)
 }

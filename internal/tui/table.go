@@ -524,15 +524,7 @@ func (c groupCount) text(g model.GroupKind) string {
 	if g == model.GroupCompose || g == model.GroupContainers {
 		one, many = "container", "containers"
 	}
-	return " · " + count(c.rows, one, many) + " · " + count(c.ports, "port", "ports")
-}
-
-// count is n with the singular or plural noun.
-func count(n int, one, many string) string {
-	if n == 1 {
-		return "1 " + one
-	}
-	return strconv.Itoa(n) + " " + many
+	return " · " + model.Count(c.rows, one, many) + " · " + model.Count(c.ports, "port", "ports")
 }
 
 // tableCache holds what the table derives from all the rows, not just the visible ones, so a

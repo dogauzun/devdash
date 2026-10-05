@@ -69,10 +69,7 @@ func runPort(ctx context.Context, o engine.Options, port uint16, stdout, stderr 
 // with no socket on it (iptables only) gets one line per published address, with pid -. It
 // prints "free" and returns false when nothing listens on port.
 func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
-	projects := map[string]string{}
-	for _, p := range s.Projects {
-		projects[p.ID] = p.Name
-	}
+	projects := s.ProjectNames()
 	hint := "run with sudo to see it"
 	for _, x := range s.Warnings {
 		if x.Code == "listener_owner_unreadable" {

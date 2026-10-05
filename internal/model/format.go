@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"fmt"
 	"path"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -66,6 +68,42 @@ func (p Process) Command() string {
 		argv = append([]string{path.Base(argv[0])}, argv[1:]...)
 	}
 	return strings.Join(argv, " ")
+}
+
+// PortList is p's listening ports as the kill plans list them (`kill N` and the dashboard's
+// kill modal): sorted, each once, comma-joined, or "-" when it has none.
+func (p Process) PortList() string {
+	var ns []int
+	for _, l := range p.Listeners {
+		ns = append(ns, int(l.Port))
+	}
+	slices.Sort(ns)
+	ns = slices.Compact(ns)
+	if len(ns) == 0 {
+		return "-"
+	}
+	ss := make([]string, len(ns))
+	for i, n := range ns {
+		ss[i] = strconv.Itoa(n)
+	}
+	return strings.Join(ss, ",")
+}
+
+// ProjectNames maps s's project IDs to their names.
+func (s Snapshot) ProjectNames() map[string]string {
+	ns := make(map[string]string, len(s.Projects))
+	for _, p := range s.Projects {
+		ns[p.ID] = p.Name
+	}
+	return ns
+}
+
+// Count is n with the singular or plural noun: "1 process", "3 processes".
+func Count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
 }
 
 // Uptime formats a duration as its largest whole unit: 45s, 12m, 3h, 2d.
