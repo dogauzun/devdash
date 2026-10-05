@@ -22,6 +22,28 @@ func TestProjectLabel(t *testing.T) {
 	}
 }
 
+// TestProcessCommand: an absolute argv[0] shows by its basename, except a one-element argv
+// holding spaces, a title rewritten with setproctitle on Linux (DEV-146).
+func TestProcessCommand(t *testing.T) {
+	for _, tt := range []struct {
+		argv []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"uvicorn", "app:main"}, "uvicorn app:main"},
+		{[]string{"/usr/sbin/sshd", "-D"}, "sshd -D"},
+		{[]string{"/usr/sbin/sshd"}, "sshd"},
+		{[]string{"node_modules/.bin/vite", "--port", "5173"}, "node_modules/.bin/vite --port 5173"},
+		{[]string{"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--type=gpu"}, "Google Chrome --type=gpu"},
+		{[]string{"/opt/google/chrome/chrome --type=renderer --user-data-dir=/tmp/profile-AbC123 --num-raster-threads=4"},
+			"/opt/google/chrome/chrome --type=renderer --user-data-dir=/tmp/profile-AbC123 --num-raster-threads=4"},
+	} {
+		if got := (Process{Argv: tt.argv}).Command(); got != tt.want {
+			t.Errorf("%q: Command() = %q, want %q", tt.argv, got, tt.want)
+		}
+	}
+}
+
 // TestProcessLabel: a shell's script is labelled after the shell on both systems, though Linux
 // names the process of a #! script after the script (DEV-159).
 func TestProcessLabel(t *testing.T) {
