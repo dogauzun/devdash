@@ -64,11 +64,11 @@ The top-level object of `devdash port N --json`. Like `--json`, it samples twice
 | --- | --- | --- | --- |
 | `id` | string | always | Repository root path; the value of a process's `project`. |
 | `root` | string | always | Repository root path (same as `id`). |
-| `name` | string | always | Basename of `root`, or of `main_repo` for a linked worktree. |
+| `name` | string | always | Basename of `root`, or the repository's name for a linked worktree: the basename of `main_repo`, or when that is `null` of the git directory less a trailing `.git` (of its parent for a dot-directory such as `.bare`). |
 | `branch` | string or null | always | Checked-out branch; `null` when HEAD is detached or unreadable. |
 | `short_sha` | string or null | always | First 7 characters of a detached HEAD; `null` on a branch. |
 | `worktree` | boolean | always | `true` for a linked worktree. |
-| `main_repo` | string or null | always | Main repository's work tree for a linked worktree, else `null`. |
+| `main_repo` | string or null | always | Main repository's work tree for a linked worktree, else `null`; also `null` for a worktree of a bare repository, or of a `--separate-git-dir` repository, for which git records no work tree. |
 | `here` | boolean | always | `true` for the repository devdash was run from: the one its working directory resolves to (steps 1 to 4 of project resolution). At most one project has it; none when devdash runs outside every repository. |
 
 ## process

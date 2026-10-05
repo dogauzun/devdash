@@ -176,6 +176,9 @@ func under(path, dir string) bool {
 // commit while detached), so every write is a new inode even when a coarse-mtime filesystem
 // gives it the old timestamp; a changed file, or HEAD vanishing with the repository, is a miss
 // and the walk runs again.
+// A worktree's commondir never changes, and core.bare and core.worktree in the common config
+// change only when a repository is reshaped (a submodule moved), so neither is checked: such a
+// change shows on the next HEAD write or eviction.
 // The .git entry's own mtime is not checked: for a main repository it changes on every index
 // write, which would make most hits misses, and a worktree's .git file never changes.
 // Known ceiling: a repository created between d and a cached root (or above a directory that
@@ -242,16 +245,17 @@ func (r *Resolver) inRoots(d string) bool {
 }
 
 // repoAt reports whether dir holds a .git entry: a directory (main repository, or a nested
-// one), or a regular file with a gitdir: line (linked worktree when the gitdir is
-// <common>/worktrees/<name>, otherwise a submodule or separate git dir, its own project).
-// A symlinked .git, or HEAD, is refused, never followed. headFI is HEAD's lstat, nil if unreadable.
+// one), or a regular file with a gitdir: line (linked worktree when the gitdir has a commondir
+// file naming the repository's common directory, otherwise a submodule or separate git dir,
+// its own project). A symlinked .git, HEAD, commondir or config is refused, never followed.
+// headFI is HEAD's lstat, nil if unreadable.
 func repoAt(dir string) (p Project, head string, headFI fs.FileInfo, ok bool) {
 	dotgit := filepath.Join(dir, ".git")
 	fi, err := lstat(dotgit)
 	if err != nil {
 		return
 	}
-	p = Project{ID: dir, Root: dir, Name: filepath.Base(dir)}
+	p = Project{ID: dir, Root: dir, Name: filepath.Base(dir), CommonDir: dotgit}
 	gitdir := dotgit
 	switch {
 	case fi.IsDir():
@@ -265,12 +269,14 @@ func repoAt(dir string) (p Project, head string, headFI fs.FileInfo, ok bool) {
 			g = filepath.Join(dir, g)
 		}
 		gitdir = filepath.Clean(g)
-		if filepath.Base(filepath.Dir(gitdir)) == "worktrees" {
-			main := filepath.Dir(filepath.Dir(gitdir)) // <common> of <common>/worktrees/<name>
-			if filepath.Base(main) == ".git" {
-				main = filepath.Dir(main) // non-bare: the work tree above .git
+		p.CommonDir = gitdir
+		if c := strings.TrimSpace(string(readRegular(filepath.Join(gitdir, "commondir")))); c != "" {
+			if !filepath.IsAbs(c) {
+				c = filepath.Join(gitdir, c)
 			}
-			p.Worktree, p.MainRepo, p.Name = true, main, filepath.Base(main)
+			p.CommonDir = filepath.Clean(c)
+			p.Worktree = true
+			p.MainRepo, p.Name = mainWorkTree(p.CommonDir)
 		}
 	default:
 		return Project{}, "", nil, false
@@ -287,6 +293,66 @@ func repoAt(dir string) (p Project, head string, headFI fs.FileInfo, ok bool) {
 		}
 	}
 	return p, head, headFI, true
+}
+
+// mainWorkTree returns the main work tree of the repository whose common directory is common
+// and the repository's name. The work tree is core.worktree when set (git writes it for a
+// submodule's git dir), else the directory above a non-bare common directory called .git, else
+// "": a bare repository has none, and git records none for a --separate-git-dir. Without a
+// work tree the name is the common directory's basename less a trailing .git (api.git → api),
+// or its parent's basename when that leaves a dot-directory or nothing (shop2/.bare → shop2).
+func mainWorkTree(common string) (main, name string) {
+	bare, wt := coreConfig(common)
+	switch {
+	case wt != "":
+		if !filepath.IsAbs(wt) {
+			wt = filepath.Join(common, wt)
+		}
+		main = filepath.Clean(wt)
+	case !bare && filepath.Base(common) == ".git":
+		main = filepath.Dir(common)
+	}
+	if main != "" {
+		return main, filepath.Base(main)
+	}
+	name = strings.TrimSuffix(filepath.Base(common), ".git")
+	if name == "" || strings.HasPrefix(name, ".") {
+		name = filepath.Base(filepath.Dir(common))
+	}
+	return "", name
+}
+
+// coreConfig reads core.bare and core.worktree from common/config.
+// ponytail: only the plain `key = value` lines git writes itself in the first 4 KiB, where git
+// init puts [core]; no includes, quoting or escapes. A full config parser if one ever matters.
+func coreConfig(common string) (bare bool, worktree string) {
+	section := ""
+	for line := range strings.Lines(string(readRegular(filepath.Join(common, "config")))) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			section = strings.ToLower(strings.Trim(line, "[]"))
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || section != "core" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "bare":
+			bare = strings.TrimSpace(v) == "true"
+		case "worktree":
+			worktree = strings.TrimSpace(v)
+		}
+	}
+	return bare, worktree
+}
+
+// readRegular is readSmall of a path that lstat finds to be a regular file, else nil.
+func readRegular(path string) []byte {
+	if fi, err := lstat(path); err != nil || !fi.Mode().IsRegular() {
+		return nil
+	}
+	return readSmall(path)
 }
 
 // readSmall reads at most 4 KiB of a file already checked to be regular by lstat; .git files

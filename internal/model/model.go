@@ -61,12 +61,14 @@ type Listener struct {
 type Project struct {
 	ID       string // repository root path, also the group key
 	Root     string
-	Name     string // basename of Root, or of MainRepo for linked worktrees
+	Name     string // basename of Root, or the repository's name for linked worktrees (mainWorkTree)
 	Branch   string // "" when detached; then ShortSHA is set
 	ShortSHA string
 	Worktree bool
-	MainRepo string // for linked worktrees only
+	MainRepo string // main work tree, for linked worktrees only; "" when bare or not recorded
 	Here     bool   // the repository devdash was run from (spec "Release 1.0", Here)
+	// CommonDir is the repository's git common directory, the same for all its worktrees.
+	CommonDir string
 }
 
 // Container is one Docker container as reported by the Engine API.

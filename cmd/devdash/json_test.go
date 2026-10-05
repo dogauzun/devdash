@@ -58,6 +58,7 @@ func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) mod
 	shop, cart := filepath.Join(dir, "shop"), filepath.Join(dir, "shop-cart")
 	write(filepath.Join(shop, ".git", "HEAD"), "ref: refs/heads/main\n")
 	write(filepath.Join(shop, ".git", "worktrees", "cart", "HEAD"), "0123456789abcdef0123456789abcdef01234567\n")
+	write(filepath.Join(shop, ".git", "worktrees", "cart", "commondir"), "../..\n")
 	write(filepath.Join(cart, ".git"), "gitdir: "+filepath.Join(shop, ".git", "worktrees", "cart")+"\n")
 
 	t0 := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
