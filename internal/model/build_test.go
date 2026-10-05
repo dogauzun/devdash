@@ -110,7 +110,7 @@ func TestBuildListeners(t *testing.T) {
 			}
 			var warn []Warning
 			if tt.wantWarnCount > 0 {
-				warn = []Warning{{"listener_owner_unreadable", tt.wantWarnCount, "run with sudo to see owners"}}
+				warn = []Warning{{Code: "listener_owner_unreadable", Count: tt.wantWarnCount, Hint: "run with sudo to see owners"}}
 			}
 			if !reflect.DeepEqual(s.Warnings, warn) {
 				t.Errorf("warnings %+v, want %+v", s.Warnings, warn)
@@ -124,9 +124,21 @@ func TestBuildListeners(t *testing.T) {
 func TestBuildOwnerHint(t *testing.T) {
 	raw := Raw{TakenAt: t0, Listeners: []RawListener{{"tcp4", lo, 22, 0}}, OwnerHint: "add a capability"}
 	s := Build(raw, Snapshot{}, nil, NewResolver("", nil))
-	want := []Warning{{"listener_owner_unreadable", 1, "add a capability"}}
+	want := []Warning{{Code: "listener_owner_unreadable", Count: 1, Hint: "add a capability"}}
 	if !reflect.DeepEqual(s.Warnings, want) {
 		t.Errorf("warnings %+v, want %+v", s.Warnings, want)
+	}
+}
+
+// TestBuildOwnerSudo: listener_owner_unreadable is marked as fixed by sudo exactly when the
+// collector says root would see the owners (Raw.OwnerSudo, DEV-144).
+func TestBuildOwnerSudo(t *testing.T) {
+	for _, sudo := range []bool{false, true} {
+		raw := Raw{TakenAt: t0, Listeners: []RawListener{{"tcp4", lo, 22, 0}}, OwnerSudo: sudo}
+		s := Build(raw, Snapshot{}, nil, NewResolver("", nil))
+		if len(s.Warnings) != 1 || s.Warnings[0].Sudo != sudo {
+			t.Errorf("OwnerSudo %v: warnings %+v", sudo, s.Warnings)
+		}
 	}
 }
 
@@ -163,7 +175,7 @@ func TestBuildOwnerWarningContainers(t *testing.T) {
 			s := Build(raw, Snapshot{}, tt.containers, NewResolver("", nil))
 			var want []Warning
 			if tt.wantCount > 0 {
-				want = []Warning{{"listener_owner_unreadable", tt.wantCount, "run with sudo to see owners"}}
+				want = []Warning{{Code: "listener_owner_unreadable", Count: tt.wantCount, Hint: "run with sudo to see owners"}}
 			}
 			if !reflect.DeepEqual(s.Warnings, want) {
 				t.Errorf("warnings %+v, want %+v", s.Warnings, want)
@@ -229,9 +241,9 @@ func TestBuildCopiesAndFills(t *testing.T) {
 		Processes: []Process{stale},
 		Listeners: []RawListener{{"tcp6", netip.IPv6Unspecified(), 3000, 10}},
 		Warnings: []Warning{
-			{"process_fields_unreadable", 3, "run with sudo"},
-			{"proc_hidepid", 1, "hidepid=invisible"},
-			{"process_fields_unreadable", 2, "ignored: first hint wins"},
+			{Code: "process_fields_unreadable", Count: 3, Hint: "run with sudo"},
+			{Code: "proc_hidepid", Count: 1, Hint: "hidepid=invisible"},
+			{Code: "process_fields_unreadable", Count: 2, Hint: "ignored: first hint wins"},
 		},
 		Timings: Timing{"proctable": time.Millisecond},
 	}
@@ -243,7 +255,7 @@ func TestBuildCopiesAndFills(t *testing.T) {
 		TakenAt:       t0,
 		Host:          raw.Host,
 		Containers:    containers,
-		Warnings:      []Warning{{"process_fields_unreadable", 5, "run with sudo"}, {"proc_hidepid", 1, "hidepid=invisible"}},
+		Warnings:      []Warning{{Code: "process_fields_unreadable", Count: 5, Hint: "run with sudo"}, {Code: "proc_hidepid", Count: 1, Hint: "hidepid=invisible"}},
 	}
 	wantProc := proc(10, 0)
 	wantProc.Unknown = FieldCwd | FieldMem // collector bits pass through, no owner bit for a real process

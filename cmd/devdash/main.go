@@ -10,10 +10,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -133,12 +135,56 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	if o.JSON {
 		return runJSON(ctx, o.engine(c), stdout, stderr)
 	}
-	return runTUI(ctx, o, c, stderr)
+	return runTUI(ctx, o, args, c, stderr)
 }
 
-// runTUI runs the dashboard until the user quits. The engine's refresh loop runs alongside it
-// and stops with it.
-func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Writer) int {
+// The dashboard and its rerun under sudo (DEV-144); tests replace all three.
+var (
+	dashboard = tui.Run
+	// lookSudo is the path of sudo when S may offer it: devdash is not root and sudo is on
+	// PATH; "" otherwise.
+	lookSudo = func() string {
+		if os.Geteuid() == 0 {
+			return ""
+		}
+		p, err := exec.LookPath("sudo")
+		if err != nil { // exec.ErrDot included: never a sudo found through a relative PATH entry
+			return ""
+		}
+		return p
+	}
+	execve = syscall.Exec
+)
+
+// runTUI runs the dashboard until the user quits, then, if the user confirmed S, replaces
+// devdash with `sudo -- <this executable> args...` (args as devdash got them).
+func runTUI(ctx context.Context, o options, args []string, c collector.Collector, stderr io.Writer) int {
+	sudo := lookSudo()
+	asked, err := runDashboard(ctx, o, c, sudo != "")
+	switch {
+	case err != nil:
+		fmt.Fprintln(stderr, "devdash:", err)
+		return exitFailed
+	case !asked:
+		return 0
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		// Only returns on failure. sudo asks for the password on the terminal, which the
+		// dashboard has restored; devdash never sees it.
+		err = execve(sudo, append([]string{"sudo", "--", exe}, args...), os.Environ())
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "devdash: rerun with sudo:", err)
+		return exitFailed
+	}
+	return 0
+}
+
+// runDashboard runs the dashboard, with S offered when sudo is set, and returns once the
+// terminal is restored and the engine's refresh loop, which runs alongside it, has stopped:
+// an exec after it runs no deferred calls.
+func runDashboard(ctx context.Context, o options, c collector.Collector, sudo bool) (asked bool, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	eo := o.dashboard(c)
@@ -151,11 +197,9 @@ func runTUI(ctx context.Context, o options, c collector.Collector, stderr io.Wri
 	if o.NoColor {
 		opts = append(opts, tea.WithColorProfile(colorprofile.Ascii)) // keeps reverse and faint, drops colour
 	}
-	if err := tui.Run(ctx, tuiOptions(o, e, eo.Docker), opts...); err != nil {
-		fmt.Fprintln(stderr, "devdash:", err)
-		return exitFailed
-	}
-	return 0
+	to := tuiOptions(o, e, eo.Docker)
+	to.Sudo = sudo
+	return dashboard(ctx, to, opts...)
 }
 
 // tuiOptions is the dashboard's options for these flags on engine e, whose container source is

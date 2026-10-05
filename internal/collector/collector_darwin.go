@@ -143,8 +143,9 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	}
 	if n := countDenied(res.Processes, denied); n > 0 {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: n,
-			Hint: "other users' processes: argv, cwd, cpu and mem need root; run with sudo"})
+			Hint: "other users' processes: argv, cwd, cpu and mem need root; run with sudo", Sudo: uid != 0})
 	}
+	res.OwnerSudo = uid != 0 // Build's "run with sudo to see owners" is the hint here
 	if pcbWarn != "" {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: pcbWarn})
 	}

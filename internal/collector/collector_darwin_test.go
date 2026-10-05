@@ -377,9 +377,12 @@ func TestCollectOtherUsers(t *testing.T) {
 		}
 	}
 	if n := len(slices.DeleteFunc(slices.Clone(res.Warnings), func(w model.Warning) bool {
-		return w.Code != "process_fields_unreadable" || w.Count != others
+		return w.Code != "process_fields_unreadable" || w.Count != others || !w.Sudo
 	})); n != 1 {
-		t.Errorf("warnings %+v, want one process_fields_unreadable with count %d", res.Warnings, others)
+		t.Errorf("warnings %+v, want one process_fields_unreadable with count %d, fixed by sudo", res.Warnings, others)
+	}
+	if !res.OwnerSudo {
+		t.Error("OwnerSudo false for a normal user: sudo shows other users' listener owners (DEV-144)")
 	}
 }
 

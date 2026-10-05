@@ -83,8 +83,11 @@ func goldenSnapshot(t *testing.T, dir string, docker engine.ContainerSource) mod
 				{Proto: "tcp6", Addr: netip.MustParseAddr("fe80::1%lo0"), Port: 8081, PID: 101}, // a scoped address keeps its zone
 				{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 5432, PID: 0},              // root's docker-proxy
 			},
-			Warnings: []model.Warning{{Code: "process_fields_unreadable", Count: 1, Hint: "run with sudo"}},
-			Timings:  model.Timing{"proctable": 1500 * time.Microsecond, "argv_cwd": 2250 * time.Microsecond, "listeners": 750 * time.Microsecond},
+			// Sudo and OwnerSudo are for the TUI's S key only: the golden file proves --json
+			// leaves them out (DEV-144).
+			Warnings:  []model.Warning{{Code: "process_fields_unreadable", Count: 1, Hint: "run with sudo", Sudo: true}},
+			OwnerSudo: true,
+			Timings:   model.Timing{"proctable": 1500 * time.Microsecond, "argv_cwd": 2250 * time.Microsecond, "listeners": 750 * time.Microsecond},
 		}}
 	}
 	// A fixed table instead of the OS lookup, so the output does not depend on this machine's

@@ -91,6 +91,9 @@ type Warning struct {
 	Code  string // stable, snake_case, e.g. "listener_owner_unreadable"
 	Count int
 	Hint  string
+	// Sudo is set when running devdash under sudo would show what is missing: devdash is not
+	// root and root would have the access. Only the TUI reads it, to offer S; --json leaves it out.
+	Sudo bool
 }
 
 // Timing holds per-source durations keyed by source name ("proctable", "listeners", "projects", ...).
