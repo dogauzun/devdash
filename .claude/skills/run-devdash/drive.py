@@ -217,8 +217,9 @@ def main():
         pump(0.6)
         show(f"{n}: {step}")
 
-    os.write(fd, b"\x1bq")  # esc closes a modal or prompt, q quits
-    pump(0.5)
+    for key in (b"\x1b", b"q"):  # esc closes a modal or prompt, q quits
+        os.write(fd, key)
+        pump(0.3)
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
