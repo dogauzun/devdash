@@ -72,7 +72,7 @@ denied (also an owner devdash cannot see; try sudo), 4 kill: survivors remain,
 5 devdash failed (no snapshot could be taken, free could not probe a port, or output
 could not be written; kill: only before anything was signalled), 6 kill: nothing
 signalled (devdash refuses the target, or the confirmation was declined).
-The dashboard exits 0 when quit, by q, ctrl-c, SIGINT or SIGTERM.
+The dashboard exits 0 when quit, by q, ctrl-c, SIGINT, SIGTERM or SIGHUP.
 `
 
 // exitFailed is the exit code of every command when devdash itself fails: the snapshot could

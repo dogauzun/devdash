@@ -39,7 +39,7 @@ under the header says how many rows hold the port and which port is free next (t
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | quit with `q`, `ctrl-c`, SIGINT or SIGTERM |
+| 0 | quit with `q`, `ctrl-c`, SIGINT, SIGTERM or SIGHUP |
 | 2 | usage error, or stdout is not a terminal (piped, redirected, cron): use `--json`, `port N` or `free N` there |
 | 5 | devdash failed |
 
