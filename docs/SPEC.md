@@ -409,7 +409,7 @@ Release 1.1 makes the dashboard answer "what is using this port" as well as `dev
 Release 1.1 is done when these goals hold on both operating systems without root, on top of the v1 and Release 1.0 goals:
 
 - Typing a port number in the table finds its holder wherever it is (a collapsed group, a hidden shell's child) and selects it, so `5173` then `x` kills it.
-- While the search is a port number, one line says how many rows hold it and which port is free next, from the same search as `devdash free`, or that it is free.
+- While the search is a port number, one line says how many holders it has (processes and containers) and which port is free next, from the same search as `devdash free`, or that it is free.
 - A row run by an interpreter names the tool (`vite (node)`), and at 80 columns the arguments fill the name column's spare width.
 - The detail pane says whether a process is in this repo and which port is free next, and the kill result says whether the killed processes' ports are free.
 
@@ -423,15 +423,15 @@ Non-goals for Release 1.1, considered in the design and parked: mouse support (c
 
 | Situation | Port line |
 | --- | --- |
-| K rows hold N | `port 5173 · 1 holder · next free 5174` |
-| K rows hold N, nothing in range is free | `port 5173 · 1 holder · no free port in 5174-5273` |
-| no row holds N and N binds | `port 3000 · free` |
-| no row holds N but the bind fails | `port 3000 · next free 3001 · bind refused` |
+| N has K holders | `port 5173 · 1 holder · next free 5174` |
+| N has K holders, nothing in range is free | `port 5173 · 1 holder · no free port in 5174-5273` |
+| N has no holder and N binds | `port 3000 · free` |
+| N has no holder but the bind fails | `port 3000 · next free 3001 · bind refused` |
 | the probe failed (`EMFILE`, a sandbox's `EPERM`) | `port 5173 · 1 holder · next free: <error>`, the error part in the warning colour |
-| no row holds N and the probe of N itself failed | `port 3000 · probe failed: <error>`, the error part in the warning colour |
+| N has no holder and the probe of N itself failed | `port 3000 · probe failed: <error>`, the error part in the warning colour |
 | N = 65535 | `port 65535 · 1 holder`, or `free`, `bind refused` or `probe failed: <error>`, with no `next free` |
 
-`bind refused` means a listener devdash cannot see holds the port (another user's on macOS, one in another network namespace) or this user may not bind it (below 1024 on Linux); with no row holding N and the bind failing, the parts are `next free …` (or `no free port in …`) and then `bind refused`. Until the first answer for the current query arrives, the line shows only what the snapshot says: `port 5173 · 1 holder`, or `port 3000` when no row holds it. The probe runs in a `tea.Cmd`, off the UI goroutine, when the query changes to a port number and on each new snapshot while it is one; an answer for an older query or snapshot is dropped. It binds at most 101 ports, never runs on the refresh path and shells out to nothing. The probe is `tui.Options.Probe` (`freeport.Probe` when nil), so TUI tests never bind a socket. The line is cut with `…` at the screen edge, which is why `next free` comes before `bind refused`. While the line is shown, the table under it never says `nothing to show`: the line is the answer.
+`bind refused` means a listener devdash cannot see holds the port (another user's on macOS, one in another network namespace) or this user may not bind it (below 1024 on Linux); with no holder of N and the bind failing, the parts are `next free …` (or `no free port in …`) and then `bind refused`. Until the first answer for the current query arrives, the line shows only what the snapshot says: `port 5173 · 1 holder`, or `port 3000` when nothing holds it. The probe runs in a `tea.Cmd`, off the UI goroutine, when the query changes to a port number and on each new snapshot while it is one; an answer for an older query or snapshot is dropped. It binds at most 101 ports, never runs on the refresh path and shells out to nothing. The probe is `tui.Options.Probe` (`freeport.Probe` when nil), so TUI tests never bind a socket. The line is cut with `…` at the screen edge, which is why `next free` comes before `bind refused`. While the line is shown, the table under it never says `nothing to show`: the line is the answer.
 
 ```text
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers · /5173_
