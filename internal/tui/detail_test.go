@@ -118,28 +118,23 @@ func TestDetailOverlay(t *testing.T) {
 	}
 }
 
-// TestDetailStartedLocalZone: the start time is shown in the machine's zone, and the tests'
-// pinned zone (TestMain) is what keeps the detail goldens the same on every machine (DEV-90).
+// TestDetailStartedLocalZone: the start time is shown in the machine's zone, time.Local, whatever
+// zone the snapshot's time carries, and the tests' pinned zone (TestMain) is what keeps the
+// detail goldens the same on every machine (DEV-90). The snapshot's zone varies, not time.Local:
+// a tick timer a Run test leaves behind reads time.Local, so no test writes it (DEV-199).
 func TestDetailStartedLocalZone(t *testing.T) {
 	if time.Local != time.UTC {
 		t.Fatalf("time.Local is %v, want UTC pinned by TestMain so the goldens do not depend on TZ", time.Local)
 	}
-	for _, c := range []struct {
-		zone *time.Location
-		want string
-	}{
-		{time.UTC, "started   2026-10-02 09:00:00 (3 h ago)"},
-		{time.FixedZone("UTC+3", 3*60*60), "started   2026-10-02 12:00:00 (3 h ago)"},
-		{time.FixedZone("UTC-7", -7*60*60), "started   2026-10-02 02:00:00 (3 h ago)"},
-	} {
-		t.Run(c.zone.String(), func(t *testing.T) {
-			pinLocal(t, c.zone)
+	for _, zone := range []*time.Location{time.UTC, time.FixedZone("UTC+3", 3*60*60), time.FixedZone("UTC-7", -7*60*60)} {
+		t.Run(zone.String(), func(t *testing.T) {
 			m, _ := newTest(t, 100, 40)
 			s := fixture()
+			s.Processes[1].StartTime = s.Processes[1].StartTime.In(zone) // node vite, 101
 			feed(m, s)
 			detailSelect(t, m, keyOf(s, 101))
 			press(m, "enter")
-			hasLine(t, m, c.want)
+			hasLine(t, m, "started   2026-10-02 09:00:00 (3 h ago)")
 		})
 	}
 }
@@ -354,9 +349,6 @@ func TestDetailWrapWideAtWidthOne(t *testing.T) {
 	}
 }
 
-// hiddenProxy is the fixture as a non-root user in the docker group sees it: docker-proxy is
-// root's, so shop-db-1's published port 5432 has a PID 0 owner that Reconcile gave the
-// container's ID (DEV-89).
 // TestDetailContainerForwarder is DEV-180: OrbStack Helper holds two containers' ports, so it
 // keeps its own row and the container rows have no process; the pane names it as the holder of
 // the container's port, as `port N` does, instead of saying no process holds it.
@@ -405,6 +397,36 @@ func TestDetailContainerUnheldPort(t *testing.T) {
 	}
 }
 
+// TestDetailProcessRowUnheldPort is DEV-196: shop-db-1 publishes 5432, which its docker-proxy
+// holds, and 5433 (on both families), which no host socket holds; it is drawn as the proxy's
+// row (or the PID 0 owner's when the proxy is root's), whose pane says, once, that nothing
+// holds 5433, and names no holder, since the row is the holder.
+func TestDetailProcessRowUnheldPort(t *testing.T) {
+	for name, s := range map[string]model.Snapshot{"proxy": fixture(), "unknown owner": hiddenProxy()} {
+		t.Run(name, func(t *testing.T) {
+			m, _ := newTest(t, 100, 40)
+			s.Containers[0].Ports = append(s.Containers[0].Ports,
+				model.PortMapping{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 5433, ContainerPort: 5433, Proto: "tcp"},
+				model.PortMapping{HostIP: netip.MustParseAddr("::"), HostPort: 5433, ContainerPort: 5433, Proto: "tcp"},
+				model.PortMapping{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 5434, ContainerPort: 5434, Proto: "udp"})
+			feed(m, s)
+			press(m, "enter")
+			detailSelect(t, m, s.Processes[slices.IndexFunc(s.Processes, func(p model.Process) bool { return p.ContainerID != "" })].Key())
+			hasLine(t, m, "no process holds port 5433 (published by Docker)")
+			body := strings.Join(bodyLines(m), "\n")
+			if n := strings.Count(body, "no process holds"); n != 1 {
+				t.Errorf("want one no-holder line (5433; 5434 is udp), got %d:\n%s", n, screen(m))
+			}
+			if strings.Contains(body, "held by") {
+				t.Errorf("the row's own process is named as a holder:\n%s", screen(m))
+			}
+		})
+	}
+}
+
+// hiddenProxy is the fixture as a non-root user in the docker group sees it: docker-proxy is
+// root's, so shop-db-1's published port 5432 has a PID 0 owner that Reconcile gave the
+// container's ID (DEV-89).
 func hiddenProxy() model.Snapshot {
 	s := fixture()
 	s.Processes = slices.DeleteFunc(s.Processes, func(p model.Process) bool { return p.PID == 300 })

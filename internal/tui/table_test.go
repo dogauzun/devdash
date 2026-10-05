@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"math"
 	"net/netip"
 	"slices"
@@ -603,6 +604,39 @@ func TestTableHere(t *testing.T) {
 	// The label the port answer shares has no suffix: it says "this repo" instead.
 	if got := rowLabel(m.rows[0]); got != "shop @ feat/cart (worktree)" {
 		t.Errorf("rowLabel = %q, want no (here)", got)
+	}
+}
+
+// TestTableHeaderCut is DEV-195: a header too wide for the table cuts the name and branch before
+// its suffixes while they keep a cell and the "…"; (here) gives way before (worktree), and below
+// that the whole label is cut. The counts give way first, as before.
+func TestTableHeaderCut(t *testing.T) {
+	for _, tc := range []struct {
+		width     int
+		worktree  bool
+		want, not string
+	}{
+		{120, true, "▾ shop @ feature/a-very-long-branch-name (worktree) (here) · 4 processes · 1 port", ""},
+		{71, true, "▾ shop @ feature/a-very-long-branch-name (worktree) (here) · 4 process…", ""},
+		{40, true, "▾ shop @ feature/a-ve… (worktree) (here)", "·"},
+		{40, false, "▾ shop @ feature/a-very-long-bra… (here)", "·"},
+		{22, true, "▾ s… (worktree) (here)", ""},
+		{21, true, "▾ shop @ … (worktree)", "(here)"},
+		{20, true, "▾ shop @… (worktree)", "(here)"},
+		{12, true, "▾ shop @ fe…", "(worktree)"},
+		{10, false, "▾ shop @ …", "(here)"},
+	} {
+		t.Run(fmt.Sprint(tc.width, tc.worktree), func(t *testing.T) {
+			m, _ := newTest(t, tc.width, 30)
+			s := fixture()
+			s.Projects[0].Here, s.Projects[1].Here = true, false
+			s.Projects[0].Branch, s.Projects[0].Worktree = "feature/a-very-long-branch-name", tc.worktree
+			feed(m, s)
+			l := line(m, "▾ s")
+			if l != tc.want || tc.not != "" && strings.Contains(l, tc.not) {
+				t.Errorf("header = %q, want %q:\n%s", l, tc.want, screen(m))
+			}
+		})
 	}
 }
 
