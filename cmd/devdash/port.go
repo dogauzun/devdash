@@ -234,12 +234,12 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 	return code
 }
 
-// cleanText is a copy of s with every text writePort prints passed through model.Clean:
+// cleanText is a copy of s with every text writePort and runKill print passed through model.Clean:
 // process, project and container names, container IDs, images and compose projects, warning
 // hints and address zones. Those come from other processes (a Linux comm set with
 // PR_SET_NAME, a directory name), so raw they could drive the terminal, and a newline in one
-// would shift the lines writeAnswer inserts onto the wrong holder. Piped output keeps them raw,
-// as v0.1.1 printed them. s itself is not changed: a snapshot is never mutated.
+// would shift the lines writeAnswer inserts onto the wrong holder. Piped port output keeps them
+// raw, as v0.1.1 printed them. s itself is not changed: a snapshot is never mutated.
 func cleanText(s model.Snapshot) model.Snapshot {
 	s.Processes = slices.Clone(s.Processes)
 	for i := range s.Processes {
