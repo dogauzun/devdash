@@ -57,8 +57,7 @@ type killState struct {
 	result    engine.Result     // killReport
 	earlier   []engine.Outcome  // the earlier rounds' outcomes but the survivors force-killed since
 	err       error             // killReport: Kill's own error, nothing was signalled
-	top       int               // first list line shown when the list scrolls
-	page      int               // list lines the last render showed (the pgup/pgdown step)
+	pager                       // the list's scroll position; page is the whole list when it fits
 	// blind is set by the last render when not one pid line fitted: confirm is then neither
 	// offered nor accepted. Bubble Tea renders after every message, so it is what the user saw.
 	blind bool
@@ -144,18 +143,8 @@ func (m *Model) killReplan(o engine.KillOptions) {
 func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 	k := &m.kill
 	s := key.String()
-	switch s { // scrolling only reads, so it works in every stage
-	case "up", "k":
-		m.killScroll(-1)
-		return nil
-	case "down", "j":
-		m.killScroll(1)
-		return nil
-	case "pgup":
-		m.killScroll(-max(k.page, 1))
-		return nil
-	case "pgdown":
-		m.killScroll(max(k.page, 1))
+	if d := scrollStep(s, k.page); d != 0 { // scrolling only reads, so it works in every stage
+		m.killScroll(d)
 		return nil
 	}
 	// A held key repeats: it must never confirm, so repeats do nothing here. Most terminals do
@@ -490,21 +479,14 @@ func (m *Model) killLayout(w, h int, title string, list, tail []string) string {
 	if room < len(list) {
 		blank, room = nil, h-1-len(tail)
 	}
-	k.page = len(list)
 	if len(list) > room {
-		n := max(room-1, 0) // pid lines; the last line of the room is the position,
-		if room == 1 {
-			n = 1 // unless only one line is left: a pid line beats a position line
-		}
-		k.page = max(n, 1)
-		k.top = max(min(k.top, len(list)-n), 0)
-		page := list[k.top : k.top+n : k.top+n]
-		if n < room {
-			page = append(page, fmt.Sprintf("pids %d-%d of %d, ↑↓ to scroll", k.top+1, k.top+n, len(list)))
+		page, pos := k.cut(list, room, "pids %d-%d of %d, ↑↓ to scroll")
+		if pos != "" {
+			page = append(page, pos)
 		}
 		list = page
 	} else {
-		k.top = 0
+		k.top, k.page = 0, len(list)
 	}
 	out := []string{title}
 	out = append(out, blank...)
@@ -532,7 +514,7 @@ func (m *Model) killScroll(d int) {
 			}
 		}
 	}
-	k.top = max(min(k.top+d, n-max(k.page, 1)), 0)
+	k.move(d, n)
 }
 
 // killOutcome says why a planned process is still there after Kill.
