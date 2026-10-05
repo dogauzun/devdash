@@ -298,8 +298,13 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 		// A cwd keeps its end, the directory that names it, and gives way on the left so that the
 		// uptime stays on the line (DEV-146).
 		where = model.Clean(cmp.Or(p.Cwd, "-"))
-		if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 {
-			where = ansi.TruncateLeft(where, min(over+1, ansi.StringWidth(where)-1), "…")
+		ww := ansi.StringWidth(where)
+		if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 && ww > 1 {
+			cut := ansi.TruncateLeft(where, over+1, "…")
+			if ansi.StringWidth(cut) > ww-over { // the cut fell inside a two-cell character, which TruncateLeft keeps
+				cut = ansi.TruncateLeft(where, over+2, "…")
+			}
+			where = cmp.Or(cut, "…") // "" when every cell is cut
 		}
 	}
 	lines = append(lines, strings.Join(append([]string{where}, rest...), ", "))

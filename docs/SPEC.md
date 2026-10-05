@@ -381,7 +381,7 @@ $ devdash port 5173
 next free: 5174
 ```
 
-1. The command: argv joined with single spaces, an absolute argv[0] by its basename (a macOS framework Python runs as `/Library/…/Python.app/Contents/MacOS/Python`, over 100 cells; JSON keeps the path), cut to the terminal width with a trailing `…`. Omitted when argv is unknown.
+1. The command: argv joined with single spaces, an absolute argv[0] by its basename unless argv is one string holding spaces (a title rewritten with setproctitle) (a macOS framework Python runs as `/Library/…/Python.app/Contents/MacOS/Python`, over 100 cells; JSON keeps the path), cut to the terminal width with a trailing `…`. Omitted when argv is unknown.
 2. Where: the project as `name @ branch (worktree)` (the TUI's group header label, without the `(here)` suffix, which the location marker replaces), or the cwd when the process has no project, cut from the left with a leading `…` so that the line fits the terminal width (DEV-146), or `-` when that is unknown too; then the uptime in the TUI's format; then the location marker (`this repo` or `this repo, other worktree`) when one applies.
 3. Tags, comma-separated in the table's order, only when at least one applies.
 

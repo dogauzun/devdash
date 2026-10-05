@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
@@ -240,6 +242,20 @@ func TestWriteAnswer(t *testing.T) {
 // TestWriteAnswerNextFree: the next free port is the search `devdash free N+1` makes, with the
 // snapshot's holders skipped; none in range names the range; a probe that fails leaves the line
 // out, says why on stderr and keeps exit 0 (DEV-114); a free port is answered without a search.
+// TestHolderLinesWideCwd: a cwd cut on the left fits the terminal even when the cut lands
+// inside a two-cell character (DEV-146).
+func TestHolderLinesWideCwd(t *testing.T) {
+	p := answerFixture().Processes[0]
+	p.ProjectID, p.Cwd = "", "/home/u/日本語のディレクトリ/プロジェクト"
+	for width := 15; width <= 60; width++ { // from 15 the where line has a cell for "…"
+		lines := holderLines(p, nil, nil, answerFixture().TakenAt, width)
+		where := lines[1]
+		if w := len(detailIndent) + ansi.StringWidth(where); w > width || !strings.HasSuffix(where, ", up 3h") {
+			t.Errorf("width %d: where line %q is %d cells", width, where, w)
+		}
+	}
+}
+
 func TestWriteAnswerNextFree(t *testing.T) {
 	boom := errors.New("probing port 5175: bind: operation not permitted")
 	base := answerFixture()
