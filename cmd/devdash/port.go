@@ -295,17 +295,18 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 	// names it, and is cut on the left (DEV-146); a project label keeps its start, the project's
 	// name, and is cut on the right (DEV-171), before its " (worktree)" while the name keeps a cell
 	// (DEV-178).
-	where := model.Clean(cmp.Or(p.Cwd, "-"))
+	where, head, wt := model.Clean(cmp.Or(p.Cwd, "-")), "", "" // wt: " (worktree)" or ""
 	if pr != nil {
-		where = model.Clean(pr.Label())
+		head, wt = pr.LabelParts()
+		head = model.Clean(head)
+		where = head + wt
 	}
 	ww := ansi.StringWidth(where)
 	if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 && ww > 1 {
 		var cut string
-		const wt = " (worktree)" // how model.Project.Label ends for a worktree
 		switch {
-		case pr != nil && pr.Worktree && ww-over-len(wt) > 1:
-			cut = ansi.Truncate(strings.TrimSuffix(where, wt), ww-over-len(wt), "…") + wt
+		case wt != "" && ww-over-len(wt) > 1:
+			cut = ansi.Truncate(head, ww-over-len(wt), "…") + wt
 		case pr != nil:
 			cut = ansi.Truncate(where, ww-over, "…") // a two-cell character that does not fit is dropped whole
 		default:

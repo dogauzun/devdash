@@ -302,10 +302,9 @@ const hereSuffix = " (here)"
 // a cell and the "…", `(here)` giving way first (the Here group is sorted first, and `port N`
 // keeps `(worktree)`, DEV-178); below that it is returned whole for pad to cut (DEV-195).
 func headerLabel(p model.Project, room int) string {
-	full := model.Clean(p.Label())
-	p.Worktree = false
-	name := model.Clean(p.Label())
-	wt, here := full[len(name):], "" // wt is " (worktree)" or ""
+	head, wt := p.LabelParts()
+	name, here := model.Clean(head), ""
+	full := name + wt
 	if p.Here {
 		here = hereSuffix
 	}

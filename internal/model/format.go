@@ -17,14 +17,22 @@ import (
 // HEAD. It is the TUI's group header without the `(here)` suffix, which `port N` replaces with
 // "this repo". Snapshot text, not yet cleaned.
 func (p Project) Label() string {
-	s := p.Name
+	head, suffix := p.LabelParts()
+	return head + suffix
+}
+
+// LabelParts is Label in two parts: `name @ branch`, and ` (worktree)` for a worktree, else "".
+// `port N`'s where line and the TUI's group header cut the first part and keep the suffix
+// (DEV-178, DEV-195). Snapshot text, not yet cleaned.
+func (p Project) LabelParts() (head, suffix string) {
+	head = p.Name
 	if at := cmp.Or(p.Branch, p.ShortSHA); at != "" {
-		s += " @ " + at
+		head += " @ " + at
 	}
 	if p.Worktree {
-		s += " (worktree)"
+		suffix = " (worktree)"
 	}
-	return s
+	return head, suffix
 }
 
 // Label is how the dashboard names p (spec "Release 1.1", tool labels): `<tool> (<name>)` when
