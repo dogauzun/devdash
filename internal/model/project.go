@@ -286,8 +286,13 @@ func repoAt(dir string) (p Project, head string, headFI fs.FileInfo, ok bool) {
 	if hi, err := lstat(head); err == nil && hi.Mode().IsRegular() {
 		headFI = hi
 		s := strings.TrimSpace(string(readSmall(head)))
+		// A reftable repository's HEAD file is the placeholder refs/heads/.invalid (no branch
+		// may start with a dot); its real HEAD is in the tables, so the branch is unknown.
+		// ponytail: no reftable parser; add one if reftable becomes common (git 3.0 default).
 		if ref, isRef := strings.CutPrefix(s, "ref: "); isRef {
-			p.Branch = strings.TrimPrefix(ref, "refs/heads/")
+			if ref != "refs/heads/.invalid" {
+				p.Branch = strings.TrimPrefix(ref, "refs/heads/")
+			}
 		} else if len(s) >= 7 {
 			p.ShortSHA = s[:7]
 		}

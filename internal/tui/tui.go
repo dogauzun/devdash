@@ -151,11 +151,12 @@ func serialProbe(probe freeport.Prober) freeport.Prober {
 
 // Run starts the dashboard on the terminal and blocks until the user quits, ctx is done or
 // the engine stops. sudo reports that the user confirmed S: the caller reruns devdash under
-// sudo, now that the terminal is restored.
+// sudo, now that the terminal is restored. SIGINT quits like ctrl-c (SIGTERM already does).
 func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) (sudo bool, err error) {
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx)}, opts...)
 	final, err := tea.NewProgram(New(o), opts...).Run()
-	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil { // bubbletea wraps ctx.Err() into it
+	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil || // bubbletea wraps ctx.Err() into it
+		errors.Is(err, tea.ErrInterrupted) {
 		return false, nil
 	}
 	if m, ok := final.(*Model); ok && err == nil {
