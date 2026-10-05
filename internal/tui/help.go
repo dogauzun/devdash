@@ -37,9 +37,9 @@ var helpKeys = [][2]string{
 const helpKeyWidth = 12
 
 // helpPos is the help overlay's scroll position, as the last render laid it out.
+// Its page is 0 when everything fit, so no key scrolls.
 type helpPos struct {
-	top   int // first overlay line shown
-	page  int // overlay lines shown; 0 when everything fit, so no key scrolls
+	pager
 	total int // overlay lines
 }
 
@@ -92,17 +92,11 @@ func (m *Model) helpView(w, h int) string {
 		title := styleBold.Render("Keys") + styleDim.Render("  (any key closes)")
 		return strings.Join(append([]string{title, ""}, lines...), "\n")
 	}
-	room := h - 1
-	n := max(room-1, 0)
-	if room == 1 {
-		n = 1 // an overlay line beats a position line
-	}
-	p.page = max(n, 1)
-	p.top = max(min(p.top, len(lines)-n), 0)
+	shown, pos := p.cut(lines, h-1, "lines %d-%d of %d, ↑↓ to scroll")
 	out := []string{styleBold.Render("Keys") + styleDim.Render("  (↑↓ j k pgup pgdown scroll, any other key closes)")}
-	out = append(out, lines[p.top:p.top+n]...)
-	if n < room {
-		out = append(out, fmt.Sprintf("lines %d-%d of %d, ↑↓ to scroll", p.top+1, p.top+n, len(lines)))
+	out = append(out, shown...)
+	if pos != "" {
+		out = append(out, pos)
 	}
 	return strings.Join(out, "\n")
 }
@@ -111,19 +105,8 @@ func (m *Model) helpView(w, h int) string {
 // pgup and pgdown scroll it; any other key closes it and does nothing else.
 func (m *Model) helpKey(k tea.KeyPressMsg) tea.Cmd {
 	if p := &m.hpos; p.page > 0 {
-		d := 0
-		switch k.String() {
-		case "up", "k":
-			d = -1
-		case "down", "j":
-			d = 1
-		case "pgup":
-			d = -p.page
-		case "pgdown":
-			d = p.page
-		}
-		if d != 0 {
-			p.top = max(min(p.top+d, p.total-p.page), 0)
+		if d := scrollStep(k.String(), p.page); d != 0 {
+			p.move(d, p.total)
 			return nil
 		}
 	}

@@ -79,9 +79,8 @@ func (m *Model) detailView(w, h int) string {
 // detailScroll is the pane's scroll position. It belongs to one row: another selection, or
 // closing the pane (tui.go), starts the pane at the top again.
 type detailScroll struct {
-	key  model.RowKey // the row top was scrolled on
-	top  int          // first pane line shown
-	page int          // pane lines the last render showed: the pgup/pgdown step
+	key   model.RowKey // the row top was scrolled on
+	pager              // page is max(h, 1) when the pane fits
 }
 
 // detailScrollOf returns the pane's scroll position for the row with key, at the top for a row
@@ -102,12 +101,9 @@ func (m *Model) detailPage(lines []string, key model.RowKey, h int) []string {
 		ds.top, ds.page = 0, max(h, 1)
 		return lines
 	}
-	n := max(h-1, 1)
-	ds.page = n
-	ds.top = max(min(ds.top, len(lines)-n), 0)
-	page := lines[ds.top : ds.top+n : ds.top+n]
-	if n < h {
-		page = append(page, styleDim.Render(fmt.Sprintf("lines %d-%d of %d, pgup/pgdn", ds.top+1, ds.top+n, len(lines))))
+	page, pos := ds.cut(lines, h, "lines %d-%d of %d, pgup/pgdn")
+	if pos != "" {
+		page = append(page, styleDim.Render(pos))
 	}
 	return page
 }
@@ -117,15 +113,10 @@ func (m *Model) detailPage(lines []string, key model.RowKey, h int) []string {
 func (m *Model) detailKey(s string) bool {
 	r, _ := m.selected() // the zero key when nothing is selected, as in detailView
 	ds := m.detailScrollOf(r.Key)
-	step := max(ds.page, 1)
-	switch s {
-	case "pgup":
-		ds.top = max(ds.top-step, 0)
-	case "pgdown":
-		ds.top += step
-	default:
+	if s != "pgup" && s != "pgdown" {
 		return false
 	}
+	ds.top = max(ds.top+scrollStep(s, ds.page), 0) // no upper clamp: the next render clamps
 	return true
 }
 
