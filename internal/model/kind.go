@@ -2,6 +2,7 @@ package model
 
 import (
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -26,10 +27,8 @@ func Classify(p Process) Kind {
 		}
 	}
 	for _, rule := range kindRules {
-		for _, c := range cmds {
-			if rule.match(c) {
-				return rule.kind
-			}
+		if slices.ContainsFunc(cmds, rule.match) {
+			return rule.kind
 		}
 	}
 	if len(p.Listeners) > 0 {

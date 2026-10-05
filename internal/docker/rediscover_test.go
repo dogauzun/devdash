@@ -114,8 +114,15 @@ func TestDiscoverySourceInvalidEndpoint(t *testing.T) {
 	e := newEngine(t, podmanBody)
 	bad := errors.New("docker context remote (tcp://box:2376): TLS is not supported; use a unix socket or plain tcp")
 	var mu sync.Mutex
-	result := func() (Endpoint, bool, error) { return Endpoint{}, false, bad }
-	disc := &countedDiscover{f: func() (Endpoint, bool, error) { mu.Lock(); defer mu.Unlock(); return result() }}
+	usable := false
+	disc := &countedDiscover{f: func() (Endpoint, bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !usable {
+			return Endpoint{}, false, bad
+		}
+		return e.ep, true, nil
+	}}
 	s, clk := newDiscoverySource(disc)
 
 	wantW := &model.Warning{Code: "docker_endpoint_invalid", Count: 1, Hint: "docker: " + bad.Error()}
@@ -134,7 +141,7 @@ func TestDiscoverySourceInvalidEndpoint(t *testing.T) {
 	}
 
 	mu.Lock()
-	result = func() (Endpoint, bool, error) { return e.ep, true, nil }
+	usable = true
 	mu.Unlock()
 	clk.add(testRetry - beat)
 	if got, w := fetch(t, s); w != nil || !reflect.DeepEqual(got, wantPodman) {

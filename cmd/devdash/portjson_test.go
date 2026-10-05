@@ -167,9 +167,9 @@ func TestRunPortJSON(t *testing.T) {
 		stderr string
 		asked  []uint16
 	}{
-		{"held", []string{"port", "3000", "--json"}, fake(), nil, 0, 0, false, ptr(3001), "", []uint16{3001}},
-		{"--json first", []string{"--json", "--no-docker", "port", "3000"}, fake(), nil, 0, 0, false, ptr(3001), "", []uint16{3001}},
-		{"probe says taken", []string{"port", "3000", "--json"}, fake(), []uint16{3001, 3002}, 0, 0, false, ptr(3003), "", []uint16{3001, 3002, 3003}},
+		{"held", []string{"port", "3000", "--json"}, fake(), nil, 0, 0, false, new(3001), "", []uint16{3001}},
+		{"--json first", []string{"--json", "--no-docker", "port", "3000"}, fake(), nil, 0, 0, false, new(3001), "", []uint16{3001}},
+		{"probe says taken", []string{"port", "3000", "--json"}, fake(), []uint16{3001, 3002}, 0, 0, false, new(3003), "", []uint16{3001, 3002, 3003}},
 		{"free", []string{"port", "3001", "--json"}, fake(), nil, 0, 1, true, nil, "", nil},
 		{"65535 held", []string{"port", "65535", "--json"}, at65535(), nil, 0, 0, false, nil, "", nil},
 		{"65535 free", []string{"port", "65535", "--json"}, fake(), nil, 0, 1, true, nil, "", nil},
@@ -266,8 +266,6 @@ func TestPortJSONLive(t *testing.T) {
 		t.Errorf("free %v, next_free %v; want false and a port of %d-%d", a.Free, deref(a.NextFree), port+1, freeport.Last(uint16(port)+1))
 	}
 }
-
-func ptr(n int) *int { return &n }
 
 // deref prints a *int as its value or null.
 func deref(p *int) any {

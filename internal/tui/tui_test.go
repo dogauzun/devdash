@@ -15,13 +15,13 @@ import (
 
 func TestHeader(t *testing.T) {
 	m, _ := newTest(t, 80, 24)
-	if got := strings.Split(screen(m), "\n")[0]; got != "devdash · collecting" {
+	if got, _, _ := strings.Cut(screen(m), "\n"); got != "devdash · collecting" {
 		t.Errorf("before the first snapshot: header %q", got)
 	}
 
 	feed(m, fixture())
 	want := "mbp · 2 s ago · 2 projects · 6 listeners · 2 containers"
-	if got := strings.Split(screen(m), "\n")[0]; got != want {
+	if got, _, _ := strings.Cut(screen(m), "\n"); got != want {
 		t.Errorf("header\n got %q\nwant %q", got, want)
 	}
 
@@ -29,14 +29,14 @@ func TestHeader(t *testing.T) {
 	s := fixture()
 	s.TakenAt = at(8 * time.Second)
 	m.Update(updateMsg(engine.Update{Snapshot: s, Missed: 2, Err: errors.New("collect: context deadline exceeded")}))
-	if got := strings.Split(screen(m), "\n")[0]; !strings.HasPrefix(got, "mbp · stale 8 s · 2 projects") {
+	if got, _, _ := strings.Cut(screen(m), "\n"); !strings.HasPrefix(got, "mbp · stale 8 s · 2 projects") {
 		t.Errorf("stale header %q", got)
 	}
 	if !warned(t, m, "mbp · stale", "stale 8 s") {
 		t.Error("stale age is not in the warning colour")
 	}
 	m.Update(updateMsg(engine.Update{Snapshot: s, Missed: 1}))
-	if got := strings.Split(screen(m), "\n")[0]; !strings.HasPrefix(got, "mbp · 8 s ago") {
+	if got, _, _ := strings.Cut(screen(m), "\n"); !strings.HasPrefix(got, "mbp · 8 s ago") {
 		t.Errorf("one missed tick is not stale yet: %q", got)
 	}
 }
@@ -167,7 +167,7 @@ func TestHeaderFit(t *testing.T) {
 	const mac = "Alexs-MacBook-Pro.local" // os.Hostname on a typical Mac
 	header := func(m *Model) string {
 		t.Helper()
-		got := strings.Split(screen(m), "\n")[0]
+		got, _, _ := strings.Cut(screen(m), "\n")
 		if n := ansi.StringWidth(got); n > m.width {
 			t.Errorf("header is %d cells at %d columns: %q", n, m.width, got)
 		}

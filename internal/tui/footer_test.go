@@ -113,7 +113,7 @@ func TestFooterWarningsCutMarker(t *testing.T) {
 		m, _ := newTest(t, w, 24)
 		fourWarnings(m)
 		var cut string
-		for _, l := range strings.Split(m.footerView(w), "\n") {
+		for l := range strings.SplitSeq(m.footerView(w), "\n") {
 			if n := ansi.StringWidth(l); n > w {
 				t.Errorf("at %d columns a footer line is %d cells: %q", w, n, ansi.Strip(l))
 			}

@@ -866,7 +866,7 @@ func TestDetailNextFree(t *testing.T) {
 	}
 
 	// The lowest TCP port, whatever the listeners' order; UDP does not count.
-	s2 := withProcess(fixture(), 204, apiID, model.KindServer, 0)
+	s2 := withProcess(fixture(), model.KindServer, 0)
 	s2.Processes[len(s2.Processes)-1].Listeners = []model.Listener{lis("tcp4", "0.0.0.0", 9100), lis("udp4", "0.0.0.0", 53),
 		lis("tcp6", "::", 9000)}
 	m = newPortTest(t, 100, 40, s2, &fakeProbe{})
@@ -879,7 +879,7 @@ func TestDetailNextFree(t *testing.T) {
 		"UDP only":    {lis("udp4", "0.0.0.0", 53)},
 		"65535":       {lis("tcp4", "0.0.0.0", 65535)},
 	} {
-		s3 := withProcess(fixture(), 204, apiID, model.KindServer, 0)
+		s3 := withProcess(fixture(), model.KindServer, 0)
 		s3.Processes[len(s3.Processes)-1].Listeners = ls
 		fp := &fakeProbe{}
 		m := newPortTest(t, 100, 40, s3, fp)
@@ -938,7 +938,7 @@ func TestDetailNextFreeRuns(t *testing.T) {
 	}
 
 	// A new snapshot: the last answer stays until the new one arrives; an older one is dropped.
-	newer := withProcess(fixture(), 204, apiID, model.KindServer, 5174)
+	newer := withProcess(fixture(), model.KindServer, 5174)
 	stale := refresh(fixture(), 500*time.Millisecond)
 	fresh := refresh(newer, 0)
 	hasLine(t, m, "next free 5174")
