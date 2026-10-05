@@ -132,13 +132,17 @@ func (m *Model) tableView(w, h int) string {
 		var l string
 		faint := [2]int{} // the cells the tags and arguments take, cut to the name column
 		if r.Key.Header != model.GroupNone {
-			l = pad(m.nameCell(i)+c.counts[r.Key].text(r.Key.Header), w, false)
+			l = pad(m.nameCell(i, w)+c.counts[r.Key].text(r.Key.Header), w, false)
 		} else {
+			name := m.nameCell(i, widths[0])
 			cells := make([]string, len(cols))
 			for j, c := range cols {
-				cells[j] = pad(m.cell(i, c), widths[j], colSpecs[c].right)
+				t := name
+				if c != colName {
+					t = m.cell(i, c)
+				}
+				cells[j] = pad(t, widths[j], colSpecs[c].right)
 			}
-			name := m.nameCell(i)
 			end := ansi.StringWidth(name)
 			args := ""
 			if c.short { // below commandWidth columns of the terminal (shortTags): no command column
@@ -222,20 +226,21 @@ const (
 	markNone   = "  "
 )
 
-// nameCell is row i's name: indented by depth, a marker when it has children, its label,
-// cleaned, then `(here)` on the Here project's header or a process's tags (tagText), so the
-// cached widest cell measures what is drawn.
+// nameCell is row i's name in a column width cells wide: indented by depth, a marker when it
+// has children, its label, cleaned (a folded chain's as chainLabel fits it), then `(here)` on
+// the Here project's header or a process's tags (tagText), so the cached widest cell measures
+// what is drawn.
 // A row has children when the next row is deeper, or when it is collapsed and had children
 // in the expanded rows (its children may have exited since it was collapsed). While a filter
-// is set nothing is folded (rebuild), so a collapsed row is drawn by the rows shown.
-func (m *Model) nameCell(i int) string {
+// is set nothing is collapsed (rebuild), so a collapsed row is drawn by the rows shown.
+func (m *Model) nameCell(i, width int) string {
 	c := m.cache()
-	return m.nameCellWith(i, c.kids, c.short)
+	return m.nameCellWith(i, c.kids, c.short, width)
 }
 
 // nameCellWith is nameCell with the rows that have children when expanded given, and whether
 // tags are shortened.
-func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool) string {
+func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool, width int) string {
 	r := m.rows[i]
 	mark := markNone
 	switch {
@@ -248,7 +253,27 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool) stri
 	if r.Key.Header == model.GroupProject && r.Project != nil && r.Project.Here {
 		label += hereSuffix
 	}
-	return strings.Repeat("  ", r.Depth) + mark + label + tagText(r, short)
+	indent, tags := strings.Repeat("  ", r.Depth)+mark, tagText(r, short)
+	if r.Links != nil {
+		label = chainLabel(r.Links, label, width-ansi.StringWidth(indent+tags))
+	}
+	return indent + label + tags
+}
+
+// chainLabel is a folded chain's label (DEV-157): the labels of its links, cleaned, and last,
+// its own row's label, joined by model.ChainSep. While it is wider than room, leading links
+// give way to `… › `; the last label always stays, so pad may still cut it.
+func chainLabel(links []*model.Process, last string, room int) string {
+	labels := make([]string, 0, len(links)+1)
+	for _, p := range links {
+		labels = append(labels, model.Clean(p.Label()))
+	}
+	labels = append(labels, last)
+	s := strings.Join(labels, model.ChainSep)
+	for k := 1; k < len(labels) && ansi.StringWidth(s) > room; k++ {
+		s = "…" + model.ChainSep + strings.Join(labels[k:], model.ChainSep)
+	}
+	return s
 }
 
 // hereSuffix ends the header of the project devdash was run from (spec "Release 1.0", TUI). It
@@ -327,13 +352,12 @@ func argText(r model.Row) string {
 // they are left out, since a few letters and `…` say nothing.
 const argsMin = 6
 
-// cell is the text of column c for the process or container row i, unpadded and cleaned.
+// cell is the text of column c, other than the name (nameCell), for the process or container
+// row i, unpadded and cleaned.
 func (m *Model) cell(i int, c col) string {
 	r := m.rows[i]
 	p := r.Process
 	switch c {
-	case colName:
-		return m.nameCell(i)
 	case colPorts:
 		return portsText(ports(r))
 	case colKind:
@@ -501,12 +525,12 @@ func (m *Model) cache() *tableCache {
 	return c
 }
 
-// measure sets longest from the name cells as they are drawn.
+// measure sets longest from the name cells as they are drawn with room for all of them.
 func (c *tableCache) measure(m *Model) {
 	c.longest = 0
 	for i, r := range m.rows {
 		if r.Key.Header == model.GroupNone {
-			c.longest = max(c.longest, ansi.StringWidth(m.nameCellWith(i, c.kids, c.short)))
+			c.longest = max(c.longest, ansi.StringWidth(m.nameCellWith(i, c.kids, c.short, math.MaxInt)))
 		}
 	}
 }
@@ -602,8 +626,14 @@ func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
 	case "left", "h":
 		m.collapse()
 	case "right", "l":
-		if m.filter == "" && m.selIdx >= 0 && m.view.Collapsed[m.sel] {
-			delete(m.view.Collapsed, m.sel)
+		r, ok := m.selected()
+		switch {
+		case m.filter != "" || !ok:
+		case m.view.Collapsed[r.Key]:
+			delete(m.view.Collapsed, r.Key)
+			m.rebuild()
+		case r.Links != nil: // unfold the chain, by its first process; its last stays selected (DEV-157)
+			m.view.Unfolded[r.Links[0].Key()] = true
 			m.rebuild()
 		}
 	case "a":
@@ -619,15 +649,24 @@ func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// collapse collapses the selected header or tree node when it is expanded and has children,
-// and otherwise moves the selection to its parent row. While a filter is set it only moves:
-// the filter shows every match whatever is collapsed, so a fold would not show (DEV-126).
+// collapse folds the chain whose first row is selected again when it is unfolded (DEV-157),
+// collapses the selected header or tree node when it is expanded and has children, and
+// otherwise moves the selection to its parent row. While a filter is set it only moves: the
+// filter shows every match whatever is collapsed, so a fold would not show (DEV-126).
 func (m *Model) collapse() {
 	i := m.selIdx
 	if i < 0 || i >= len(m.rows) {
 		return
 	}
 	r := m.rows[i]
+	if m.filter == "" && m.view.Unfolded[r.Key] {
+		delete(m.view.Unfolded, r.Key)
+		m.rebuild()
+		if m.sel != r.Key { // folded: rebuild selected the chain's row
+			return
+		}
+		// r starts no chain any more (a stale key): the rows are as they were, and ← goes on.
+	}
 	if m.filter == "" && !m.view.Collapsed[r.Key] && i+1 < len(m.rows) && m.rows[i+1].Depth > r.Depth {
 		m.view.Collapsed[r.Key] = true
 		m.rebuild()

@@ -59,7 +59,13 @@ type Row struct {
 	// []Row keeps ancestors of a match by walking back.
 	Depth  int
 	Dimmed bool // hidden by the view (shell, editor; the TUI's search also container rows with `d`) but drawn to keep a visible descendant connected
+	// Links are the processes of a folded chain before this row's own, first to last
+	// (ViewOptions.Fold): the row is the chain's last process and sits at its first one's depth.
+	Links []*Process
 }
+
+// ChainSep joins the labels of a folded chain's processes (DEV-157).
+const ChainSep = " › "
 
 // SortMode orders the roots within each group (the `s` key cycles through them).
 type SortMode uint8
@@ -80,6 +86,8 @@ type ViewOptions struct {
 	HideContainers bool            // `d`: drop container rows (processes with a ContainerID and containers without one)
 	Sort           SortMode        // `s`
 	Collapsed      map[RowKey]bool // collapsed headers and tree nodes
+	Fold           bool            // fold chains of single-child processes into one row (DEV-157)
+	Unfolded       map[RowKey]bool // with Fold: chains drawn one row per process, by their first process's key
 }
 
 // Flatten turns a snapshot into display order (spec "Process tree and kinds" and "TUI design"):
@@ -89,6 +97,13 @@ type ViewOptions struct {
 // process become rows under their compose project or `containers`; hidden kinds are dropped
 // unless ShowAll or needed to connect a visible descendant (then Dimmed); children of collapsed
 // keys are skipped. s must not be modified while the rows are in use.
+//
+// With Fold, a chain is drawn as one row (DEV-157): a maximal run of processes P1 → … → Pn
+// (n ≥ 2) in which every process before the last has exactly one shown child, the next, and
+// no listener, tag, ContainerID or collapsed key, so that no port or tag leaves the table. The
+// row is Pn's (key, fields, Dimmed, children one level below it) with P1…Pn-1 as its Links, at
+// P1's depth, and sorts among its siblings by Pn, or in name mode by the chain's label. A chain
+// whose P1 is in Unfolded is drawn one row per process.
 //
 // A process whose argv is known to be empty (not merely unreadable) and that has no listener
 // is never a row. A group with no row to show
@@ -174,7 +189,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 	})
 	var rows []Row
 	for _, g := range ordered {
-		roots := g.tree(opts.Sort)
+		roots := g.tree()
 		shown := false
 		for _, n := range roots {
 			shown = n.mark() || shown
@@ -182,12 +197,13 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 		if !shown {
 			continue
 		}
+		order(roots, &opts)
 		rows = append(rows, g.header)
 		if opts.Collapsed[g.header.Key] {
 			continue
 		}
 		for _, n := range roots {
-			rows = n.emit(rows, 1, opts.Collapsed)
+			rows = n.emit(rows, 1, &opts, false)
 		}
 	}
 	return rows
@@ -216,6 +232,8 @@ type node struct {
 	hidden   bool
 	show     bool // not hidden, or has a descendant that is not hidden
 	children []*node
+	links    []*Process // with Fold: the chain's processes before last (fold)
+	last     *node      // the last node of the chain n starts; nil when it starts none
 }
 
 const noPort = 1 << 16 // sorts after every real port
@@ -252,8 +270,8 @@ func lastRank(k GroupKind) GroupKind {
 	return k
 }
 
-// tree links each node to its parent within g and returns the sorted roots.
-func (g *group) tree(by SortMode) []*node {
+// tree links each node to its parent within g and returns the roots, unsorted (order).
+func (g *group) tree() []*node {
 	byPID := make(map[int]*node, len(g.nodes))
 	for _, n := range g.nodes {
 		if p := n.row.Process; p != nil && p.PID != 0 {
@@ -268,12 +286,67 @@ func (g *group) tree(by SortMode) []*node {
 			roots = append(roots, n)
 		}
 	}
-	order := func(a, b *node) int { return compareNodes(a, b, by) }
-	for _, n := range g.nodes {
-		slices.SortFunc(n.children, order)
-	}
-	slices.SortFunc(roots, order)
 	return roots
+}
+
+// order sorts nodes, and below each shown one the children drawn under its row. With
+// opts.Fold, a shown node that starts a chain is folded first, so that it sorts by its row.
+func order(nodes []*node, opts *ViewOptions) {
+	for _, n := range nodes {
+		if n.show && opts.Fold && !opts.Unfolded[n.row.Key] {
+			n.fold(opts.Collapsed, opts.Sort)
+		}
+	}
+	slices.SortFunc(nodes, func(a, b *node) int { return compareNodes(a, b, opts.Sort) })
+	for _, n := range nodes {
+		switch {
+		case n.last != nil:
+			order(n.last.children, opts)
+		case n.show:
+			order(n.children, opts)
+		}
+	}
+}
+
+// fold sets n's links and last when n starts a chain, and gives n its row's sort keys: the
+// last node's, and in name mode the chain's label.
+func (n *node) fold(collapsed map[RowKey]bool, by SortMode) {
+	last := n
+	for c := last.next(collapsed); c != nil; c = last.next(collapsed) {
+		n.links = append(n.links, last.row.Process)
+		last = c
+	}
+	if n.links == nil {
+		return
+	}
+	n.last = last
+	n.start, n.cpu, n.port = last.start, last.cpu, last.port
+	if by == SortName {
+		var b strings.Builder
+		for _, p := range n.links {
+			b.WriteString(p.Label() + ChainSep)
+		}
+		n.name = strings.ToLower(b.String() + last.sortName())
+	}
+}
+
+// next returns n's only shown child when n can be a link of a chain: a process (not the PID 0
+// owner) with no listener, no tag and no ContainerID, and not collapsed; else nil.
+func (n *node) next(collapsed map[RowKey]bool) *node {
+	p := n.row.Process
+	if p == nil || p.PID == 0 || len(p.Listeners) > 0 || p.Tags != 0 || p.ContainerID != "" || collapsed[n.row.Key] {
+		return nil
+	}
+	var only *node
+	for _, c := range n.children {
+		if c.show {
+			if only != nil {
+				return nil
+			}
+			only = c
+		}
+	}
+	return only
 }
 
 // parent returns the node of n's parent process, or nil when n is a root: a container row, a
@@ -344,17 +417,24 @@ func (n *node) mark() bool {
 	return n.show
 }
 
-// emit appends n and, unless n is collapsed, its shown descendants in preorder.
-func (n *node) emit(rows []Row, depth int, collapsed map[RowKey]bool) []Row {
+// emit appends n and, unless n is collapsed, its shown descendants in preorder. A node that
+// starts a chain is appended as its last node's row with the links, unless open: n is a link
+// of an unfolded chain, drawn one row per process.
+func (n *node) emit(rows []Row, depth int, opts *ViewOptions, open bool) []Row {
 	if !n.show {
 		return rows
 	}
-	r := n.row
+	r, below := n.row, n
+	if n.last != nil && !open {
+		r, below = n.last.row, n.last
+		r.Links = n.links
+	}
 	r.Depth = depth
 	rows = append(rows, r)
-	if !collapsed[r.Key] {
-		for _, c := range n.children {
-			rows = c.emit(rows, depth+1, collapsed)
+	if !opts.Collapsed[r.Key] {
+		open = opts.Fold && below == n && n.next(opts.Collapsed) != nil
+		for _, c := range below.children {
+			rows = c.emit(rows, depth+1, opts, open)
 		}
 	}
 	return rows
@@ -414,6 +494,11 @@ func matcher(query string) func(Row) bool {
 }
 
 func matches(r Row, q string, digits bool) bool {
+	for _, l := range r.Links { // a folded row matches when one of its processes would (DEV-157)
+		if matches(Row{Process: l}, q, digits) {
+			return true
+		}
+	}
 	var texts []string
 	var ports []uint16
 	if r.Project != nil {

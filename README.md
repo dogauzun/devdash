@@ -49,6 +49,9 @@ One screen: a header, a table grouped by project, and a footer with key hints an
 Each project header shows `name @ branch (worktree)`. Inside a group, processes form a tree by
 parent pid, and each has a kind: agent, test, watcher, editor, shell, server, container or
 other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
+A chain of processes that each have one child is one row, the last process's, named by the
+chain (`bash › claude › bash › xargs`): `→` unfolds it and `←` on its first row folds it
+again. A process with a port or a tag always keeps its own row.
 Processes with no project go under `other`, which starts collapsed (its header still counts
 them; `→` opens it), and containers without a compose project under `containers`. The `/`
 filter searches every row, folded or hidden: a shell or editor that matches shows without `a`,
@@ -229,7 +232,7 @@ The dashboard's keys; `?` shows the same table inside it.
 | --- | --- |
 | `↑ ↓ j k` | move the selection |
 | `pgup pgdown` | page the table or the open detail pane; g/home first, G/end last row |
-| `← → h l` | collapse or expand a project group or a tree node |
+| `← → h l` | collapse or expand a group or node; → unfolds a chain, ← refolds |
 | `enter` | open or close the detail pane (esc closes it too) |
 | `/` | filter by port, name, argv, project, container or tag; esc clears |
 | `0-9` | port search: opens the filter with the digit, selects the holder |

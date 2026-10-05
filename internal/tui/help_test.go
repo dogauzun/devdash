@@ -19,7 +19,7 @@ func TestHelp(t *testing.T) {
 	for _, want := range []string{
 		"↑ ↓ j k     move the selection",
 		"pgup pgdown page the table or the open detail pane; g/home first, G/end last row",
-		"← → h l     collapse or expand a project group or a tree node",
+		"← → h l     collapse or expand a group or node; → unfolds a chain, ← refolds",
 		"enter       open or close the detail pane (esc closes it too)",
 		"/           filter by port, name, argv, project, container or tag; esc clears",
 		"0-9         port search: opens the filter with the digit, selects the holder",

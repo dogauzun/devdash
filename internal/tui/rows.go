@@ -23,7 +23,9 @@ import (
 // `d`), so `/zsh` finds a shell the view hides (Release 1.1, "Search"); searchHidden then keeps
 // only the hidden rows the query reaches.
 //
-// When the key is gone the selection moves to the nearest row above it, in the rows as they
+// A selected process folded into a chain's row (model.ViewOptions.Fold) selects that row, and
+// the row's key becomes the selection (DEV-157). Otherwise, when the key is gone the selection
+// moves to the nearest row above it, in the rows as they
 // were, that is still shown (spec: "the nearest previous index"), wherever that row now is: a
 // process that exits leaves the selection on its sibling or parent, even when its group moves.
 // When no row above it is left, the first row is selected. With no rows at all nothing is
@@ -48,9 +50,12 @@ func (m *Model) rebuild() {
 	at := make(map[model.RowKey]int, len(m.rows))
 	for i, r := range m.rows {
 		at[r.Key] = i
+		for _, l := range r.Links { // a process folded into a chain's row selects that row (DEV-157)
+			at[l.Key()] = i
+		}
 	}
 	if i, ok := at[m.sel]; ok {
-		m.selIdx = i
+		m.moveTo(i)
 		return
 	}
 	// prev[prevIdx] is the selected row, or the stand-in for it a filter change starts from.
@@ -70,6 +75,11 @@ func (m *Model) rebuild() {
 // header left with no row under it, as Flatten omits a group with nothing to show. So a query
 // that matches a group header shows that group without its idle shells. The rows are in
 // preorder, so a backward walk sees a row's descendants before the row.
+//
+// A folded chain (DEV-157) is judged by its last process, as it is drawn: when the view hides
+// it and it neither matches itself nor leads to a match, the row is cut back to its last link
+// the view shows or that matches (cutChain), so `claude › bash`, an idle bash, is drawn as the
+// view draws claude; with no such link it is left out.
 func searchHidden(rows []model.Row, query string, view model.ViewOptions) []model.Row {
 	keep := make([]bool, len(rows))
 	var below []bool // below[d]: a kept row at depth d since the last row at a smaller depth, walking back
@@ -81,6 +91,8 @@ func searchHidden(rows []model.Row, query string, view model.ViewOptions) []mode
 		switch {
 		case r.Key.Header != model.GroupNone:
 			keep[i] = desc
+		case hiddenBy(*r, view) && !desc && r.Links != nil && !model.Match(model.Row{Process: r.Process, Container: r.Container}, query):
+			keep[i] = cutChain(r, query, view)
 		case hiddenBy(*r, view) && !model.Match(*r, query):
 			keep[i], r.Dimmed = desc, true
 		default:
@@ -97,6 +109,24 @@ func searchHidden(rows []model.Row, query string, view model.ViewOptions) []mode
 	return out
 }
 
+// cutChain makes folded row r the row of its last link that view shows or that matches query,
+// with the links before it, and reports whether there was one. Links are never container
+// rows, so the row loses no container.
+func cutChain(r *model.Row, query string, view model.ViewOptions) bool {
+	for j := len(r.Links) - 1; j >= 0; j-- {
+		l := model.Row{Key: r.Links[j].Key(), Process: r.Links[j]}
+		if !hiddenBy(l, view) || model.Match(l, query) {
+			l.Depth, l.Links = r.Depth, r.Links[:j:j]
+			if j == 0 {
+				l.Links = nil
+			}
+			*r = l
+			return true
+		}
+	}
+	return false
+}
+
 // hiddenBy reports whether view leaves row r out: a shell or editor without `a`
 // (model.Process.Hideable, Flatten's rule), or a container row with `d` (a container with no
 // process behind it, or a process holding a container's ports).
@@ -107,13 +137,14 @@ func hiddenBy(r model.Row, view model.ViewOptions) bool {
 	return !view.ShowAll && r.Process != nil && r.Process.Hideable()
 }
 
-// pruneCollapsed drops the collapsed keys of rows that are no longer in the snapshot, so the
-// map does not grow over hours of processes coming and going. Membership is the snapshot's
-// (processes, projects, compose projects, containers), not the rows': the children of a
-// collapsed row are absent from the rows yet keep their own state. The containers and other
-// headers are two fixed keys and always kept. Nothing is pruned before the first snapshot.
+// pruneCollapsed drops the collapsed and unfolded keys of rows that are no longer in the
+// snapshot, so the maps do not grow over hours of processes coming and going. Membership is
+// the snapshot's (processes, projects, compose projects, containers), not the rows': the
+// children of a collapsed row are absent from the rows yet keep their own state. The
+// containers and other headers are two fixed keys and always kept. Nothing is pruned before
+// the first snapshot.
 func (m *Model) pruneCollapsed() {
-	if !m.have || len(m.view.Collapsed) == 0 {
+	if !m.have || len(m.view.Collapsed)+len(m.view.Unfolded) == 0 {
 		return
 	}
 	s := m.upd.Snapshot
@@ -133,6 +164,7 @@ func (m *Model) pruneCollapsed() {
 	maps.DeleteFunc(m.view.Collapsed, func(k model.RowKey, _ bool) bool {
 		return !live[k] && k.Header != model.GroupContainers && k.Header != model.GroupOther
 	})
+	maps.DeleteFunc(m.view.Unfolded, func(k model.RowKey, _ bool) bool { return !live[k] })
 }
 
 // filterSel keeps the row the user chose while filter changes hide it.

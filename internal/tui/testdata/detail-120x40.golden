@@ -4,14 +4,14 @@ NAME                                          KIND      PORTS           PID   UP
     api  orphaned, cwd deleted                server    8080,8081       200   1d|           --port 5173
     go                                        test                      201  30s| cwd       /src/shop
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            | project   shop @ feat/cart (worktree)
-  ▾ zsh                                       shell                     100   5h| root      /src/shop
-    ▾ vite (node)                             server    *5173           101   3h| main repo /src/shop-main
-        esbuild                               other                     102   2h| listeners tcp6 [::]:5173
-    claude                                    agent                     103  20m|           (every interface)
-▾ shop (compose) · 2 containers · 2 ports                                       | next free …
-    shop-web-1 (nginx:1.27)                   container *8000                   | parents   zsh 100 < pid 90
-    shop-db-1 (postgres:16)                   container *5432           300   4h| started   2026-10-02 09:00:00
-▸ other · 2 processes · 2 ports                                                 |           (3 h ago)
+  ▾ zsh › vite (node)                         server    *5173           101   3h| root      /src/shop
+      esbuild                                 other                     102   2h| main repo /src/shop-main
+    claude                                    agent                     103  20m| listeners tcp6 [::]:5173
+▾ shop (compose) · 2 containers · 2 ports                                       |           (every interface)
+    shop-web-1 (nginx:1.27)                   container *8000                   | next free …
+    shop-db-1 (postgres:16)                   container *5432           300   4h| parents   zsh 100 < pid 90
+▸ other · 2 processes · 2 ports                                                 | started   2026-10-02 09:00:00
+                                                                                |           (3 h ago)
                                                                                 | user      me (uid 501)
                                                                                 | cpu       12.3%
                                                                                 | mem       178.9 MiB

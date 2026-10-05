@@ -1,15 +1,15 @@
 mbp · 2 s ago · 2 projects · 6 listeners · 2 containers · /sh_
 NAME                        KIND      PORTS           PID   UP   CPU   MEM USER     COMMAND
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
-  ▾ zsh                     shell                     100   5h   0.5   50M me       -zsh
-    ▾ vite (node)           server    *5173           101   3h  12.3  179M me       node node_modules/.bin/vite --port …
-        esbuild             other                     102   2h   0.5   50M me       /src/shop/node_modules/@esbuild/dar…
+  ▾ zsh › vite (node)       server    *5173           101   3h  12.3  179M me       node node_modules/.bin/vite --port …
+      esbuild               other                     102   2h   0.5   50M me       /src/shop/node_modules/@esbuild/dar…
     claude                  agent                     103  20m     –   50M me       claude
 ▾ shop (compose) · 2 containers · 2 ports
     shop-web-1 (nginx:1.27) container *8000
     shop-db-1 (postgres:16) container *5432           300   4h     –     – root     /usr/bin/docker-proxy -proto tcp -h…
 ▾ other · 2 processes · 2 ports
     sshd                    server    *22               1   3d   0.5   50M root     /usr/sbin/sshd -D
+
 
 
 

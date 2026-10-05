@@ -66,7 +66,7 @@ type Model struct {
 	upd  engine.Update // latest update from the engine
 	have bool          // upd holds a good snapshot (SchemaVersion != 0)
 
-	view model.ViewOptions // ShowAll, HideContainers, Sort, Collapsed (table.go)
+	view model.ViewOptions // ShowAll, HideContainers, Sort, Collapsed, Fold, Unfolded (table.go)
 	all  []model.Row       // m.upd.Snapshot flattened with m.view; while a filter is set, nothing collapsed or hidden (rebuild)
 	rows []model.Row       // all, filtered: what the table shows
 
@@ -129,7 +129,8 @@ func New(o Options) *Model {
 	// The other group starts collapsed (Release 1.1): on a Mac it fills with system listeners
 	// that push down what the developer started. The fold is not remembered between runs.
 	collapsed := map[model.RowKey]bool{{Header: model.GroupOther}: true}
-	m := &Model{o: o, selIdx: -1, view: model.ViewOptions{ShowAll: o.ShowAll, Collapsed: collapsed}}
+	m := &Model{o: o, selIdx: -1, view: model.ViewOptions{ShowAll: o.ShowAll, Collapsed: collapsed,
+		Fold: true, Unfolded: map[model.RowKey]bool{}}}
 	m.rebuild()
 	return m
 }
