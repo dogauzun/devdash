@@ -62,9 +62,10 @@ licenses: ## Rewrite THIRD_PARTY_LICENSES from the modules the release binaries 
 licenses-check: ## Fail if THIRD_PARTY_LICENSES is not what `make licenses` writes
 	$(GO) run ./scripts/licenses -check
 
-snapshot: ## goreleaser check, then a snapshot release into dist/ (nothing is published)
+snapshot: ## goreleaser check, a snapshot release into dist/ (nothing is published), then CI's archive check
 	$(GORELEASER) check
 	$(GORELEASER) release --snapshot --clean
+	sh scripts/check-archives.sh
 
 docker-gate: ## Phase 3 Docker gate (needs docker with compose v2, jq, curl)
 	sh scripts/docker-gate.sh

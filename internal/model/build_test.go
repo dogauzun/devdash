@@ -304,6 +304,15 @@ func TestBuildName(t *testing.T) {
 		{"argv empty", "my-very-long-se", nil, 0, "my-very-long-se"},
 		{"argv[0] empty", "my-very-long-se", []string{"", "my-very-long-service-name"}, 0, "my-very-long-se"},
 		{"exactly 15, not cut", "fifteen-chars-x", []string{"/bin/fifteen-chars-x"}, 0, "fifteen-chars-x"},
+		// Linux names a #! script's process after the script, cut, and argv[0] is the
+		// interpreter: the script the interpreter or shell runs (Tool) is the name (DEV-175).
+		{"cut, #! script", "a_very_long_scr", []string{"/usr/bin/python3", "./a_very_long_script_name.py", "8000"}, 0, "a_very_long_script_name.py"},
+		{"cut, #! shell script", "a_very_long_scr", []string{"/bin/bash", "./a_very_long_script_name.sh"}, 0, "a_very_long_script_name.sh"},
+		{"cut, interpreter running another script", "my-very-long-se", []string{"/usr/bin/python3", "./other.py"}, 0, "my-very-long-se"},
+		{"cut, interpreter running a module", "my-very-long-se", []string{"/usr/bin/python3", "-m", "my-very-long-service"}, 0, "my-very-long-se"},
+		// A title `name: role` names its program without the colon (DEV-175).
+		{"cut, title name: role", "my-very-long-se", []string{"my-very-long-server: worker 1"}, 0, "my-very-long-server"},
+		{"cut, title cut name: role", "my-very-long-se", []string{"my-very-long-se: worker 1"}, 0, "my-very-long-se"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
