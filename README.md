@@ -65,6 +65,12 @@ under the header says how many rows hold the port and which port is free next (t
 It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
 [Keybindings](#keybindings)) and `q` quits.
 
+| Exit code | Meaning |
+| --- | --- |
+| 0 | quit with `q`, `ctrl-c`, SIGINT or SIGTERM |
+| 2 | usage error, or stdout is not a terminal (piped, redirected, cron): use `--json`, `port N` or `free N` there |
+| 5 | devdash failed |
+
 ### `devdash --json`
 
 Prints one snapshot as a JSON document on stdout. It samples twice, 200 ms apart, so

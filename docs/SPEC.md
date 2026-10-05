@@ -213,7 +213,7 @@ The CLI exposes the same snapshot the TUI shows, and its exit codes are the cont
 
 | Command | Output | Exit code |
 | --- | --- | --- |
-| `devdash` | the TUI | 0 |
+| `devdash` | the TUI; without a terminal on stdout (piped, redirected, cron, `ssh` without `-t`) nothing starts and stderr gets `devdash: the dashboard needs a terminal; use --json, port N or free N in scripts` | 0 quit (`q`, `ctrl-c`, SIGINT or SIGTERM), 2 no terminal on stdout, 5 devdash failed |
 | `devdash --json` | one snapshot as a JSON document on stdout | 0; 5 devdash failed |
 | `devdash port 3000` | owner line(s): pid, name, project, bind address; or `free` | 0 found, 1 free, 5 devdash failed |
 | `devdash port 3000 --json` | Release 1.0: the same answer as one JSON object | as `port 3000` |

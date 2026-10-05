@@ -77,3 +77,15 @@ func TestRunReturnsOnCancel(t *testing.T) {
 		t.Errorf("Run with a cancelled ctx: sudo %v, %v; want false, nil", sudo, err)
 	}
 }
+
+// TestRunReturnsOnInterrupt: SIGINT, which Bubble Tea turns into an InterruptMsg, quits like
+// ctrl-c: no error, no sudo (DEV-147).
+func TestRunReturnsOnInterrupt(t *testing.T) {
+	src := &fakeSource{ch: make(chan engine.Update)}
+	var out strings.Builder
+	interrupt := tea.WithFilter(func(tea.Model, tea.Msg) tea.Msg { return tea.InterruptMsg{} })
+	sudo, err := Run(context.Background(), Options{Source: src, Kill: failKill(t)}, tea.WithInput(strings.NewReader("")), tea.WithOutput(&out), tea.WithWindowSize(80, 24), interrupt)
+	if err != nil || sudo {
+		t.Errorf("Run interrupted: sudo %v, %v; want false, nil", sudo, err)
+	}
+}
