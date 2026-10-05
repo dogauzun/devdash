@@ -2,6 +2,7 @@ package tui
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -367,5 +368,144 @@ func TestFoldKill(t *testing.T) {
 	}
 	if got := strings.Fields(line(m, "16 ")); len(got) < 2 || got[0] != "16" || got[1] != "xargs" {
 		t.Errorf("plan line %q, want pid 16 alone", got)
+	}
+}
+
+// planPIDs are the pids the kill modal lists, in order.
+func planPIDs(m *Model) []int {
+	var pids []int
+	for l := range strings.SplitSeq(screen(m), "\n") {
+		if f := strings.Fields(l); strings.HasPrefix(l, "  ") && len(f) > 1 {
+			if pid, err := strconv.Atoi(f[0]); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+	}
+	return pids
+}
+
+// lteTree is chainFixture's tree below claude 11, as fakePlanner plans it.
+var lteTree = []int{11, 12, 13, 14, 15, 16, 17, 22, 18, 19, 21, 20}
+
+// TestFoldKillTree: on a folded row, t plans from the chain's first process as its label draws
+// it, so the whole chain is signalled; the hidden bash 10 before claude is neither planned nor
+// listed. p goes back to the row's own process, t and f replan from the root (DEV-179).
+func TestFoldKillTree(t *testing.T) {
+	s := chainFixture()
+	m, _, fp, _ := newKillTest(t, 120, 40, s)
+	selectRow(t, m, keyOf(s, 16))
+	for _, step := range []struct {
+		key   string
+		call  planCall
+		title string
+		pids  []int
+	}{
+		{"t", planCall{keyOf(s, 11), engine.KillOptions{Tree: true}}, "kill claude (pid 11): tree mode, SIGTERM to 12 processes", lteTree},
+		{"f", planCall{keyOf(s, 11), engine.KillOptions{Tree: true, Force: true}}, "kill claude (pid 11): tree mode, force, SIGKILL to 12 processes", lteTree},
+		{"p", planCall{keyOf(s, 16), engine.KillOptions{Force: true}}, "kill xargs (pid 16): process mode, force, SIGKILL to 1 process", []int{16}},
+		{"t", planCall{keyOf(s, 11), engine.KillOptions{Tree: true, Force: true}}, "kill claude (pid 11): tree mode, force, SIGKILL to 12 processes", lteTree},
+	} {
+		if step.key == "t" && len(fp.calls) == 0 {
+			press(m, "x")
+		}
+		press(m, step.key)
+		if got := fp.calls[len(fp.calls)-1]; got != step.call {
+			t.Errorf("%s: Plan call %+v, want %+v", step.key, got, step.call)
+		}
+		if got := line(m, "kill "); got != step.title {
+			t.Errorf("%s: title %q, want %q", step.key, got, step.title)
+		}
+		if got := planPIDs(m); !slices.Equal(got, step.pids) {
+			t.Errorf("%s: listed pids %v, want %v\n%s", step.key, got, step.pids, screen(m))
+		}
+	}
+}
+
+// TestFoldKillTreeRoot: the tree's root is the first link the label draws, by the label's own
+// rule: bash 10 with `a` and while a filter it matches is set; the row's own process on an
+// unfolded chain.
+func TestFoldKillTreeRoot(t *testing.T) {
+	s := chainFixture()
+	for _, tc := range []struct {
+		name string
+		do   func(m *Model)
+		root int
+	}{
+		{"plain", func(*Model) {}, 11},
+		{"show all", func(m *Model) { press(m, "a") }, 10},
+		{"filter matching the shell", func(m *Model) { press(m, "/"); typeText(m, "bash"); press(m, "enter") }, 10},
+		{"filter matching claude", func(m *Model) { press(m, "/"); typeText(m, "claude"); press(m, "enter") }, 11},
+		{"unfolded", func(m *Model) { selectRow(t, m, keyOf(s, 16)); press(m, "right") }, 16},
+	} {
+		m, _, fp, _ := newKillTest(t, 160, 40, s)
+		tc.do(m)
+		selectRow(t, m, keyOf(s, 16))
+		press(m, "x", "t")
+		if got := fp.calls[len(fp.calls)-1].key; got != keyOf(s, tc.root) {
+			t.Errorf("%s: tree planned from pid %d, want %d\n%s", tc.name, got.PID, tc.root, screen(m))
+		}
+		if pids := planPIDs(m); len(pids) == 0 || pids[0] != tc.root || slices.Contains(pids, 10) != (tc.root == 10) {
+			t.Errorf("%s: listed pids %v, want from %d\n%s", tc.name, pids, tc.root, screen(m))
+		}
+	}
+}
+
+// TestFoldKillTreeRefused: a refusal of the tree from the chain's root shows as the options'
+// refusal, and p gets back to the row's own process.
+func TestFoldKillTreeRefused(t *testing.T) {
+	s := chainFixture()
+	m, _, fp, fk := newKillTest(t, 120, 40, s)
+	fp.refuse = func(o engine.KillOptions) error {
+		if o.Tree {
+			return &engine.Refusal{Reason: "process group 11 contains pid 90, which runs devdash"}
+		}
+		return nil
+	}
+	selectRow(t, m, keyOf(s, 16))
+	press(m, "x", "t")
+	if got, want := line(m, "kill "), "kill claude (pid 11): tree mode"; got != want || line(m, "refused: process group 11") == "" {
+		t.Errorf("title %q, want %q with the refusal:\n%s", got, want, screen(m))
+	}
+	if cmd := press(m, "enter"); cmd != nil {
+		t.Fatal("confirm on a refused tree returned a command")
+	}
+	press(m, "p")
+	if got, want := line(m, "kill "), "kill xargs (pid 16): process mode, SIGTERM to 1 process"; got != want {
+		t.Errorf("after p: title %q, want %q", got, want)
+	}
+	run(t, m, press(m, "enter"))
+	if len(fk.plans) != 1 || len(fk.plans[0].Procs) != 1 || fk.plans[0].Procs[0].PID != 16 {
+		t.Errorf("Kill got %+v, want xargs alone", fk.plans)
+	}
+}
+
+// TestFoldKillTreeResult: a tree killed from a folded row reports by its root, offers force on
+// the survivors, and the status adds the ports of every process it stopped.
+func TestFoldKillTreeResult(t *testing.T) {
+	s := chainFixture()
+	s.Processes[6].Listeners = []model.Listener{lis("tcp4", "127.0.0.1", 9000)} // xargs 16
+	m, _, _, fk := newKillTest(t, 120, 40, s)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(proc model.Process) engine.Outcome {
+			return engine.Outcome{Signalled: true, Exited: proc.PID != 11}
+		}), nil
+	})
+	selectRow(t, m, keyOf(s, 16))
+	press(m, "x", "t")
+	run(t, m, press(m, "enter"))
+	if got, want := line(m, "kill "), "kill claude (pid 11): 11 of 12 processes exited after SIGTERM"; got != want {
+		t.Fatalf("report title %q, want %q\n%s", got, want, screen(m))
+	}
+	cmd := press(m, "f")
+	if got, want := line(m, "kill "), "kill claude (pid 11): force-kill survivors, SIGKILL to 1 process"; got != want {
+		t.Errorf("force title %q, want %q", got, want)
+	}
+	run(t, m, cmd)
+	if m.kill.active() || status(m) != "killed 12 processes" {
+		t.Fatalf("modal open or status %q:\n%s", status(m), screen(m))
+	}
+	feed(m, afterKill(without(s, lteTree...), time.Second))
+	if got, want := status(m), "killed 12 processes · 9000 free"; got != want {
+		t.Errorf("status %q, want %q", got, want)
 	}
 }

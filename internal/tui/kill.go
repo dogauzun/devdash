@@ -34,12 +34,20 @@ const (
 	killReport            // Kill finished with survivors or errors: f force-kills survivors, esc closes
 )
 
+// killTarget is a process the modal plans from: its row key and its name, for titles.
+type killTarget struct {
+	key  model.RowKey
+	name string
+}
+
 // killState is the kill modal's state; the zero value is closed.
 type killState struct {
-	stage killStage
-	key   model.RowKey // the target row
-	name  string       // the target's name, for titles
-	opts  engine.KillOptions
+	stage      killStage
+	killTarget // what the plan is from and the titles name: own, or tree in tree mode
+	// own is the selected row's process; tree is where tree mode plans from: on a folded row
+	// the chain's first process as its label draws it (DEV-179), otherwise own.
+	own, tree killTarget
+	opts      engine.KillOptions
 	// plan is what is shown and exactly what Kill gets: it changes only on p, t, f and the
 	// survivors' force, never with a new snapshot. Valid when refusal is "".
 	plan      engine.Plan
@@ -90,24 +98,33 @@ func (m *Model) startKill() tea.Cmd {
 	case r.Container != nil: // a container row, or its port's unreadable PID 0 owner
 		name = r.Container.Name
 	}
+	own := killTarget{r.Key, name}
+	tree := own
+	if ls := m.drawnLinks(r.Links); len(ls) > 0 { // the label's rule, so the plan and the label agree
+		tree = killTarget{ls[0].Key(), ls[0].Label()}
+	}
 	s := m.upd.Snapshot
 	p, err := m.o.Plan(s, r.Key, engine.KillOptions{})
 	var ref *engine.Refusal
 	switch {
 	case errors.As(err, &ref):
-		m.kill = killState{stage: killRefused, key: r.Key, name: name, refusal: ref.Reason}
+		m.kill = killState{stage: killRefused, killTarget: own, refusal: ref.Reason}
 	case err != nil:
 		m.status = "cannot kill " + name + ": " + err.Error()
 	default:
-		m.kill = killState{stage: killConfirm, key: r.Key, name: name, plan: p, projects: killProjects(s)}
+		m.kill = killState{stage: killConfirm, killTarget: own, own: own, tree: tree, plan: p, projects: killProjects(s)}
 	}
 	return nil
 }
 
-// killReplan plans the target again with o from the latest snapshot (p, t and f).
+// killReplan plans again with o from the latest snapshot (p, t and f): from k.tree in tree
+// mode, from k.own otherwise.
 func (m *Model) killReplan(o engine.KillOptions) {
 	k := &m.kill
-	k.opts = o
+	k.opts, k.killTarget = o, k.own
+	if o.Tree {
+		k.killTarget = k.tree
+	}
 	s := m.upd.Snapshot
 	p, err := m.o.Plan(s, k.key, o)
 	if err != nil {
@@ -309,27 +326,27 @@ func killHolder(s model.Snapshot, h model.Holder) string {
 func (m *Model) killView(w, h int) string {
 	k := &m.kill
 	name := model.Clean(k.name)
-	title := "kill " + name
+	head, rest := "kill ", "" // the title is head, name, rest: killTitle cuts name
 	if k.key.PID > 0 {
-		title += fmt.Sprintf(" (pid %d)", k.key.PID)
+		rest = fmt.Sprintf(" (pid %d)", k.key.PID)
 	}
 	var list, tail []string
 	switch k.stage {
 	case killRefused:
-		title = "cannot kill " + name
+		head, rest = "cannot kill ", ""
 		tail = append(killReason(model.Clean(k.refusal)), "", "esc close")
 	case killConfirm, killOutside, killRunning:
 		switch {
 		case k.refusal != "":
-			title += ": " + killMode(k.opts)
+			rest += ": " + killMode(k.opts)
 			tail = killReason(model.Clean(k.refusal))
 			tail[0] = "refused: " + tail[0]
 			tail = append(tail, "", "p process  t tree  f force  esc cancel")
-			return m.killLayout(w, h, styleBold.Render(title), nil, tail)
+			return m.killLayout(w, h, killTitle(head, name, rest, w), nil, tail)
 		case k.survivors:
-			title += ": force-kill survivors, SIGKILL to " + killCount(len(k.plan.Procs), "process")
+			rest += ": force-kill survivors, SIGKILL to " + killCount(len(k.plan.Procs), "process")
 		default:
-			title += fmt.Sprintf(": %s, %s to %s", killMode(k.opts), killSig(k.plan.Signal), killCount(len(k.plan.Procs), "process"))
+			rest += fmt.Sprintf(": %s, %s to %s", killMode(k.opts), killSig(k.plan.Signal), killCount(len(k.plan.Procs), "process"))
 		}
 		list = m.killPlanLines(k.plan)
 		if k.plan.Group != 0 {
@@ -356,7 +373,7 @@ func (m *Model) killView(w, h int) string {
 		tail = append(tail, hint)
 	case killReport:
 		if k.err != nil {
-			title += ": nothing was signalled"
+			rest += ": nothing was signalled"
 			tail = []string{model.Clean(k.err.Error()), "", "esc close"}
 			break
 		}
@@ -373,7 +390,7 @@ func (m *Model) killView(w, h int) string {
 			}
 			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Label()), outcome))
 		}
-		title += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
+		rest += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
 		list = killTable(rows)
 		tail = []string{"esc close"}
 		if len(k.result.Survivors()) > 0 {
@@ -383,7 +400,19 @@ func (m *Model) killView(w, h int) string {
 			tail[0] += ", then " + sudoHint // S works in the table, not in this modal (sudo.go)
 		}
 	}
-	return m.killLayout(w, h, styleBold.Render(title), list, tail)
+	return m.killLayout(w, h, killTitle(head, name, rest, w), list, tail)
+}
+
+// killTitleMin is the fewest cells a cut label keeps in a kill title.
+const killTitleMin = 6
+
+// killTitle is the modal's one-line title, bold: head, name and rest. When it is wider than w,
+// name is cut with `…` (as pad cuts a table cell, by display width) so that rest, the pid, mode,
+// signal and count, shows whole; name keeps at least killTitleMin cells, and a line still too
+// wide is cut at the edge by render (DEV-184).
+func killTitle(head, name, rest string, w int) string {
+	room := max(w-ansi.StringWidth(head+rest), killTitleMin)
+	return styleBold.Render(head + ansi.Truncate(name, room, "…") + rest)
 }
 
 // killReason splits a refusal before its hint (the engine puts it after the last ": ", as in
