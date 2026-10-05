@@ -979,3 +979,83 @@ func TestKillResultKeyClears(t *testing.T) {
 		t.Errorf("survivors: modal open %v\n%s", m.kill.active(), screen(m))
 	}
 }
+
+// withLongLabels is the fixture plus, in api, the Python worker 73827 with a child 73828,
+// node server.js 69590 and a process with a wide name, 55555.
+func withLongLabels() model.Snapshot {
+	s := fixture()
+	proc := func(pid, ppid int, name string, argv ...string) model.Process {
+		return model.Process{PID: pid, PPID: ppid, StartTime: at(time.Minute), UID: 501, User: "me", Name: name,
+			Argv: argv, Cwd: apiID, ProjectID: apiID, Kind: model.KindOther}
+	}
+	worker := proc(73827, 1, "Python", "/usr/bin/python3", "worker_with_a_very_long_script_name.py")
+	worker.Listeners = []model.Listener{lis("tcp4", "127.0.0.1", 8001)} // keeps its own row, not folded with its child
+	s.Processes = append(s.Processes, worker,
+		proc(73828, 73827, "Python", "/usr/bin/python3", "-c", "from multiprocessing.spawn import spawn_main"),
+		proc(69590, 1, "node", "node", "server.js"),
+		proc(55555, 1, "サーバーサーバーサーバーサーバー", "サーバーサーバーサーバーサーバー"))
+	return s
+}
+
+// TestKillTitleCut: a kill title wider than the screen cuts the label with `…`, measured in
+// cells, so the pid, the mode, the signal and the count always show; below a few cells of
+// label the line is cut at the edge instead (DEV-184).
+func TestKillTitleCut(t *testing.T) {
+	s := withLongLabels()
+	for _, tc := range []struct {
+		w    int
+		pid  int
+		keys []string
+		want string
+	}{
+		{80, 73827, nil, "kill worker_with_a_very_long_sc… (pid 73827): process mode, SIGTERM to 1 process"},
+		{80, 73827, []string{"t"}, "kill worker_with_a_very_long_scr… (pid 73827): tree mode, SIGTERM to 2 processes"},
+		{80, 73827, []string{"t", "f"}, "kill worker_with_a_very_l… (pid 73827): tree mode, force, SIGKILL to 2 processes"},
+		{60, 69590, nil, "kill server… (pid 69590): process mode, SIGTERM to 1 process"},
+		{80, 69590, nil, "kill server.js (node) (pid 69590): process mode, SIGTERM to 1 process"}, // fits: whole
+		{60, 55555, nil, "kill サーバ… (pid 55555): process mode, SIGTERM to 1 process"},             // cells, not runes
+		// Too narrow for the label's few cells: the line is cut at the edge.
+		{40, 73827, []string{"t", "f"}, "kill worke… (pid 73827): tree mode, forc"},
+	} {
+		m, _, _, _ := newKillTest(t, tc.w, 24, s)
+		selectRow(t, m, keyOf(s, tc.pid))
+		press(m, append([]string{"x"}, tc.keys...)...)
+		if got := line(m, "kill "); got != tc.want {
+			t.Errorf("%d columns, %d %v:\n got %q\nwant %q", tc.w, tc.pid, tc.keys, got, tc.want)
+		}
+	}
+}
+
+// TestKillTitleCutEveryStage: the outside, running, report and refused titles cut the label
+// the same way (DEV-184).
+func TestKillTitleCutEveryStage(t *testing.T) {
+	s := withLongLabels()
+	s.Processes[len(s.Processes)-4].ProjectID = "" // the worker, outside every project
+	m, _, fp, fk := newKillTest(t, 70, 24, s)
+	fk.results = append(fk.results, func(p engine.Plan) (engine.Result, error) {
+		return outcomes(p, func(model.Process) engine.Outcome { return engine.Outcome{Signalled: true} }), nil
+	})
+	openOther(m)
+	selectRow(t, m, keyOf(s, 73827))
+	press(m, "x", "enter")
+	want := "kill worker_with_a_ve… (pid 73827): process mode, SIGTERM to 1 process"
+	if got := line(m, "kill "); got != want || m.kill.stage != killOutside {
+		t.Errorf("outside title\n got %q\nwant %q", got, want)
+	}
+	cmd := press(m, "Y")
+	if got := line(m, "kill "); got != want {
+		t.Errorf("running title\n got %q\nwant %q", got, want)
+	}
+	run(t, m, cmd)
+	if got, want := line(m, "kill "), "kill worker_with_a_v… (pid 73827): 0 of 1 process exited after SIGTERM"; got != want {
+		t.Errorf("report title\n got %q\nwant %q", got, want)
+	}
+
+	press(m, "esc")
+	fp.refuse = func(engine.KillOptions) error { return &engine.Refusal{Reason: "pid 73827 (Python) runs devdash"} }
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	press(m, "x")
+	if got, want := line(m, "cannot kill"), "cannot kill worker_with_a_very_long_scr…"; got != want {
+		t.Errorf("refused title\n got %q\nwant %q", got, want)
+	}
+}

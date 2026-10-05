@@ -63,6 +63,50 @@ func TestSudoConfirm(t *testing.T) {
 	}
 }
 
+// TestSudoSmall: in a short terminal the explanation gives way before the key line, which
+// is the last thing dropped; where it fits, the prompt is drawn whole as before (DEV-184).
+func TestSudoSmall(t *testing.T) {
+	whole := strings.Join([]string{
+		"rerun devdash with sudo",
+		"",
+		"  The dashboard quits and restarts as root under sudo, with the same flags;",
+		"  sudo asks for your password on this terminal.",
+		"  The selection, filter and sort are reset.",
+		"",
+		"  y rerun with sudo  any other key cancels",
+	}, "\n")
+	for _, tc := range []struct {
+		w, h int
+		want string
+	}{
+		{100, 12, whole},
+		{80, 24, whole},
+		// Body of 6 lines: the blank lines go first, then the explanation fits.
+		{60, 10, strings.Join([]string{
+			"rerun devdash with sudo",
+			"  The dashboard quits and restarts as root under sudo, with",
+			"  the same flags;",
+			"  sudo asks for your password on this terminal.",
+			"  The selection, filter and sort are reset.",
+			"  y rerun with sudo  any other key cancels",
+		}, "\n")},
+		// Body of 4 lines: the explanation is cut from its end.
+		{60, 8, strings.Join([]string{
+			"rerun devdash with sudo",
+			"  The dashboard quits and restarts as root under sudo, with",
+			"  the same flags;",
+			"  y rerun with sudo  any other key cancels",
+		}, "\n")},
+	} {
+		m, _ := newTest(t, tc.w, tc.h, func(o *Options) { o.Sudo = true })
+		feed(m, withWarnings(sudoWarning))
+		press(m, "S")
+		if sc := screen(m); !strings.Contains(sc, "\n"+tc.want+"\n") {
+			t.Errorf("%dx%d:\n%s\nwant the prompt\n%s", tc.w, tc.h, sc, tc.want)
+		}
+	}
+}
+
 func TestSudoCancel(t *testing.T) {
 	for _, k := range []string{"n", "Y", "esc", "enter", "q", "j", "S", "x"} {
 		m := newSudoTest(t, withWarnings(sudoWarning), true)

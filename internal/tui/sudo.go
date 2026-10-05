@@ -49,18 +49,24 @@ func (m *Model) sudoKey(k tea.KeyPressMsg) tea.Cmd {
 	return tea.Quit
 }
 
-// sudoView draws the confirmation at width w, like the kill modal: a title, then what happens,
-// then the keys.
-func sudoView(w int) string {
-	lines := killWrap([]string{
+// sudoView draws the confirmation in w by h, like the kill modal: a title, a blank line, what
+// happens, a blank line, then the keys, wrapped by killWrap. As in killLayout, when they do not
+// fit the blank lines go first, then the explanation from its end; the keys go last (DEV-184).
+func sudoView(w, h int) string {
+	text := killWrap([]string{
 		"The dashboard quits and restarts as root under sudo, with the same flags;",
 		"sudo asks for your password on this terminal.",
 		"The selection, filter and sort are reset.",
-		"",
-		"y rerun with sudo  any other key cancels",
 	}, w)
+	keys := killWrap([]string{"y rerun with sudo  any other key cancels"}, w)
+	blank := []string{""}
+	room := h - 1 - len(keys) // below the title
+	if room < len(text)+2 {
+		blank = nil
+	}
+	lines := slices.Concat(blank, text[:max(min(len(text), room), 0)], blank, keys)
 	for i, l := range lines {
 		lines[i] = "  " + l
 	}
-	return strings.Join(append([]string{styleBold.Render("rerun devdash with sudo"), ""}, lines...), "\n")
+	return strings.Join(append([]string{styleBold.Render("rerun devdash with sudo")}, lines...), "\n")
 }

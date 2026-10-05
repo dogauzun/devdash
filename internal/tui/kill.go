@@ -326,27 +326,27 @@ func killHolder(s model.Snapshot, h model.Holder) string {
 func (m *Model) killView(w, h int) string {
 	k := &m.kill
 	name := model.Clean(k.name)
-	title := "kill " + name
+	head, rest := "kill ", "" // the title is head, name, rest: killTitle cuts name
 	if k.key.PID > 0 {
-		title += fmt.Sprintf(" (pid %d)", k.key.PID)
+		rest = fmt.Sprintf(" (pid %d)", k.key.PID)
 	}
 	var list, tail []string
 	switch k.stage {
 	case killRefused:
-		title = "cannot kill " + name
+		head, rest = "cannot kill ", ""
 		tail = append(killReason(model.Clean(k.refusal)), "", "esc close")
 	case killConfirm, killOutside, killRunning:
 		switch {
 		case k.refusal != "":
-			title += ": " + killMode(k.opts)
+			rest += ": " + killMode(k.opts)
 			tail = killReason(model.Clean(k.refusal))
 			tail[0] = "refused: " + tail[0]
 			tail = append(tail, "", "p process  t tree  f force  esc cancel")
-			return m.killLayout(w, h, styleBold.Render(title), nil, tail)
+			return m.killLayout(w, h, killTitle(head, name, rest, w), nil, tail)
 		case k.survivors:
-			title += ": force-kill survivors, SIGKILL to " + killCount(len(k.plan.Procs), "process")
+			rest += ": force-kill survivors, SIGKILL to " + killCount(len(k.plan.Procs), "process")
 		default:
-			title += fmt.Sprintf(": %s, %s to %s", killMode(k.opts), killSig(k.plan.Signal), killCount(len(k.plan.Procs), "process"))
+			rest += fmt.Sprintf(": %s, %s to %s", killMode(k.opts), killSig(k.plan.Signal), killCount(len(k.plan.Procs), "process"))
 		}
 		list = m.killPlanLines(k.plan)
 		if k.plan.Group != 0 {
@@ -373,7 +373,7 @@ func (m *Model) killView(w, h int) string {
 		tail = append(tail, hint)
 	case killReport:
 		if k.err != nil {
-			title += ": nothing was signalled"
+			rest += ": nothing was signalled"
 			tail = []string{model.Clean(k.err.Error()), "", "esc close"}
 			break
 		}
@@ -390,7 +390,7 @@ func (m *Model) killView(w, h int) string {
 			}
 			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Label()), outcome))
 		}
-		title += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
+		rest += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
 		list = killTable(rows)
 		tail = []string{"esc close"}
 		if len(k.result.Survivors()) > 0 {
@@ -400,7 +400,19 @@ func (m *Model) killView(w, h int) string {
 			tail[0] += ", then " + sudoHint // S works in the table, not in this modal (sudo.go)
 		}
 	}
-	return m.killLayout(w, h, styleBold.Render(title), list, tail)
+	return m.killLayout(w, h, killTitle(head, name, rest, w), list, tail)
+}
+
+// killTitleMin is the fewest cells a cut label keeps in a kill title.
+const killTitleMin = 6
+
+// killTitle is the modal's one-line title, bold: head, name and rest. When it is wider than w,
+// name is cut with `…` (as pad cuts a table cell, by display width) so that rest, the pid, mode,
+// signal and count, shows whole; name keeps at least killTitleMin cells, and a line still too
+// wide is cut at the edge by render (DEV-184).
+func killTitle(head, name, rest string, w int) string {
+	room := max(w-ansi.StringWidth(head+rest), killTitleMin)
+	return styleBold.Render(head + ansi.Truncate(name, room, "…") + rest)
 }
 
 // killReason splits a refusal before its hint (the engine puts it after the last ": ", as in

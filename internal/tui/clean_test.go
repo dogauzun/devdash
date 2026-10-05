@@ -173,7 +173,7 @@ func TestCleanKill(t *testing.T) {
 		selectRow(t, m, keyOf(s, 101))
 		press(m, "x")
 		assertNoControl(t, m, where("confirm"))
-		if line(m, "kill vite"+evilShown) == "" {
+		if line(m, "kill vite"+evilShown[:12]) == "" { // cut with … at 80 columns (DEV-184)
 			t.Errorf("%s: no title with the cleaned name:\n%s", where("confirm"), screen(m))
 		}
 		press(m, "t") // tree mode: esbuild too, under shop's project name

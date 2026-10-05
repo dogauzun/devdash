@@ -307,7 +307,7 @@ func (m *Model) render() string {
 	var body string
 	switch {
 	case m.sudo.open:
-		body = sudoView(w)
+		body = sudoView(w, bh)
 	case m.help:
 		body = m.helpView(w, bh)
 	case m.kill.active():
