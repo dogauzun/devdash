@@ -132,7 +132,10 @@ func (m *Model) tableView(w, h int) string {
 		var l string
 		faint := [2]int{} // the cells the tags and arguments take, cut to the name column
 		if r.Key.Header != model.GroupNone {
-			l = pad(m.nameCell(i, w)+c.counts[r.Key].text(r.Key.Header), w, false)
+			if l = m.nameCell(i, w); ansi.StringWidth(l) < w { // a label that fills the line leaves the counts no cell (DEV-195)
+				l += c.counts[r.Key].text(r.Key.Header)
+			}
+			l = pad(l, w, false)
 		} else {
 			name := m.nameCell(i, widths[0])
 			cells := make([]string, len(cols))
@@ -227,9 +230,9 @@ const (
 )
 
 // nameCell is row i's name in a column width cells wide: indented by depth, a marker when it
-// has children, its label, cleaned (a folded chain's as chainLabel fits it), then `(here)` on
-// the Here project's header or a process's tags (tagText), so the cached widest cell measures
-// what is drawn.
+// has children, its label, cleaned (a project header's as headerLabel fits it, with `(here)` on
+// the Here project's; a folded chain's as chainLabel fits it), then a process's tags (tagText),
+// so the cached widest cell measures what is drawn.
 // A row has children when the next row is deeper, or when it is collapsed and had children
 // in the expanded rows (its children may have exited since it was collapsed). While a filter
 // is set nothing is collapsed (rebuild), so a collapsed row is drawn by the rows shown.
@@ -250,10 +253,10 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool, widt
 		mark = markOpen
 	}
 	label := model.Clean(rowLabel(r))
-	if r.Key.Header == model.GroupProject && r.Project != nil && r.Project.Here {
-		label += hereSuffix
-	}
 	indent, tags := strings.Repeat("  ", r.Depth)+mark, tagText(r, short)
+	if r.Key.Header == model.GroupProject && r.Project != nil {
+		label = headerLabel(*r.Project, width-ansi.StringWidth(indent))
+	}
 	if r.Links != nil {
 		label = chainLabel(m.drawnLinks(r.Links), label, width-ansi.StringWidth(indent+tags))
 	}
@@ -293,6 +296,28 @@ func chainLabel(links []*model.Process, last string, room int) string {
 // is not part of rowLabel (model.Project.Label): the port answer shows that label without it and
 // says "this repo".
 const hereSuffix = " (here)"
+
+// headerLabel is project p's header label, cleaned, with hereSuffix on the Here project's, in
+// room cells: when it is wider, the name and branch are cut before the suffixes while they keep
+// a cell and the "…", `(here)` giving way first (the Here group is sorted first, and `port N`
+// keeps `(worktree)`, DEV-178); below that it is returned whole for pad to cut (DEV-195).
+func headerLabel(p model.Project, room int) string {
+	full := model.Clean(p.Label())
+	p.Worktree = false
+	name := model.Clean(p.Label())
+	wt, here := full[len(name):], "" // wt is " (worktree)" or ""
+	if p.Here {
+		here = hereSuffix
+	}
+	if ansi.StringWidth(full+here) > room {
+		for _, sfx := range []string{wt + here, wt} {
+			if w := room - ansi.StringWidth(sfx); sfx != "" && w > 1 {
+				return ansi.Truncate(name, w, "…") + sfx
+			}
+		}
+	}
+	return full + here
+}
 
 // tagText is what follows a tagged process's name (spec "Release 1.0", TUI): two spaces and
 // its tags as people read them ("  orphaned, cwd deleted"), or "  !" when short; "" for a row

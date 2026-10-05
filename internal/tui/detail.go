@@ -274,8 +274,8 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	}
 	d.blank()
 	detailContainer(d, r)
-	if p == nil {
-		detailForwarders(d, s, r.Container)
+	if r.Container != nil {
+		detailForwarders(d, s, r.Container, p == nil)
 	}
 	if m.o.DockerSocket != nil {
 		if sock := m.o.DockerSocket(); sock != "" {
@@ -285,12 +285,13 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 	}
 }
 
-// detailForwarders names the processes holding container id's published ports for a container
-// row that has no process of its own: a forwarder Reconcile matched to several containers
-// (OrbStack Helper, com.docker.backend) keeps its own row, as `port N` names it. With none, the
-// port has no host socket (iptables only); with some, each published tcp port none of them
-// holds is named (DEV-186).
-func detailForwarders(d *detailDoc, s model.Snapshot, c *model.Container) {
+// detailForwarders names what holds container c's published ports. On a container row that has
+// no process of its own (holders), the processes holding them: a forwarder Reconcile matched to
+// several containers (OrbStack Helper, com.docker.backend) keeps its own row, as `port N` names
+// it. With none, the port has no host socket (iptables only); with some, each published tcp
+// port none of them holds is named (DEV-186), on a process row too, whose process is one of
+// them (DEV-196).
+func detailForwarders(d *detailDoc, s model.Snapshot, c *model.Container, holders bool) {
 	held := map[uint16]bool{}
 	for i := range s.Processes {
 		p := &s.Processes[i]
@@ -300,7 +301,7 @@ func detailForwarders(d *detailDoc, s model.Snapshot, c *model.Container) {
 				held[l.Port], forwards = true, true
 			}
 		}
-		if forwards {
+		if forwards && holders {
 			d.wrap(fmt.Sprintf("held by %s %d (forwards the container's port)", quote(p.Name), p.PID))
 		}
 	}

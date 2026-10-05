@@ -107,8 +107,9 @@ func TestCleanTable(t *testing.T) {
 		feed(m, evilSnapshot())
 		where := fmt.Sprintf("table %dx%d", w, h)
 		assertNoControl(t, m, where)
-		// Cells are cut at 100 columns, so the name cells are checked up to the cut.
-		for _, want := range []string{"vite" + evilShown[:12], "shop" + evilShown + " @ feat/" + evilShown, "shop-db" + evilShown[:12]} {
+		// Cells are cut at 100 columns and a header before its suffixes at 80 (DEV-195), so names
+		// are checked up to the cut.
+		for _, want := range []string{"vite" + evilShown[:12], "shop" + evilShown + " @ feat/" + evilShown[:12], "shop-db" + evilShown[:12]} {
 			if line(m, want) == "" {
 				t.Errorf("%s: no line shows %q:\n%s", where, want, screen(m))
 			}
