@@ -199,7 +199,7 @@ func (m *Model) detailProbe() tea.Cmd {
 	f.key, f.from, f.taken = key, from, s.TakenAt
 	f.seq++
 	seq, probe := f.seq, m.o.Probe
-	return func() tea.Msg { return detailFreeMsg{seq: seq, ans: probePort(s, from, false, probe)} }
+	return func() tea.Msg { return detailFreeMsg{seq: seq, ans: nextFree(s, from, probe)} }
 }
 
 // detailNextFree writes p's next free field after its listeners: `…` until the answer for p
