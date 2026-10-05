@@ -34,12 +34,20 @@ const (
 	killReport            // Kill finished with survivors or errors: f force-kills survivors, esc closes
 )
 
+// killTarget is a process the modal plans from: its row key and its name, for titles.
+type killTarget struct {
+	key  model.RowKey
+	name string
+}
+
 // killState is the kill modal's state; the zero value is closed.
 type killState struct {
-	stage killStage
-	key   model.RowKey // the target row
-	name  string       // the target's name, for titles
-	opts  engine.KillOptions
+	stage      killStage
+	killTarget // what the plan is from and the titles name: own, or tree in tree mode
+	// own is the selected row's process; tree is where tree mode plans from: on a folded row
+	// the chain's first process as its label draws it (DEV-179), otherwise own.
+	own, tree killTarget
+	opts      engine.KillOptions
 	// plan is what is shown and exactly what Kill gets: it changes only on p, t, f and the
 	// survivors' force, never with a new snapshot. Valid when refusal is "".
 	plan      engine.Plan
@@ -90,24 +98,33 @@ func (m *Model) startKill() tea.Cmd {
 	case r.Container != nil: // a container row, or its port's unreadable PID 0 owner
 		name = r.Container.Name
 	}
+	own := killTarget{r.Key, name}
+	tree := own
+	if ls := m.drawnLinks(r.Links); len(ls) > 0 { // the label's rule, so the plan and the label agree
+		tree = killTarget{ls[0].Key(), ls[0].Label()}
+	}
 	s := m.upd.Snapshot
 	p, err := m.o.Plan(s, r.Key, engine.KillOptions{})
 	var ref *engine.Refusal
 	switch {
 	case errors.As(err, &ref):
-		m.kill = killState{stage: killRefused, key: r.Key, name: name, refusal: ref.Reason}
+		m.kill = killState{stage: killRefused, killTarget: own, refusal: ref.Reason}
 	case err != nil:
 		m.status = "cannot kill " + name + ": " + err.Error()
 	default:
-		m.kill = killState{stage: killConfirm, key: r.Key, name: name, plan: p, projects: killProjects(s)}
+		m.kill = killState{stage: killConfirm, killTarget: own, own: own, tree: tree, plan: p, projects: killProjects(s)}
 	}
 	return nil
 }
 
-// killReplan plans the target again with o from the latest snapshot (p, t and f).
+// killReplan plans again with o from the latest snapshot (p, t and f): from k.tree in tree
+// mode, from k.own otherwise.
 func (m *Model) killReplan(o engine.KillOptions) {
 	k := &m.kill
-	k.opts = o
+	k.opts, k.killTarget = o, k.own
+	if o.Tree {
+		k.killTarget = k.tree
+	}
 	s := m.upd.Snapshot
 	p, err := m.o.Plan(s, k.key, o)
 	if err != nil {

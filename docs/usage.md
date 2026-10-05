@@ -27,7 +27,9 @@ cwd, listeners, parent chain and start time.
 **Chains.** A chain of processes that each have one child is one row, the last process's, named
 by the chain less the shells and editors the view hides (`claude › xargs`, or
 `bash › claude › bash › xargs` with `--all`): `→` unfolds it and `←` on its first row folds it
-again. A process with a port or a tag always keeps its own row.
+again. A process with a port or a tag always keeps its own row. On a folded row, `x` kills the
+last process, and `t` in the kill modal switches to the whole chain as the row names it, so
+`nodemon (node) › server.js (node)` stops nodemon and its server together.
 
 **Filter.** The `/` filter searches every row, folded or hidden: a shell or editor that matches
 shows without `a`, and a container row with `d`.
