@@ -157,14 +157,16 @@ func Tool(p Process) (tool string, args []string, ok bool) {
 // read as its getopt reads them: the first of fishValueOpts takes the rest as its value, or
 // the next argument when it ends the cluster, and is inline code when it is c (DEV-176); fish
 // stops at the first argument not starting with -, so +o is its script. After bun's x
-// subcommand the flags are read as bunx's, -p being --package (DEV-194).
+// subcommand the flags are read as bunx's, -p being --package (DEV-194). bun takes its
+// subcommand from its first argument not starting with -, so after a value of valueFlags x is
+// the file or script it runs (run it still skips); fish's lone - is its script (DEV-200).
 func toolArg(name string, args []string) (i int, tool string, module bool) {
 	shell := scriptShells[name]
 	name = strings.TrimRight(name, "0123456789.")
 	if !interpreters[name] && !shell {
 		return -1, "", false
 	}
-	skip, sub := false, false
+	skip, sub, val := false, false, false
 	for i, a := range args {
 		flag, _, _ := strings.Cut(a, "=")
 		switch {
@@ -172,7 +174,7 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 			skip = false
 			continue
 		case valueFlags[name+" "+a]: // before a shell's short flags, for fish's -C (DEV-170)
-			skip = true
+			skip, val = true, true
 			continue
 		case name == "fish" && len(a) > 1 && a[0] == '-' && a[1] != '-': // getopt's reading (DEV-176)
 			j := strings.IndexAny(a[1:], fishValueOpts)
@@ -193,13 +195,13 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 			return i, a[2:], true
 		case inlineCodeFlags[name+" "+flag]:
 			return -1, "", false
-		case !sub && subcommands[name+" "+a]:
+		case !sub && subcommands[name+" "+a] && (a != "x" || !val): // x only as bun's first non-flag (DEV-200)
 			sub = true
 			if a == "x" { // bun x is bunx, which reads the options after it (DEV-194)
 				name = "bunx"
 			}
 			continue
-		case strings.HasPrefix(a, "-"):
+		case strings.HasPrefix(a, "-") && (a != "-" || name != "fish"): // fish's lone - is its script (DEV-200)
 			continue
 		}
 		return i, a, false

@@ -141,7 +141,10 @@ var inlineCodeFlags = map[string]bool{
 // bunx's package, ruby's library, bun's preloads (--require and --import are its aliases of
 // --preload), node's optional env file, and fish's features, stack depth, startup profile and
 // debug log (DEV-176). npx's --cache, --userconfig, --shell, and the removed --npm, --node-arg
-// and -n, whose value npx drops with them (npm's bin/npx-cli.js) (DEV-194). Written with =
+// and -n, whose value npx drops with them (npm's bin/npx-cli.js) (DEV-194). npm's config
+// options --registry, -w (--workspace), --workspace, --prefix and --loglevel, none of them
+// Boolean in npm's config definitions; npx's rule that any other flag but a switch takes a value
+// is not copied (DEV-200). Written with =
 // (--require=x), the value is part of the flag.
 var valueFlags = map[string]bool{
 	"python -X": true, "python -W": true,
@@ -150,6 +153,7 @@ var valueFlags = map[string]bool{
 	"bun -r": true, "bun --preload": true, "bun --require": true, "bun --import": true,
 	"npx -p": true, "npx --package": true, "bunx -p": true, "bunx --package": true,
 	"npx --cache": true, "npx --userconfig": true, "npx --shell": true, "npx --npm": true, "npx --node-arg": true, "npx -n": true,
+	"npx --registry": true, "npx -w": true, "npx --workspace": true, "npx --prefix": true, "npx --loglevel": true,
 	"ruby -I": true, "ruby -r": true,
 	"bash --rcfile": true, "bash --init-file": true,
 	"sh --rcfile": true, "sh --init-file": true,
