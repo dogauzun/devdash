@@ -4,7 +4,7 @@ import "net/netip"
 
 // Reconcile matches listeners to published container ports (spec "Docker integration",
 // Reconciliation). A listener matches a tcp mapping with a host port when the ports are equal
-// and its owner is a port proxy (proxyNames) or unknown (PID 0), tried in order: the bind
+// and its owner is a port proxy (runtimeNames) or unknown (PID 0), tried in order: the bind
 // address equals the mapping's host IP (an unspecified listener also takes an empty host IP,
 // which Podman reports for every interface of either family); an unspecified listener takes the
 // other family's every-interface mapping (Docker Desktop holds 0.0.0.0 mappings on [::]); an

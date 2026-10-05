@@ -38,8 +38,8 @@ func RuntimeCLI(p Process) string {
 
 func runtimeCLI(p Process) (string, bool) {
 	for _, n := range names(p) {
-		if cli, ok := runtimeNames[n]; ok {
-			return cli, true
+		if e, ok := runtimeNames[n]; ok {
+			return e.cli, true
 		}
 		if strings.HasPrefix(n, runtimePrefix) {
 			return "docker", true
@@ -48,10 +48,11 @@ func runtimeCLI(p Process) (string, bool) {
 	return "", false
 }
 
-// isProxy reports whether p is a runtime process that holds published ports (proxyNames).
+// isProxy reports whether p is a runtime process that holds published ports (runtimeNames'
+// proxy).
 func isProxy(p Process) bool {
 	for _, n := range names(p) {
-		if proxyNames[n] {
+		if runtimeNames[n].proxy {
 			return true
 		}
 	}

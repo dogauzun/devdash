@@ -184,40 +184,31 @@ var scriptExts = map[string]bool{".js": true, ".cjs": true, ".mjs": true, ".ts":
 // it serves either). Killing one stops other containers or leaves a port dead, so the engine
 // refuses them whether or not Docker answered (DEV-51). Matched by basename, like the kind
 // lists. The docker and podman CLIs are not here: a `docker compose up` you started is yours.
-var runtimeNames = map[string]string{
-	"dockerd":            "docker", // Docker Engine daemon
-	"containerd":         "docker", // container runtime under dockerd
-	"docker-proxy":       "docker", // Docker's userland proxy, one per published port (Linux)
-	"com.docker.backend": "docker", // Docker Desktop backend, holds every published port (macOS)
-	"com.docker.vpnkit":  "docker", // Docker Desktop for Mac's older port forwarder
-	"vpnkit":             "docker", // the same forwarder in Docker Desktop's Linux and Windows builds
-	"rootlesskit":        "docker", // rootless Docker's namespace holder and port driver
-	"gvproxy":            "",       // Podman machine and Docker Desktop network proxy
-	"rootlessport":       "",       // rootless Docker and Podman port forwarder
-	"slirp4netns":        "",       // rootless network stack
-	"limactl":            "",       // Lima host agent: forwards ports for Lima, Colima and Rancher Desktop
-	"pasta":              "podman", // rootless Podman 5 network stack and port forwarder
-	"conmon":             "podman", // Podman container monitor
-	"orbstack helper":    "docker", // OrbStack's VM manager, holds every published port (macOS); the space is part of the name
-	"orbstack":           "docker", // OrbStack's app: quitting it stops the VM and every container
+var runtimeNames = map[string]runtimeEntry{
+	"dockerd":            {cli: "docker", proxy: true}, // Docker Engine daemon; 28+ with --userland-proxy=false holds each published port itself
+	"containerd":         {cli: "docker"},              // container runtime under dockerd
+	"docker-proxy":       {cli: "docker", proxy: true}, // Docker's userland proxy, one per published port and family (Linux)
+	"com.docker.backend": {cli: "docker", proxy: true}, // Docker Desktop backend, holds every published port (macOS)
+	"com.docker.vpnkit":  {cli: "docker", proxy: true}, // Docker Desktop for Mac's older port forwarder
+	"vpnkit":             {cli: "docker", proxy: true}, // the same forwarder in Docker Desktop's Linux and Windows builds
+	"rootlesskit":        {cli: "docker", proxy: true}, // rootless Docker's namespace holder and builtin port driver
+	"gvproxy":            {proxy: true},                // Podman machine and Docker Desktop network proxy
+	"rootlessport":       {proxy: true},                // rootless Docker and Podman port forwarder
+	"slirp4netns":        {proxy: true},                // rootless network stack, slirp4netns port driver
+	"limactl":            {proxy: true},                // Lima host agent: forwards ports for Lima, Colima and Rancher Desktop
+	"pasta":              {cli: "podman", proxy: true}, // rootless Podman 5 network stack and port forwarder
+	"conmon":             {cli: "podman"},              // Podman container monitor
+	"orbstack helper":    {cli: "docker", proxy: true}, // OrbStack's VM manager, holds every published port (macOS); the space is part of the name
+	"orbstack":           {cli: "docker"},              // OrbStack's app: quitting it stops the VM and every container
+}
+
+// runtimeEntry is what runtimeNames knows of a runtime process: the CLI that lists its
+// containers, and whether it is a proxy, one that holds a container's published port on the
+// host, so a listener it owns can be a container's (Reconcile).
+type runtimeEntry struct {
+	cli   string
+	proxy bool
 }
 
 // runtimePrefix: any basename starting with it is a containerd shim (containerd-shim-runc-v2).
 const runtimePrefix = "containerd-shim"
-
-// proxyNames: the runtime processes that hold a container's published port on the host, so a
-// listener they own can be a container's (Reconcile). A subset of runtimeNames.
-var proxyNames = map[string]bool{
-	"docker-proxy":       true, // Docker Engine userland proxy, one process per published port and family
-	"dockerd":            true, // Docker Engine 28+ with --userland-proxy=false holds each published port itself
-	"com.docker.backend": true, // Docker Desktop on macOS: one process holds every published port
-	"com.docker.vpnkit":  true, // older Docker Desktop for Mac
-	"vpnkit":             true, // older Docker Desktop, Linux and Windows builds
-	"limactl":            true, // Lima host agent: Lima, Colima and Rancher Desktop on macOS
-	"gvproxy":            true, // Podman machine, newer Docker Desktop networking
-	"rootlesskit":        true, // rootless Docker, builtin port driver
-	"rootlessport":       true, // rootless Docker and Podman port forwarder
-	"slirp4netns":        true, // rootless, slirp4netns port driver
-	"pasta":              true, // rootless Podman 5
-	"orbstack helper":    true, // OrbStack on macOS: one process holds every published port
-}

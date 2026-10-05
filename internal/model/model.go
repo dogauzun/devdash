@@ -141,15 +141,7 @@ var fieldNames = [...]string{"owner", "argv", "cwd", "cpu", "mem"}
 
 // Names lists the set fields by name in a stable order (owner, argv, cwd, cpu, mem);
 // never nil, so an empty set encodes as [].
-func (s FieldSet) Names() []string {
-	names := []string{}
-	for i, n := range fieldNames {
-		if s&(1<<i) != 0 {
-			names = append(names, n)
-		}
-	}
-	return names
-}
+func (s FieldSet) Names() []string { return setNames(uint8(s), fieldNames[:]) }
 
 // TagSet is a set of facts that suggest a process was left over (spec "Release 1.0", Tags).
 // Tags state facts; none of them says a process is safe to kill.
@@ -168,15 +160,17 @@ var (
 
 // Names lists the set tags by their JSON name (orphaned, cwd_deleted); never nil, so an
 // empty set encodes as [].
-func (s TagSet) Names() []string { return s.list(tagNames[:]) }
+func (s TagSet) Names() []string { return setNames(uint8(s), tagNames[:]) }
 
 // Labels lists the set tags as people read them (orphaned, cwd deleted), in the same order.
-func (s TagSet) Labels() []string { return s.list(tagLabels[:]) }
+func (s TagSet) Labels() []string { return setNames(uint8(s), tagLabels[:]) }
 
-func (s TagSet) list(words []string) []string {
+// setNames lists words[i] for each bit i set in set, in order; never nil, so an empty set
+// encodes as [].
+func setNames(set uint8, words []string) []string {
 	out := []string{}
 	for i, w := range words {
-		if s&(1<<i) != 0 {
+		if set&(1<<i) != 0 {
 			out = append(out, w)
 		}
 	}

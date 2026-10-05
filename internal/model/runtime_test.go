@@ -41,6 +41,20 @@ func TestRuntimeCLI(t *testing.T) {
 	}
 }
 
+// TestIsProxy pins the runtime processes Reconcile trusts to hold a container's published port.
+func TestIsProxy(t *testing.T) {
+	for name, want := range map[string]bool{
+		"docker-proxy": true, "dockerd": true, "com.docker.backend": true, "com.docker.vpnkit": true,
+		"vpnkit": true, "limactl": true, "gvproxy": true, "rootlesskit": true, "rootlessport": true,
+		"slirp4netns": true, "pasta": true, "OrbStack Helper": true,
+		"containerd": false, "conmon": false, "OrbStack": false, "containerd-shim-runc-v2": false, "node": false,
+	} {
+		if got := isProxy(Process{PID: 9, Name: name}); got != want {
+			t.Errorf("isProxy(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 // TestMayBeRuntime: a kernel name that could belong to a runtime process once argv[0] is known,
 // so the collector reads its argv over 5000 processes (DEV-92, PR #64 review).
 func TestMayBeRuntime(t *testing.T) {
@@ -62,21 +76,11 @@ func TestMayBeRuntime(t *testing.T) {
 	}
 }
 
-// TestRuntimeLists: every list key is a lower-case basename, as names() produces them, and
-// every proxy is a runtime process, so a forwarder Reconcile trusts is also refused by name
-// when Docker gives no container list (spec, risk 6).
+// TestRuntimeLists: every runtimeNames key is a lower-case basename, as names() produces them.
 func TestRuntimeLists(t *testing.T) {
 	for n := range runtimeNames {
 		if n != baseName(n) {
 			t.Errorf("runtimeNames[%q] never matches: names are compared as %q", n, baseName(n))
-		}
-	}
-	for n := range proxyNames {
-		if n != baseName(n) {
-			t.Errorf("proxyNames[%q] never matches: names are compared as %q", n, baseName(n))
-		}
-		if !IsContainerRuntime(Process{PID: 9, Name: n}) {
-			t.Errorf("proxy %q is not a runtime process", n)
 		}
 	}
 }
