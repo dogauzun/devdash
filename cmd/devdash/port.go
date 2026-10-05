@@ -143,7 +143,7 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 			if !ip.IsValid() { // Podman's empty host IP: every interface
 				ip = netip.IPv4Unspecified()
 			}
-			if m.HostPort == port && m.Proto == "tcp" && !slices.Contains(addrs, ip) {
+			if m.HostPort == port && m.TCP() && !slices.Contains(addrs, ip) {
 				addrs = append(addrs, ip)
 			}
 		}

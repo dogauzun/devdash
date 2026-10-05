@@ -56,3 +56,21 @@ func TestHolders(t *testing.T) {
 		}
 	}
 }
+
+// TestListenerTCP: a listener holds a TCP port unless its proto is UDP, an unknown one included.
+func TestListenerTCP(t *testing.T) {
+	for proto, want := range map[string]bool{"tcp4": true, "tcp6": true, "": true, "udp4": false, "udp6": false} {
+		if got := (Listener{Proto: proto}).TCP(); got != want {
+			t.Errorf("Listener{Proto: %q}.TCP() = %v, want %v", proto, got, want)
+		}
+	}
+}
+
+// TestPortMappingTCP: a published port is TCP only when Docker says exactly tcp.
+func TestPortMappingTCP(t *testing.T) {
+	for proto, want := range map[string]bool{"tcp": true, "udp": false, "sctp": false, "": false} {
+		if got := (PortMapping{Proto: proto}).TCP(); got != want {
+			t.Errorf("PortMapping{Proto: %q}.TCP() = %v, want %v", proto, got, want)
+		}
+	}
+}

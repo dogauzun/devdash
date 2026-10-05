@@ -129,12 +129,12 @@ func probePort(s model.Snapshot, n uint16, self bool, probe freeport.Prober) por
 // the container that does not hold n itself (DEV-166).
 func holds(r model.Row, n uint16) bool {
 	if r.Container != nil && slices.ContainsFunc(r.Container.Ports, func(pm model.PortMapping) bool {
-		return pm.HostPort == n && pm.Proto == "tcp"
+		return pm.HostPort == n && pm.TCP()
 	}) {
 		return true
 	}
 	return r.Process != nil && slices.ContainsFunc(r.Process.Listeners, func(l model.Listener) bool {
-		return l.Port == n && !strings.HasPrefix(l.Proto, "udp") && l.ContainerID == r.Process.ContainerID
+		return l.Port == n && l.TCP() && l.ContainerID == r.Process.ContainerID
 	})
 }
 

@@ -258,7 +258,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 			continue
 		}
 		for _, l := range o.Process.Listeners {
-			if !strings.HasPrefix(l.Proto, "udp") {
+			if l.TCP() {
 				ports = append(ports, l.Port)
 			}
 		}

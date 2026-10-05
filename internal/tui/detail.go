@@ -166,7 +166,7 @@ func (msg detailFreeMsg) apply(m *Model) tea.Cmd {
 // count them; ok is false when p has none.
 func lowestPort(p *model.Process) (port uint16, ok bool) {
 	for _, l := range p.Listeners {
-		if !strings.HasPrefix(l.Proto, "udp") && (!ok || l.Port < port) {
+		if l.TCP() && (!ok || l.Port < port) {
 			port, ok = l.Port, true
 		}
 	}
@@ -310,7 +310,7 @@ func detailForwarders(d *detailDoc, s model.Snapshot, c *model.Container, holder
 		return
 	}
 	for _, pm := range c.Ports {
-		if pm.Proto == "tcp" && pm.HostPort != 0 && !held[pm.HostPort] {
+		if pm.TCP() && pm.HostPort != 0 && !held[pm.HostPort] {
 			held[pm.HostPort] = true // once per port, not per family
 			d.wrap(fmt.Sprintf("no process holds port %d (published by Docker)", pm.HostPort))
 		}
