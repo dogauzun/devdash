@@ -105,16 +105,16 @@ func (m *Model) tableView(w, h int) string {
 	}
 	m.scroll(rh)
 
-	name := m.nameTitle()
-	c := m.cache()
-	cols, widths := layout(w, max(ansi.StringWidth(name), c.longest))
+	title := m.nameTitle()
+	tc := m.cache()
+	cols, widths := layout(w, max(ansi.StringWidth(title), tc.longest))
 	var lines []string
 	if titled {
 		cells := make([]string, len(cols))
 		for j, c := range cols {
 			t := colSpecs[c].title
 			if c == colName {
-				t = name
+				t = title
 			}
 			cells[j] = pad(t, widths[j], colSpecs[c].right)
 		}
@@ -128,55 +128,75 @@ func (m *Model) tableView(w, h int) string {
 	}
 
 	for i := m.top; i < min(len(m.rows), m.top+rh); i++ {
-		r := m.rows[i]
 		var l string
-		faint := [2]int{} // the cells the tags and arguments take, cut to the name column
-		if r.Key.Header != model.GroupNone {
-			if l = m.nameCell(i, w); ansi.StringWidth(l) < w { // a label that fills the line leaves the counts no cell (DEV-195)
-				l += c.counts[r.Key].text(r.Key.Header)
-			}
-			l = pad(l, w, false)
+		var faint [2]int // the cells the tags and arguments take, cut to the name column
+		if m.rows[i].Key.Header != model.GroupNone {
+			l = m.headerLine(i, w, tc)
 		} else {
-			name := m.nameCell(i, widths[0])
-			cells := make([]string, len(cols))
-			for j, c := range cols {
-				t := name
-				if c != colName {
-					t = m.cell(i, c)
-				}
-				cells[j] = pad(t, widths[j], colSpecs[c].right)
-			}
-			end := ansi.StringWidth(name)
-			args := ""
-			if c.short { // below commandWidth columns of the terminal (shortTags): no command column
-				if a, room := argText(r), widths[0]-end-2; a != "" && room >= argsMin {
-					args = "  " + ansi.Truncate(a, room, "…")
-					cells[0] = pad(name+args, widths[0], false)
-				}
-			}
-			l = pad(strings.Join(cells, " "), w, false)
-			if t := ansi.StringWidth(tagText(r, c.short)); t > 0 || args != "" {
-				faint = [2]int{min(end-t, widths[0]), min(end+ansi.StringWidth(args), widths[0])}
-			}
+			l, faint = m.processLine(i, w, cols, widths, tc)
 		}
-		st := lipgloss.NewStyle()
-		switch {
-		case i == m.selIdx:
-			st = styleSel
-		case r.Key.Header != model.GroupNone:
-			st = styleBold
-		case r.Dimmed:
-			st = styleDim
-		}
-		if faint[0] < faint[1] { // in three pieces, since a style rendered inside another ends it
-			l = st.Render(ansi.Cut(l, 0, faint[0])) + st.Faint(true).Render(ansi.Cut(l, faint[0], faint[1])) +
-				st.Render(ansi.Cut(l, faint[1], w))
-		} else {
-			l = st.Render(l)
-		}
-		lines = append(lines, l)
+		lines = append(lines, m.styleRow(i, l, faint, w))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// headerLine is header row i's text, w cells wide: its name cell and, when the label leaves
+// room, its counts.
+func (m *Model) headerLine(i, w int, tc *tableCache) string {
+	l := m.nameCell(i, w)
+	if ansi.StringWidth(l) < w { // a label that fills the line leaves the counts no cell (DEV-195)
+		l += tc.counts[m.rows[i].Key].text(m.rows[i].Key.Header)
+	}
+	return pad(l, w, false)
+}
+
+// processLine is process or container row i's text, w cells wide, in columns cols of widths,
+// and the cells its tags and arguments take in the name column, which styleRow draws faint
+// (an empty range when it has neither).
+func (m *Model) processLine(i, w int, cols []col, widths []int, tc *tableCache) (string, [2]int) {
+	r := m.rows[i]
+	name := m.nameCell(i, widths[0])
+	cells := make([]string, len(cols))
+	for j, c := range cols {
+		t := name
+		if c != colName {
+			t = m.cell(i, c)
+		}
+		cells[j] = pad(t, widths[j], colSpecs[c].right)
+	}
+	end := ansi.StringWidth(name)
+	args := ""
+	if tc.short { // below commandWidth columns of the terminal (shortTags): no command column
+		if a, room := argText(r), widths[0]-end-2; a != "" && room >= argsMin {
+			args = "  " + ansi.Truncate(a, room, "…")
+			cells[0] = pad(name+args, widths[0], false)
+		}
+	}
+	l := pad(strings.Join(cells, " "), w, false)
+	if t := ansi.StringWidth(tagText(r, tc.short)); t > 0 || args != "" {
+		return l, [2]int{min(end-t, widths[0]), min(end+ansi.StringWidth(args), widths[0])}
+	}
+	return l, [2]int{}
+}
+
+// styleRow renders row i's line l, w cells wide: selected, header or dimmed, with the cells
+// in faint drawn faint.
+func (m *Model) styleRow(i int, l string, faint [2]int, w int) string {
+	r := m.rows[i]
+	st := lipgloss.NewStyle()
+	switch {
+	case i == m.selIdx:
+		st = styleSel
+	case r.Key.Header != model.GroupNone:
+		st = styleBold
+	case r.Dimmed:
+		st = styleDim
+	}
+	if faint[0] < faint[1] { // in three pieces, since a style rendered inside another ends it
+		return st.Render(ansi.Cut(l, 0, faint[0])) + st.Faint(true).Render(ansi.Cut(l, faint[0], faint[1])) +
+			st.Render(ansi.Cut(l, faint[1], w))
+	}
+	return st.Render(l)
 }
 
 // scroll moves m.top so that the selected row is among the rh rows on screen and the window
