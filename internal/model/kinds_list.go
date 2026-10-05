@@ -140,13 +140,16 @@ var inlineCodeFlags = map[string]bool{
 // categories, and bash's rc file, also as sh (dash refuses long flags) (DEV-170). npx's and
 // bunx's package, ruby's library, bun's preloads (--require and --import are its aliases of
 // --preload), node's optional env file, and fish's features, stack depth, startup profile and
-// debug log (DEV-176). Written with = (--require=x), the value is part of the flag.
+// debug log (DEV-176). npx's --cache, --userconfig, --shell, and the removed --npm, --node-arg
+// and -n, whose value npx drops with them (npm's bin/npx-cli.js) (DEV-194). Written with =
+// (--require=x), the value is part of the flag.
 var valueFlags = map[string]bool{
 	"python -X": true, "python -W": true,
 	"node -r": true, "node --require": true, "node --import": true, "node --env-file": true, "node --env-file-if-exists": true,
 	"nodejs -r": true, "nodejs --require": true, "nodejs --import": true, "nodejs --env-file": true, "nodejs --env-file-if-exists": true,
 	"bun -r": true, "bun --preload": true, "bun --require": true, "bun --import": true,
 	"npx -p": true, "npx --package": true, "bunx -p": true, "bunx --package": true,
+	"npx --cache": true, "npx --userconfig": true, "npx --shell": true, "npx --npm": true, "npx --node-arg": true, "npx -n": true,
 	"ruby -I": true, "ruby -r": true,
 	"bash --rcfile": true, "bash --init-file": true,
 	"sh --rcfile": true, "sh --init-file": true,
@@ -161,7 +164,7 @@ var valueFlags = map[string]bool{
 const fishValueOpts = "cCpdfDo"
 
 // subcommands: an interpreter's first non-flag arguments that name no tool but run the next
-// one: `bun run dev`, `bun x vite` (DEV-153).
+// one: `bun run dev`, `bun x vite` (DEV-153). The flags after x are bunx's (DEV-194).
 var subcommands = map[string]bool{"bun run": true, "bun x": true}
 
 // scriptShells: shells whose first non-flag argument is a script file, named in the TUI's
