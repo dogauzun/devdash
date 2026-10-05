@@ -208,8 +208,18 @@ pid's start time is checked again right before `kill(2)`, so a reused pid is nev
 
 ### `devdash version`
 
-Prints the version, the commit, and the commit's date (labelled `built`; release builds and
-`go install` builds both record the commit time, not the build time). Exits 0.
+Prints the version, the commit, and the commit's date (labelled `built`: the commit time, not
+the build time). Exits 0. What a binary knows depends on how it was built:
+
+- Release archives and the Homebrew cask (which installs the archive's binary) record all three:
+  `devdash v1.1.0 (commit dbadac7e5ba856d776e36251559b8abd03de2654, built 2026-10-04T10:31:26Z)`.
+- `go install github.com/dogauzun/devdash/cmd/devdash@latest` (or `@v1.1.0`) records the
+  version only, since a module from the proxy carries no git data:
+  `devdash v1.1.0 (commit none, built unknown)`.
+- `make build`, `go build` or `go install` inside a git checkout record the commit and its time,
+  with a Go pseudo-version as the version; uncommitted changes add `+dirty` to the version and
+  `-dirty` to the commit:
+  `devdash v1.1.1-0.20261005093007-6d4b5d0a89f2 (commit 6d4b5d0a89f28ee01e784aca358dd6cfd67125b7, built 2026-10-05T09:30:07Z)`.
 
 ### Global flags
 
