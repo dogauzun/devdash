@@ -319,6 +319,49 @@ func TestFoldUnfoldHiddenSelection(t *testing.T) {
 	}
 }
 
+// TestFoldUnfoldOneName (DEV-198): a chain unfolded under `a` whose label is one name without
+// `a` (zsh 30 › vite 31) keeps its key while it reads `vite`, so pressing `a` twice, or a filter
+// that draws zsh (/vite matches its argv), shows it unfolded again. → on a one-name row does
+// nothing: there is nothing to unfold, and `a` later shows the chain folded.
+func TestFoldUnfoldOneName(t *testing.T) {
+	s := chainFixture()
+	zsh, vite := s.Processes[0], s.Processes[1]
+	zsh.PID, zsh.PPID, zsh.Name, zsh.Argv, zsh.Kind = 30, 9, "zsh", []string{"zsh", "-c", "vite; :"}, model.KindShell
+	vite.PID, vite.PPID, vite.Name, vite.Argv, vite.Kind = 31, 30, "vite", []string{"vite"}, model.KindServer
+	s.Processes = []model.Process{zsh, vite}
+	unfolded := func(m *Model) bool { return line(m, "zsh") != "" && line(m, "zsh › vite") == "" }
+
+	m, _ := newTest(t, 160, 30)
+	feed(m, s)
+	press(m, "a")
+	selectKey(t, m, keyOf(s, 31))
+	press(m, "right")
+	for _, step := range []struct {
+		name string
+		keys []string
+		want bool // zsh has a row of its own
+	}{
+		{"unfolded", nil, true},
+		{"a off", []string{"a"}, false},
+		{"a on again", []string{"a"}, true},
+		{"a off, filter drawing zsh", []string{"a", "/", "v", "i", "t", "e", "enter"}, true},
+		{"filter cleared, a on", []string{"/", "esc", "a"}, true},
+	} {
+		press(m, step.keys...)
+		if got := unfolded(m); got != step.want || line(m, "vite") == "" {
+			t.Errorf("%s: zsh row %v, want %v\n%s", step.name, got, step.want, screen(m))
+		}
+	}
+
+	m, _ = newTest(t, 160, 30)
+	feed(m, s)
+	selectKey(t, m, keyOf(s, 31))
+	press(m, "right", "a")
+	if unfolded(m) || len(m.unfolded) != 0 {
+		t.Errorf("→ on the one-name row unfolded the chain: unfolded %v\n%s", m.unfolded, screen(m))
+	}
+}
+
 func TestFoldUnfoldedSurvivesRefresh(t *testing.T) {
 	s := chainFixture()
 	m, _ := newTest(t, 160, 30)
@@ -551,6 +594,57 @@ func TestFoldKillTreeRootFilter(t *testing.T) {
 		}
 		if got := planPIDs(m); !slices.Equal(got, lteTree) {
 			t.Errorf("/%s: listed pids %v, want %v", query, got, lteTree)
+		}
+	}
+}
+
+// TestFoldKillTreeRootRefold (DEV-198): a filter flattens with every process shown (Search), so
+// an idle shell the view hides counts as a child again and a chain can fold differently. The
+// root of a tree kill is the first link the row names in the view at hand: claude 11 → zsh 12
+// → xargs 13 is `claude › xargs` without a filter. When zsh 12 also has an idle zsh 14, /xargs
+// splits it into `claude › zsh` and `xargs`, and the xargs row, which names xargs alone, plans
+// from xargs; without the sibling the chain folds the same and plans from claude both ways.
+func TestFoldKillTreeRootRefold(t *testing.T) {
+	proc := func(pid, ppid int, name string, kind model.Kind, argv ...string) model.Process {
+		p := chainFixture().Processes[0]
+		p.PID, p.PPID, p.Name, p.Argv, p.Kind = pid, ppid, name, append([]string{name}, argv...), kind
+		p.StartTime = at(time.Hour - time.Duration(pid)*time.Second)
+		return p
+	}
+	chain := []model.Process{proc(11, 9, "claude", model.KindAgent), proc(12, 11, "zsh", model.KindShell, "mid.zsh"),
+		proc(13, 12, "xargs", model.KindOther)}
+	idle := proc(14, 12, "zsh", model.KindShell, "-c", "zselect -t 60000")
+	for _, tc := range []struct {
+		name, query string
+		procs       []model.Process
+		label       string // the xargs row's name cell
+		root        int
+		pids        []int
+	}{
+		{"one child", "", chain, "claude › xargs", 11, []int{11, 12, 13}},
+		{"one child", "xargs", chain, "claude › xargs", 11, []int{11, 12, 13}},
+		{"idle sibling", "", append(slices.Clip(chain), idle), "claude › xargs", 11, []int{11, 12, 13, 14}},
+		{"idle sibling", "xargs", append(slices.Clip(chain), idle), "xargs", 13, []int{13}},
+	} {
+		s := chainFixture()
+		s.Processes = tc.procs
+		m, _, fp, _ := newKillTest(t, 160, 40, s)
+		if tc.query != "" {
+			press(m, "/")
+			typeText(m, tc.query)
+			press(m, "enter")
+		}
+		selectRow(t, m, keyOf(s, 13))
+		if got := strings.Fields(line(m, " 13 ")); !strings.HasPrefix(strings.Join(got, " "), "▾ "+tc.label+" other") &&
+			!strings.HasPrefix(strings.Join(got, " "), tc.label+" other") {
+			t.Errorf("%s /%s: xargs row %q, want label %q\n%s", tc.name, tc.query, got, tc.label, screen(m))
+		}
+		press(m, "x", "t")
+		if got := fp.calls[len(fp.calls)-1].key; got != keyOf(s, tc.root) {
+			t.Errorf("%s /%s: tree planned from pid %d, want %d\n%s", tc.name, tc.query, got.PID, tc.root, screen(m))
+		}
+		if got := planPIDs(m); !slices.Equal(got, tc.pids) {
+			t.Errorf("%s /%s: listed pids %v, want %v\n%s", tc.name, tc.query, got, tc.pids, screen(m))
 		}
 	}
 }
