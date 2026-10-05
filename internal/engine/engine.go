@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/dogauzun/devdash/internal/collector"
@@ -73,7 +74,7 @@ type Engine struct {
 	updates chan Update
 	refresh chan struct{}
 	users   userCache
-	docker  dockerLatest // the latest Fetch, shared by Run's Docker goroutine and its ticks
+	docker  atomic.Pointer[dockerResult] // the latest Fetch, stored by Run's Docker goroutine, read by its ticks
 
 	// Owned by the goroutine running Run (or Snapshot).
 	prev     model.Snapshot
@@ -171,7 +172,7 @@ func (e *Engine) Run(ctx context.Context) {
 			if raw.TakenAt.Sub(base.TakenAt) < e.o.Tick {
 				base = e.base
 			}
-			snap = e.build(raw, base, e.docker.load())
+			snap = e.build(raw, base, e.latestDocker())
 			e.procs = len(raw.Processes)
 		}
 		e.adapt(time.Since(start) > slowTick || errors.Is(err, context.DeadlineExceeded))

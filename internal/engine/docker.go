@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -25,23 +24,14 @@ type dockerResult struct {
 	done       bool // false until the first Fetch returns
 }
 
-// dockerLatest holds the latest dockerResult, written by the Docker goroutine and read by
-// every tick.
-type dockerLatest struct {
-	mu sync.Mutex
-	r  dockerResult
-}
-
-func (l *dockerLatest) store(r dockerResult) {
-	l.mu.Lock()
-	l.r = r
-	l.mu.Unlock()
-}
-
-func (l *dockerLatest) load() dockerResult {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.r
+// latestDocker is the latest dockerResult watchDocker stored, or the zero dockerResult (done
+// false) before the first one. A stored result is never modified: watchDocker stores a new one
+// each time, and Build does not mutate its containers.
+func (e *Engine) latestDocker() dockerResult {
+	if r := e.docker.Load(); r != nil {
+		return *r
+	}
+	return dockerResult{}
 }
 
 // fetch runs one Fetch bounded by dockerTimeout. It relies on Fetch honouring ctx (the
@@ -60,7 +50,8 @@ func (e *Engine) watchDocker(ctx context.Context) {
 	t := time.NewTicker(DockerTick)
 	defer t.Stop()
 	for {
-		e.docker.store(fetch(ctx, e.o.Docker))
+		r := fetch(ctx, e.o.Docker)
+		e.docker.Store(&r)
 		select {
 		case <-ctx.Done():
 			return
