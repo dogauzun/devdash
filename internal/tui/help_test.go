@@ -27,7 +27,7 @@ func TestHelp(t *testing.T) {
 		"o           open http://localhost:<port> (the lowest port)",
 		"a           show or hide shells and editors",
 		"d           show or hide container rows",
-		"s           cycle sort within groups: default, port, cpu, start time",
+		"s           cycle sort within groups: default, port, cpu, start time, name",
 		"r           refresh now",
 		"?           this help",
 		"q ctrl-c    quit",

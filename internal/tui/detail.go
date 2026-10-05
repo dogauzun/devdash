@@ -287,7 +287,7 @@ func (m *Model) detailRow(d *detailDoc, r model.Row) {
 
 // detailProcess writes the fields of a real process.
 func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) {
-	d.title(fmt.Sprintf("%s %d · %s", quote(procLabel(p)), p.PID, p.Kind))
+	d.title(fmt.Sprintf("%s %d · %s", quote(p.Label()), p.PID, p.Kind))
 	switch {
 	case p.Unknown&model.FieldArgv != 0:
 		d.field("command", "unknown")

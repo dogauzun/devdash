@@ -26,6 +26,17 @@ func (p Project) Label() string {
 	return s
 }
 
+// Label is how the dashboard names p (spec "Release 1.1", tool labels): `<tool> (<name>)` when
+// it is an interpreter running a tool (Tool: `vite (node)`, `server.js (node)`), else its name.
+// The TUI's table, detail pane title and kill modal show it, and SortName sorts by it; JSON,
+// `port N` and `kill N` keep the name. Snapshot text, not yet cleaned.
+func (p Process) Label() string {
+	if tool, _, ok := Tool(p); ok {
+		return tool + " (" + p.Name + ")"
+	}
+	return p.Name
+}
+
 // Uptime formats a duration as its largest whole unit: 45s, 12m, 3h, 2d.
 func Uptime(d time.Duration) string {
 	d = max(d, 0)
