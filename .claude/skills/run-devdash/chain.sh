@@ -14,7 +14,7 @@ tree() { # pid and every descendant, parents first
 }
 
 ident() { # what identifies a process besides its pid: start time and command
-	ps -o lstart= -o command= -p "$1" 2>/dev/null
+	ps -ww -o lstart= -o command= -p "$1" 2>/dev/null # -ww: never cut to the terminal width
 }
 
 case $1 in
