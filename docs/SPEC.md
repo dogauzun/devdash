@@ -204,7 +204,7 @@ After signalling, the engine polls every 100 ms for up to 3 s (`--timeout`), the
 
 **Rerun under sudo.** devdash works without root; elevation is opt-in and never automatic. In the dashboard's table, with no modal, overlay or prompt open, `S` opens a confirmation saying that the dashboard restarts as root and that the selection, filter and sort are reset; `y` confirms and any other key cancels. On confirm the dashboard quits normally (terminal restored, refresh loop stopped), then devdash replaces itself (`execve`) with `sudo -- <its own executable> <the arguments it was started with>`, in the current environment; sudo asks for the password on the terminal and devdash never reads it. If sudo cannot be started, the error goes to stderr and devdash exits 5. `S` is offered, and named in the footer's key hints and in a kill result, only when devdash is not root, `sudo` is on `PATH`, and either the snapshot has a warning that root would not have (`process_fields_unreadable`, or `listener_owner_unreadable` when an owner may be hidden by permissions; on Linux only when `CAP_SYS_PTRACE` is in the bounding set, so the root sudo starts can read other users' processes) or a kill ended with permission denied. Otherwise `S` does nothing. It is not offered for Docker's permission warning, for a listener outside devdash's pid namespace or held by the kernel, nor as root. `--json`, `port N`, `kill N` and `free N` never rerun anything; they keep their text hints.
 
-**Open in browser.** `o` runs `open` on macOS or `xdg-open` on Linux with `http://localhost:<port>`, using the lowest port when the process has several. No HTTPS detection in v1; a wrong scheme costs the user one click.
+**Open in browser.** `o` runs `open` on macOS or `xdg-open` on Linux with `http://localhost:<port>`, using the lowest port when the process has several. No HTTPS detection in v1; a wrong scheme costs the user one click. Under sudo the opener runs as the invoking user, never as root: when devdash's effective uid is 0, `SUDO_UID` and `SUDO_GID` (decimal, uid not 0) give its uid and gid, with no supplementary groups, and its `HOME`, `USER` and `LOGNAME` come from that user's entry in the user database (on Linux also `XDG_RUNTIME_DIR=/run/user/<uid>` when sudo removed it). Root without a valid `SUDO_UID` and `SUDO_GID` (a root login, a container) or whose user cannot be looked up starts nothing, and the footer says `open failed: not available as root`.
 
 ## CLI and JSON schema
 
@@ -277,7 +277,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `o` | open `http://localhost:<port>` |
 | `a` | show or hide shells and editors |
 | `d` | show or hide container rows |
-| `s` | cycle sort within groups: default, port, cpu, start time |
+| `s` | cycle sort within groups: default, port, cpu, start time, name |
 | `r` | refresh now |
 | `S` | rerun the dashboard under sudo, after `y` confirms; offered only when sudo would help (Actions, Rerun under sudo) |
 | `?` | help overlay |

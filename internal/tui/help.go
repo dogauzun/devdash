@@ -26,7 +26,7 @@ var helpKeys = [][2]string{
 	{"o", "open http://localhost:<port> (the lowest port)"},
 	{"a", "show or hide shells and editors"},
 	{"d", "show or hide container rows"},
-	{"s", "cycle sort within groups: default, port, cpu, start time"},
+	{"s", "cycle sort within groups: default, port, cpu, start time, name"},
 	{"r", "refresh now"},
 	{"S", "rerun under sudo (asks first) when a warning or a kill needs root"},
 	{"?", "this help"},

@@ -1,10 +1,15 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"strconv"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -81,22 +86,69 @@ func openPort(r model.Row) int {
 	return low
 }
 
-// openURL runs open (macOS) or xdg-open (Linux) on url.
+// openURL runs open (macOS) or xdg-open (Linux) on url, as the user who ran sudo when devdash
+// is root (openAs).
 func openURL(url string) error {
+	name := ""
 	switch runtime.GOOS {
 	case "darwin":
-		return openWith("open", url)
+		name = "open"
 	case "linux":
-		return openWith("xdg-open", url)
+		name = "xdg-open"
+	default:
+		return fmt.Errorf("no browser opener on %s", runtime.GOOS)
 	}
-	return fmt.Errorf("no browser opener on %s", runtime.GOOS)
+	cred, env, err := openAs(os.Geteuid(), os.Getenv, runtime.GOOS, user.LookupId)
+	if err != nil {
+		return err
+	}
+	return openWith(name, url, cred, env)
+}
+
+// errOpenAsRoot is openAs's refusal: root never starts a browser as root.
+var errOpenAsRoot = errors.New("not available as root")
+
+// openAs decides who runs the opener. Not root: nil, nil, nil, devdash itself as before.
+// Root: the user that SUDO_UID and SUDO_GID name (decimal, below 2^32-1, uid not 0), with no
+// supplementary groups, and environment overrides so that the browser is that user's: HOME,
+// USER and LOGNAME from the user database, and on Linux XDG_RUNTIME_DIR=/run/user/<uid> when
+// sudo's env_reset removed it (xdg-open reaches the session's D-Bus and Wayland sockets
+// through it). Root without such a user, or one the lookup cannot find, is refused.
+func openAs(euid int, getenv func(string) string, goos string, lookup func(uid string) (*user.User, error)) (*syscall.Credential, []string, error) {
+	if euid != 0 {
+		return nil, nil, nil
+	}
+	id := func(k string) (uint32, bool) {
+		n, err := strconv.ParseUint(getenv(k), 10, 32)
+		return uint32(n), err == nil && n != math.MaxUint32 // (uid_t)-1 means "unchanged"
+	}
+	uid, okU := id("SUDO_UID")
+	gid, okG := id("SUDO_GID")
+	if !okU || !okG || uid == 0 {
+		return nil, nil, errOpenAsRoot
+	}
+	u, err := lookup(strconv.FormatUint(uint64(uid), 10))
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w (%v)", errOpenAsRoot, err)
+	}
+	env := []string{"HOME=" + u.HomeDir, "USER=" + u.Username, "LOGNAME=" + u.Username}
+	if goos == "linux" && getenv("XDG_RUNTIME_DIR") == "" {
+		env = append(env, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", uid))
+	}
+	// Groups empty, NoSetGroups false: setgroups(0) drops root's supplementary groups.
+	return &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}}, env, nil
 }
 
 // openWith runs name with url as its only argument, with no terminal (stdin, stdout and
 // stderr are the null device, so nothing it prints reaches the screen), and waits up to
-// openWait for it to exit. It is always reaped, so it never lingers as a zombie.
-func openWith(name, url string) error {
+// openWait for it to exit. It is always reaped, so it never lingers as a zombie. A non-nil
+// cred runs it as that user, with env overriding devdash's environment.
+func openWith(name, url string, cred *syscall.Credential, env []string) error {
 	cmd := exec.Command(name, url)
+	if cred != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+		cmd.Env = append(os.Environ(), env...) // exec keeps the last value of a duplicate
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
