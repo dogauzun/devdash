@@ -365,6 +365,39 @@ func TestExited(t *testing.T) {
 	}
 }
 
+// TestArgvFrom: an own-uid process keeps its row with argv unknown only when the read filled
+// kern.argmax (DEV-40); a read that fails, or a short one that does not decode, is a process
+// changing under the read and is dropped (DEV-41, DEV-197). Other users' rows always stay.
+func TestArgvFrom(t *testing.T) {
+	good := procArgs2Blob("/bin/x", []string{"x", "y"})
+	bad := good[:len(good)-1] // last argv string cut: does not decode
+	for _, c := range []struct {
+		name     string
+		b        []byte
+		full     bool
+		err      error
+		own      bool
+		wantArgv []string
+		wantDrop bool
+		wantErr  error
+	}{
+		{"own read", good, false, nil, true, []string{"x", "y"}, false, nil},
+		{"own read fails", nil, false, syscall.EIO, true, nil, true, nil},
+		{"own read fills argmax", good, true, nil, true, nil, false, syscall.E2BIG},
+		{"own full read undecodable", bad, true, nil, true, nil, false, syscall.E2BIG},
+		{"own short read undecodable", bad, false, nil, true, nil, true, nil},
+		{"other read", good, false, nil, false, []string{"x", "y"}, false, nil},
+		{"other read fails", nil, false, syscall.EINVAL, false, nil, false, syscall.EINVAL},
+		{"other read fills argmax", good, true, nil, false, nil, false, syscall.E2BIG},
+		{"other short read undecodable", bad, false, nil, false, nil, false, syscall.EINVAL},
+	} {
+		argv, drop, err := argvFrom(c.b, c.full, c.err, c.own)
+		if !slices.Equal(argv, c.wantArgv) || drop != c.wantDrop || err != c.wantErr {
+			t.Errorf("%s: argv %q drop %v err %v, want %q %v %v", c.name, argv, drop, err, c.wantArgv, c.wantDrop, c.wantErr)
+		}
+	}
+}
+
 // TestCollectOtherUsers: other users' processes stay as rows with argv, cwd, cpu and mem
 // unknown, counted in one warning.
 func TestCollectOtherUsers(t *testing.T) {

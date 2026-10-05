@@ -174,25 +174,33 @@ func countDenied(procs []Process, denied map[int]bool) int {
 }
 
 // readArgv fills p.Argv from kern.procargs2 using buf (kern.argmax bytes) and returns why it
-// could not, or drop for a process of uid whose read failed: it is exiting, just forked or
-// mid-exec, and is dropped rather than shown half-filled (DEV-41).
+// could not, or drop for a process of uid that is dropped rather than shown half-filled.
 func readArgv(lib *libSystem, buf []byte, p *Process, uid int) (drop bool, _ error) {
 	n, err := lib.procArgs2(p.PID, buf)
-	if err != nil && p.UID == uid {
-		return true, nil
-	}
-	switch argv, ok := decodeProcArgs2(buf[:n]); {
-	case err != nil:
-		return false, err // EINVAL for other users' processes
-	case n == len(buf):
+	p.Argv, drop, err = argvFrom(buf[:n], n == len(buf), err, p.UID == uid)
+	return drop, err
+}
+
+// argvFrom decides a kern.procargs2 read that returned b and err, full when b fills the
+// kern.argmax buffer, of a process of devdash's uid when own.
+func argvFrom(b []byte, full bool, err error, own bool) (argv []string, drop bool, _ error) {
+	argv, ok := decodeProcArgs2(b)
+	switch {
+	case err == nil && full:
 		// The strings area is larger than kern.argmax and the kernel returned its tail, so
-		// argc no longer lines up: unknown, but the process is alive and keeps its row.
-		return false, syscall.E2BIG
-	case ok:
-		p.Argv = argv
-		return false, nil
+		// argc no longer lines up (it may even decode, to env or garbage): unknown, but the
+		// process is alive and keeps its row, the one own-uid exception to DEV-41 (DEV-40).
+		return nil, false, syscall.E2BIG
+	case err == nil && ok:
+		return argv, false, nil
+	case own:
+		// A failed read, or a short one that does not decode (a live process's whole strings
+		// area always does): exiting, just forked or mid-exec, so dropped (DEV-41, DEV-197).
+		return nil, true, nil
+	case err != nil:
+		return nil, false, err // EINVAL for other users' processes
 	default:
-		return false, syscall.EINVAL
+		return nil, false, syscall.EINVAL
 	}
 }
 
