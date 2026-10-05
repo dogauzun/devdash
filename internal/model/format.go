@@ -29,10 +29,16 @@ func (p Project) Label() string {
 // Label is how the dashboard names p (spec "Release 1.1", tool labels): `<tool> (<name>)` when
 // it is an interpreter running a tool (Tool: `vite (node)`, `server.js (node)`), else its name.
 // The TUI's table, detail pane title and kill modal show it, and SortName sorts by it; JSON,
-// `port N` and `kill N` keep the name. Snapshot text, not yet cleaned.
+// `port N` and `kill N` keep the name. Snapshot text, not yet cleaned. A shell's script is
+// named after the shell (`link.sh (bash)`), since Linux names a #! script's process after the
+// script (DEV-159).
 func (p Process) Label() string {
 	if tool, _, ok := Tool(p); ok {
-		return tool + " (" + p.Name + ")"
+		name := p.Name
+		if sh := baseName(p.Argv[0]); scriptShells[sh] {
+			name = sh
+		}
+		return tool + " (" + name + ")"
 	}
 	return p.Name
 }

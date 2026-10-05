@@ -129,12 +129,26 @@ var inlineCodeFlags = map[string]bool{
 	"bun -e": true, "bun --eval": true, "bun -p": true, "bun --print": true,
 	"ruby -e": true,
 	"npx -c":  true, "npx --call": true, // npm exec runs a command string
+	"fish --command": true, // the shells' -c, also inside -lc, is read by toolArg (DEV-159)
 }
 
 // valueFlags: an interpreter's flags that take the next argument as their value, which is
 // therefore not the tool (DEV-138). Python passes -X and -W on to its multiprocessing workers
-// (`python3 -X dev -c …`); -Wignore, with the value attached, is a plain flag.
-var valueFlags = map[string]bool{"python -X": true, "python -W": true}
+// (`python3 -X dev -c …`); -Wignore, with the value attached, is a plain flag. The shells' -o
+// and -O, also at the end of -eo, are read by toolArg (DEV-159).
+var valueFlags = map[string]bool{
+	"python -X": true, "python -W": true,
+	"bash --rcfile": true, "bash --init-file": true,
+}
+
+// subcommands: an interpreter's first non-flag arguments that name no tool but run the next
+// one: `bun run dev`, `bun x vite` (DEV-153).
+var subcommands = map[string]bool{"bun run": true, "bun x": true}
+
+// scriptShells: shells whose first non-flag argument is a script file, named in the TUI's
+// label (`run55.sh (bash)`) but not unwrapped by Classify: the process stays a shell (DEV-159).
+// Matched exactly, without trimming version digits, like shellNames.
+var scriptShells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true}
 
 // scriptExts: extensions stripped from an interpreter's script, so nodemon.js matches nodemon.
 var scriptExts = map[string]bool{".js": true, ".cjs": true, ".mjs": true, ".ts": true, ".py": true, ".rb": true}
