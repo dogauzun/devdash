@@ -96,7 +96,7 @@ type Project struct {
     ID       string  // repository root path, also the group key
     Root     string
     Name     string  // basename of Root, or the repository's name for linked worktrees
-    Branch   string  // "" when detached; then ShortSHA is set
+    Branch   string  // "" when detached (then ShortSHA is set) or unknown
     ShortSHA string
     Worktree bool
     MainRepo string  // main work tree, for linked worktrees only; "" when none is recorded
@@ -150,7 +150,7 @@ A process belongs to the nearest git repository above its working directory; whe
 6. Still nothing: take the first absolute path in argv that lies inside a project already found in this snapshot, and use that project. Paths that are not inside a known project are not walked, to avoid stat calls on arbitrary strings.
 7. Otherwise the process goes under the `other` group, which is sorted last.
 
-Branch comes from the repository's `HEAD` (`ref: refs/heads/<branch>`, or a 7-character SHA when detached), read from `.git/HEAD` for a main repository and from `<gitdir>/HEAD` for a worktree. Nested repositories and submodules resolve to the nearest `.git`, which is what a developer working inside the submodule expects.
+Branch comes from the repository's `HEAD` (`ref: refs/heads/<branch>`, or a 7-character SHA when detached), read from `.git/HEAD` for a main repository and from `<gitdir>/HEAD` for a worktree. A repository in git's reftable format keeps HEAD in its tables and writes the placeholder `ref: refs/heads/.invalid` to the file; devdash does not read reftables, so the branch of such a repository and its worktrees is unknown: empty, with no SHA, and the header reads just the name. Nested repositories and submodules resolve to the nearest `.git`, which is what a developer working inside the submodule expects.
 
 Resolution results are cached per directory path with the mtime of the `.git` entry and of `HEAD`; a hit costs one `stat`, a miss costs the walk, and the cache is capped at 4096 entries. Every filesystem read uses `os.Lstat` and refuses to follow a symlink out of the walked path, so a process running in a symlinked directory still resolves to the real repository.
 
@@ -219,7 +219,7 @@ The CLI exposes the same snapshot the TUI shows, and its exit codes are the cont
 | `devdash port 3000 --json` | Release 1.0: the same answer as one JSON object | as `port 3000` |
 | `devdash free 3000` | Release 1.0: the first free port from 3000 to 3099, or nothing | 0 found, 1 none free in range, 2 usage error, 5 devdash failed |
 | `devdash kill 3000 [--tree] [--force] [--yes] [--timeout 3s]` | the plan (mode, signal, every pid with name, project and ports), then what was signalled, survivors, and whether the port is free | 0 all exited (or nothing listens on the port), 2 usage error or no terminal to confirm on without `--yes`, 3 permission denied (or the owner is unknown), 4 survivors remain, 5 devdash failed before anything was signalled, 6 nothing signalled: a refused target or a declined confirmation |
-| `devdash version` | version, commit, build date | 0 |
+| `devdash version` | version, commit, commit date (labelled `built`; a `go install …@version` from the module proxy has the version only: `commit none, built unknown`) | 0 |
 
 Global flags: `--roots <paths>` limits project scanning to repositories under those directories (comma-separated, and repeatable; a leading `~` is `$HOME`, `~user` is not supported, and a path that is not an existing directory is a usage error); `--tick <duration>` sets the refresh interval (default 2s, minimum 500ms; a smaller value is a usage error); `--no-docker` skips the Docker client; `--all` includes shells and editors in the TUI (`--json` always lists every process); `--no-color` and `NO_COLOR` disable colour. Flags may come before or after the subcommand. Usage errors exit 2 and print to stderr; stdout stays clean for `--json`. `-h` prints the usage on stdout and exits 0. Every command exits 5 when devdash itself fails (no snapshot could be taken, or the output could not be written), with the error on stderr and nothing on stdout; `kill` only before anything was signalled, since after that its code reports the signals; 1 only ever answers the question asked (`port`: the port is free; `free`: no port in range is free) and never means devdash failed.
 
@@ -417,7 +417,7 @@ Non-goals for Release 1.1, considered in the design and parked: mouse support (c
 
 **Port search.** In the table, with no modal, overlay or prompt open, a digit key opens the filter prompt with that digit typed, exactly as `/` and then the digit would; the detail pane may be open. Digits were unbound, so no key changes meaning. A query is a port number when it is digits only, without a leading zero, from 1 to 65535. Each time the query changes to a port number and a row holds exactly that port (a listener on it, or a container publishing it), the first such row in display order is selected. Prefix matches still show (`80` lists 8000 and 8080), but the exact holder wins the selection. Every other query, and every refresh, keeps the selection rules of "Refresh and selection". So the port question is `5173` `enter`, then `x` to kill or `enter` to read the detail pane.
 
-**The port line.** While the query, typed or applied, is a port number N, a line under the header answers it. Its holders are the rows that hold N when everything is shown (shells, editors and containers, nothing collapsed), which are the rows a search for N can show and select: processes with a listener on N, the unknown owner included, and containers publishing N with no process behind them. `next free` is the search `devdash free N+1` runs (`freeport.Find` over the current snapshot with the same bind probe), and the range it names is N+1 to min(N+100, 65535).
+**The port line.** While the query, typed or applied, is a port number N, a line under the header answers it. Its holders are the rows that hold N when everything is shown (shells, editors and containers, nothing collapsed), which are the rows a search for N can show and select: processes with a listener on N, the unknown owner included, and containers publishing N with no process behind them. A listener that is a container's published port counts on the process's row only when that row is drawn as the container; a forwarder that keeps its own row (`OrbStack Helper`, Docker Desktop's `com.docker.backend`) leaves the port to the container's row, so each published port has one holder, as `port N` and `kill N` count. `next free` is the search `devdash free N+1` runs (`freeport.Find` over the current snapshot with the same bind probe), and the range it names is N+1 to min(N+100, 65535).
 
 | Situation | Port line |
 | --- | --- |

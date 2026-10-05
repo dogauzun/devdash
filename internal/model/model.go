@@ -62,7 +62,7 @@ type Project struct {
 	ID       string // repository root path, also the group key
 	Root     string
 	Name     string // basename of Root, or the repository's name for linked worktrees (mainWorkTree)
-	Branch   string // "" when detached; then ShortSHA is set
+	Branch   string // "" when detached (then ShortSHA is set) or unknown
 	ShortSHA string
 	Worktree bool
 	MainRepo string // main work tree, for linked worktrees only; "" when bare or not recorded
