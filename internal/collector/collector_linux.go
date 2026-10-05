@@ -23,7 +23,7 @@ import (
 func New() Collector { return newLinux("/proc") }
 
 func newLinux(root string) *linuxCollector {
-	c := &linuxCollector{root: root, euid: os.Geteuid(), ptrace: hasPtrace(), stat: unix.Stat}
+	c := &linuxCollector{root: root, euid: os.Geteuid(), ptrace: hasPtrace(), sudoPtrace: boundingPtrace(), stat: unix.Stat}
 	// btime is read once: the kernel shifts it when the wall clock is stepped,
 	// which would move every StartTime and break (pid, start time) identity.
 	c.btime = sync.OnceValues(func() (int64, error) {
@@ -44,8 +44,11 @@ type linuxCollector struct {
 	root   string // proc root, "/proc" outside tests
 	euid   int    // whose fds the walk reads (all when 0); os.Geteuid outside tests
 	ptrace bool   // CAP_SYS_PTRACE is effective; only read for the hints when euid is 0
-	btime  func() (int64, error)
-	stat   func(path string, st *unix.Stat_t) error // unix.Stat outside tests; see readCwd
+	// sudoPtrace: CAP_SYS_PTRACE is in the bounding set, so the root that sudo starts has it;
+	// only read when euid is not 0 (DEV-144).
+	sudoPtrace bool
+	btime      func() (int64, error)
+	stat       func(path string, st *unix.Stat_t) error // unix.Stat outside tests; see readCwd
 
 	// fd-walk state carried to the next Collect. A Collect abandoned on timeout may still be
 	// running when the next one starts, so it is copied in and out under mu.
@@ -112,10 +115,15 @@ func (c *linuxCollector) Collect(ctx context.Context, o Options) (Result, error)
 		}
 	}
 	fieldsHint, ownerHint := c.hints(fdDenied)
+	// Root is denied only by ptrace access checks, so sudo helps a user only when the root it
+	// starts has CAP_SYS_PTRACE (not in a container with default capabilities, DEV-13), and an
+	// unowned listener only when permissions may hide its owner (DEV-144).
+	sudo := c.euid != 0 && c.sudoPtrace
 	if unknown > 0 {
-		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown, Hint: fieldsHint})
+		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown, Hint: fieldsHint, Sudo: sudo})
 	}
 	res.OwnerHint = ownerHint
+	res.OwnerSudo = sudo && fdDenied
 	return res, nil
 }
 
@@ -149,6 +157,14 @@ func hasPtrace() bool {
 		return true
 	}
 	return data[unix.CAP_SYS_PTRACE/32].Effective&(1<<(unix.CAP_SYS_PTRACE%32)) != 0
+}
+
+// boundingPtrace reports whether CAP_SYS_PTRACE is in this process's bounding set, which caps
+// what a root started from it (by sudo) can have. If prctl fails it reports true, so sudo is
+// not ruled out on a guess.
+func boundingPtrace() bool {
+	r, _, errno := unix.Syscall(unix.SYS_PRCTL, unix.PR_CAPBSET_READ, unix.CAP_SYS_PTRACE, 0)
+	return errno != 0 || r == 1
 }
 
 // processes reads every user-space process in one pass per pid, so a pid
@@ -322,7 +338,8 @@ func (c *linuxCollector) readCwd(dir string, p *Process) (ok bool) {
 // unmatched countable inodes differs from the one that walk ended with.
 //
 // fdDenied reports whether a read of fd/ or of an fd link failed with EACCES or EPERM, counting
-// the processes skipped because their fd/ was denied on the last walk.
+// the processes skipped because their fd/ was denied on the last walk, and, below root, whether
+// another uid's listener is left unowned: its owner's fds were skipped as unreadable (DEV-144).
 func (c *linuxCollector) listeners(ctx context.Context, procs []Process) (_ []Listener, fdDenied bool, _ error) {
 	var rows []tcpListen
 	for _, f := range [...]struct{ file, proto string }{{"/net/tcp", "tcp4"}, {"/net/tcp6", "tcp6"}} {
@@ -427,11 +444,13 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) (_ []Li
 	c.denied, c.unmatched = denied, unmatched
 	c.mu.Unlock()
 
+	othersUnowned := false
 	out := make([]Listener, len(rows))
 	for i, r := range rows {
 		out[i] = r.Listener
+		othersUnowned = othersUnowned || r.PID == 0 && !countable(r)
 	}
-	return out, len(denied) > 0 || linkDenied, nil
+	return out, len(denied) > 0 || linkDenied || othersUnowned, nil
 }
 
 // readDirNames lists a directory without the per-entry allocations of os.ReadDir.

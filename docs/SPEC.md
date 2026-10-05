@@ -202,6 +202,8 @@ After signalling, the engine polls every 100 ms for up to 3 s (`--timeout`), the
 
 **`kill N` on the CLI.** N is a TCP port. Every distinct owner of a listener on it gets its own plan; the plans are shown together and confirmed once, and if any owner is refused (including an unknown PID 0 owner), nothing is signalled. After the wait the port is checked again in a fresh snapshot: a forked child can still hold a socket credited only to its parent, so the CLI names the holder and suggests `--tree`; the exit code still describes only the processes that were signalled.
 
+**Rerun under sudo.** devdash works without root; elevation is opt-in and never automatic. In the dashboard's table, with no modal, overlay or prompt open, `S` opens a confirmation saying that the dashboard restarts as root and that the selection, filter and sort are reset; `y` confirms and any other key cancels. On confirm the dashboard quits normally (terminal restored, refresh loop stopped), then devdash replaces itself (`execve`) with `sudo -- <its own executable> <the arguments it was started with>`, in the current environment; sudo asks for the password on the terminal and devdash never reads it. If sudo cannot be started, the error goes to stderr and devdash exits 5. `S` is offered, and named in the footer's key hints and in a kill result, only when devdash is not root, `sudo` is on `PATH`, and either the snapshot has a warning that root would not have (`process_fields_unreadable`, or `listener_owner_unreadable` when an owner may be hidden by permissions; on Linux only when `CAP_SYS_PTRACE` is in the bounding set, so the root sudo starts can read other users' processes) or a kill ended with permission denied. Otherwise `S` does nothing. It is not offered for Docker's permission warning, for a listener outside devdash's pid namespace or held by the kernel, nor as root. `--json`, `port N`, `kill N` and `free N` never rerun anything; they keep their text hints.
+
 **Open in browser.** `o` runs `open` on macOS or `xdg-open` on Linux with `http://localhost:<port>`, using the lowest port when the process has several. No HTTPS detection in v1; a wrong scheme costs the user one click. Under sudo the opener runs as the invoking user, never as root: when devdash's effective uid is 0, `SUDO_UID` and `SUDO_GID` (decimal, uid not 0) give its uid and gid, with no supplementary groups, and its `HOME`, `USER` and `LOGNAME` come from that user's entry in the user database (on Linux also `XDG_RUNTIME_DIR=/run/user/<uid>` when sudo removed it). Root without a valid `SUDO_UID` and `SUDO_GID` (a root login, a container) or whose user cannot be looked up starts nothing, and the footer says `open failed: not available as root`.
 
 ## CLI and JSON schema
@@ -277,6 +279,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `d` | show or hide container rows |
 | `s` | cycle sort within groups: default, port, cpu, start time, name |
 | `r` | refresh now |
+| `S` | rerun the dashboard under sudo, after `y` confirms; offered only when sudo would help (Actions, Rerun under sudo) |
 | `?` | help overlay |
 | `q` `ctrl-c` | quit |
 
@@ -301,7 +304,7 @@ Rules for the loop: collection runs with a context timeout of 1.5 s; a timed-out
 
 | Condition | Behaviour |
 | --- | --- |
-| cwd, argv, fd or task info unreadable (other uid) | row shown, fields marked unknown, one warning with a count, footer hint `run with sudo` (as Linux root, which sudo cannot help: names the missing CAP_SYS_PTRACE, `--cap-add SYS_PTRACE`; with it, names a security module or sandbox; an unowned listener when no fd read was denied is outside devdash's pid namespace or held by the kernel, and the hint says that) |
+| cwd, argv, fd or task info unreadable (other uid) | row shown, fields marked unknown, one warning with a count, footer hint `run with sudo` (as Linux root, which sudo cannot help: names the missing CAP_SYS_PTRACE, `--cap-add SYS_PTRACE`; with it, names a security module or sandbox; an unowned listener when no fd read was denied is outside devdash's pid namespace or held by the kernel, and the hint says that); where sudo would show the fields or owners, the dashboard also offers `S` to rerun itself under sudo (Actions) |
 | macOS PCB list empty or denied | other users' listeners treated as unknown (own-uid listeners still come from the fd walk); one warning; hint in footer; no netstat fallback |
 | Docker socket absent | no Docker rows, no warning; the dashboard looks for it again every 10th tick (discovery again when none was found at start) |
 | Docker socket present but unreachable or slow | previous container list kept, one footer hint `docker: not reachable at <endpoint>`, retry every 10th tick (the first 5 s fetch at or after 10 × `--tick`, 20 s by default) |

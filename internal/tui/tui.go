@@ -6,7 +6,7 @@
 // One file per feature: tui.go (state, message routing, layout), header.go (header and footer),
 // table.go (rows, columns, movement and view toggles), rows.go (flattening, selection that
 // survives a refresh, the filter), port.go (port search and the port line), detail.go, help.go,
-// open.go and kill.go. Each feature file defines its own state type, held in Model, and its own
+// open.go, kill.go and sudo.go (S, rerun under sudo). Each feature file defines its own state type, held in Model, and its own
 // messages, which implement action.
 package tui
 
@@ -52,6 +52,9 @@ type Options struct {
 	DockerSocket func() string
 	Now          func() time.Time // time.Now when nil; tests fix it
 	ShowAll      bool             // --all: start with shells and editors shown
+	// Sudo says S may offer to rerun the dashboard under sudo: devdash is not root and sudo
+	// is on PATH. The caller checks both; the TUI never looks at the uid or PATH (sudo.go).
+	Sudo bool
 }
 
 // Model is the dashboard's state. Use New; the zero value is not ready.
@@ -85,6 +88,7 @@ type Model struct {
 	kill    killState
 	kafter  killAfter // the last kill's ports, until the first snapshot after it (kill.go)
 	hpos    helpPos   // help overlay scroll position (help.go)
+	sudo    sudoState // the S confirmation (sudo.go)
 
 	status string // one-shot message in the footer (open failed, kill result); cleared by the next key
 }
@@ -145,14 +149,18 @@ func serialProbe(probe freeport.Prober) freeport.Prober {
 }
 
 // Run starts the dashboard on the terminal and blocks until the user quits, ctx is done or
-// the engine stops.
-func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) error {
+// the engine stops. sudo reports that the user confirmed S: the caller reruns devdash under
+// sudo, now that the terminal is restored.
+func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) (sudo bool, err error) {
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx)}, opts...)
-	_, err := tea.NewProgram(New(o), opts...).Run()
+	final, err := tea.NewProgram(New(o), opts...).Run()
 	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil { // bubbletea wraps ctx.Err() into it
-		return nil
+		return false, nil
 	}
-	return err
+	if m, ok := final.(*Model); ok && err == nil {
+		sudo = m.sudo.asked
+	}
+	return sudo, err
 }
 
 // Init implements tea.Model.
@@ -207,14 +215,16 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// key routes a key press: ctrl+c always quits; an open kill modal, help overlay or filter
-// prompt takes every other key; otherwise the global keys, then the table's.
+// key routes a key press: ctrl+c always quits; an open sudo confirmation, kill modal, help
+// overlay or filter prompt takes every other key; otherwise the global keys, then the table's.
 func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	if s == "ctrl+c" {
 		return tea.Quit
 	}
 	switch {
+	case m.sudo.open:
+		return m.sudoKey(k)
 	case m.kill.active():
 		return m.killKey(k)
 	case m.help:
@@ -248,6 +258,8 @@ func (m *Model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.startKill()
 	case "o":
 		return m.openSelected()
+	case "S":
+		m.sudoStart()
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if k.Mod&(tea.ModCtrl|tea.ModAlt) == 0 { // the prompt would not type it either
 			return m.portKey(s)
@@ -287,6 +299,8 @@ func (m *Model) render() string {
 	bh := max(h-lipgloss.Height(header)-lipgloss.Height(footer), 0)
 	var body string
 	switch {
+	case m.sudo.open:
+		body = sudoView(w)
 	case m.help:
 		body = m.helpView(w, bh)
 	case m.kill.active():

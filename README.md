@@ -239,6 +239,7 @@ The dashboard's keys; `?` shows the same table inside it.
 | `d` | show or hide container rows |
 | `s` | cycle sort within groups: default, port, cpu, start time, name |
 | `r` | refresh now |
+| `S` | rerun under sudo (asks first) when a warning or a kill needs root |
 | `?` | this help |
 | `q ctrl-c` | quit |
 
@@ -277,7 +278,10 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
   memory may be unknown, and their listeners have no owner (pid 0, "owner unknown"). devdash
   shows a warning instead of hiding them. On Linux, root in a container with default
   capabilities (no `CAP_SYS_PTRACE`) is in the same position; `--cap-add SYS_PTRACE` fixes it
-  (see [DECISIONS.md](DECISIONS.md), DEV-13).
+  (see [DECISIONS.md](DECISIONS.md), DEV-13). When sudo would show more (and after a kill
+  denied for permission), the dashboard offers `S`: after you confirm with `y` it quits and
+  starts again as `sudo devdash` with the same flags; sudo asks for your password itself.
+  It is never offered as root, in such a container, or for Docker's socket permission.
 - **Linux `hidepid`.** With `/proc` mounted `hidepid=1` or `2` (`noaccess` or `invisible`),
   other users' processes are invisible and their listeners stay without an owner. devdash
   warns and names the mount option.
