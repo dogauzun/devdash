@@ -338,6 +338,77 @@ func TestKillDockerHint(t *testing.T) {
 	}
 }
 
+// TestKillCleansText: process, project and container names come from other processes, so
+// every line kill prints them on goes through model.Clean, on stdout and stderr, piped or not:
+// the plan the user confirms, the outcome and survivor lines, the re-check and the refusals
+// (DEV-150).
+func TestKillCleansText(t *testing.T) {
+	home := testHome(t)
+	repo := filepath.Join(home, "evil\x1b[2Kname")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := fakePID + 1
+	p := fproc(a, 1, repo)
+	p.Name = "node\r\x1b[1A\x1b[2Kevil\n"
+	held := fstep([]collector.Process{p}, flisten(a, 6106))
+	initp := fproc(1, 0, repo)
+	initp.Name = "x\x1b]0;pwned\a"
+	const name, project = "node??[1A?[2Kevil?", "evil?[2Kname"
+	db := model.Container{ID: "db0123456789", Name: "db\x1b[2K", Ports: []model.PortMapping{{HostPort: 6106, ContainerPort: 6106, Proto: "tcp"}}}
+
+	for _, tt := range []struct {
+		name       string
+		tty        bool
+		input      string
+		step       collector.Step
+		containers []model.Container
+		res        func(model.Process) engine.Outcome
+		stdout     []string
+		stderr     []string
+	}{
+		{name: "plan, confirmed on a terminal", tty: true, input: "y\n", step: held, res: exited,
+			stdout: []string{"5000001  " + name + "  " + project + "  6106\n", "5000001  " + name + "  signalled, exited\n"},
+			stderr: []string{"5000001  " + name + "  " + project + "  6106\n"}},
+		{name: "survivor, still held", step: held, res: survives,
+			stdout: []string{"survivors: 5000001 " + name + " (try --force)\n", "port 6106 is still held by 5000001 " + name + "\n"}},
+		{name: "init refused", step: fstep([]collector.Process{initp}, flisten(1, 6106)), res: exited,
+			stderr: []string{"refused: pid 1 (x?]0;pwned?) is init\n"}},
+		{name: "container refused", step: fstep(nil), containers: []model.Container{db}, res: exited,
+			stderr: []string{"use docker stop db?[2K\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stubKill(t, tt.tty, tt.input, tt.res)
+			if tt.containers != nil {
+				withContainers(t, tt.containers...)
+			}
+			args := []string{"kill", "6106"}
+			if !tt.tty {
+				args = append(args, "--yes")
+			}
+			var stdout, stderr bytes.Buffer
+			run(args, &stdout, &stderr, &collector.Fake{Steps: []collector.Step{tt.step}})
+			for _, out := range []struct {
+				name string
+				got  string
+				want []string
+			}{{"stdout", stdout.String(), tt.stdout}, {"stderr", stderr.String(), tt.stderr}} {
+				if strings.ContainsAny(out.got, "\x1b\r\a") {
+					t.Errorf("%s has a control character: %q", out.name, out.got)
+				}
+				for _, s := range out.want {
+					if !strings.Contains(out.got, s) {
+						t.Errorf("%s lacks %q: %q", out.name, s, out.got)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestTargetsContainer(t *testing.T) {
 	s := model.Snapshot{Containers: []model.Container{
 		{ID: "abc", Name: "shop-db-1", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
