@@ -20,7 +20,7 @@ import (
 // portState is the port line's state: the query's port, its holders and the probe's answer.
 type portState struct {
 	n       uint16     // the query's port number; 0 when the query is not one
-	holders int        // rows holding n with everything shown, in the latest snapshot
+	holders int        // len(model.Holders) of n in the latest snapshot
 	seq     uint64     // tags the latest probe run; an answer with another tag is dropped
 	ans     portAnswer // the latest answer for n, kept until the next snapshot's arrives
 	have    bool       // ans answers n
@@ -86,7 +86,8 @@ func (m *Model) portSearch() tea.Cmd {
 	return m.portProbe()
 }
 
-// portProbe counts the holders of the query's port in the latest snapshot and returns the
+// portProbe counts the holders of the query's port in the latest snapshot, as model.Holders
+// does for `port N` and `kill N`, and returns the
 // command that probes for it, tagged as the latest run; nil when the query is not a port
 // number or there is no snapshot yet. Update calls it on each new snapshot.
 func (m *Model) portProbe() tea.Cmd {
@@ -95,12 +96,7 @@ func (m *Model) portProbe() tea.Cmd {
 		return nil
 	}
 	s, n, probe := m.upd.Snapshot, p.n, m.o.Probe
-	p.holders = 0
-	for _, r := range model.Flatten(s, model.ViewOptions{ShowAll: true}) {
-		if holds(r, n) {
-			p.holders++
-		}
-	}
+	p.holders = len(model.Holders(s, n))
 	p.seq++
 	seq, self := p.seq, p.holders == 0
 	return func() tea.Msg { return portProbedMsg{seq: seq, ans: probePort(s, n, self, probe)} }
@@ -124,23 +120,22 @@ func probePort(s model.Snapshot, n uint16, self bool, probe freeport.Prober) por
 }
 
 // holds reports whether r holds TCP port n: a listener on it of any proto but UDP, or, for a
-// container row with no process behind it, a port published over tcp. These are the ports
-// freeport.Find counts as held, as `port N` and `kill N` do, so the line agrees with them. A
-// listener reconciled to a container holds n only on a process row drawn as that container: a
-// forwarder that keeps its own row (several containers' ports, or one next to a port of its
-// own) leaves n to the container's row, as model.Holders does (DEV-154).
+// row drawn as a container, with or without a process behind it, a port the container
+// publishes over tcp. A row holds n exactly when it stands for one of model.Holders, so the
+// search selects a row whenever the port line counts a holder. A listener reconciled to a
+// container holds n only on a process row drawn as that container: a forwarder that keeps its
+// own row (several containers' ports, or one next to a port of its own) leaves n to the
+// container's row, as model.Holders does (DEV-154), even when that row is a process drawn as
+// the container that does not hold n itself (DEV-166).
 func holds(r model.Row, n uint16) bool {
-	switch {
-	case r.Process != nil:
-		return slices.ContainsFunc(r.Process.Listeners, func(l model.Listener) bool {
-			return l.Port == n && !strings.HasPrefix(l.Proto, "udp") && l.ContainerID == r.Process.ContainerID
-		})
-	case r.Container != nil:
-		return slices.ContainsFunc(r.Container.Ports, func(pm model.PortMapping) bool {
-			return pm.HostPort == n && pm.Proto == "tcp"
-		})
+	if r.Container != nil && slices.ContainsFunc(r.Container.Ports, func(pm model.PortMapping) bool {
+		return pm.HostPort == n && pm.Proto == "tcp"
+	}) {
+		return true
 	}
-	return false
+	return r.Process != nil && slices.ContainsFunc(r.Process.Listeners, func(l model.Listener) bool {
+		return l.Port == n && !strings.HasPrefix(l.Proto, "udp") && l.ContainerID == r.Process.ContainerID
+	})
 }
 
 // portShown reports whether the port line is shown: the query, typed or applied, is a port

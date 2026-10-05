@@ -425,6 +425,24 @@ func TestPortHoldersForwarder(t *testing.T) {
 	orb := fixture() // OrbStack: one container, next to the helper's own 32222
 	orb.Containers = append(orb.Containers, published("aaa", "web", 6000))
 	orb.Processes = model.Reconcile(append(orb.Processes, forwarder("OrbStack Helper", 6000, 32222)), orb.Containers)
+	// Linux userland proxy: one docker-proxy per family for shop-db-1's 5432, both drawn as the
+	// container (DEV-166).
+	families := fixture()
+	db := &families.Containers[0]
+	db.Ports = append(db.Ports, model.PortMapping{HostIP: netip.MustParseAddr("::"), HostPort: 5432, ContainerPort: 5432, Proto: "tcp"})
+	proxy6 := families.Processes[7] // docker-proxy 300
+	proxy6.PID, proxy6.StartTime = 301, proxy6.StartTime.Add(time.Second)
+	proxy6.Listeners = []model.Listener{lis("tcp6", "::", 5432)}
+	families.Processes = model.Reconcile(append(families.Processes, proxy6), families.Containers)
+	// One container's ports split between a process drawn as it (6000) and a forwarder that keeps
+	// its own row (6001, next to its own 6443): the container's row holds 6001 (DEV-166).
+	split := fixture()
+	web := published("aaa", "web", 6000)
+	web.Ports = append(web.Ports, model.PortMapping{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 6001, ContainerPort: 81, Proto: "tcp"})
+	split.Containers = append(split.Containers, web)
+	proxy := forwarder("docker-proxy", 6000)
+	proxy.PID = 401
+	split.Processes = model.Reconcile(append(split.Processes, proxy, forwarder("com.docker.backend", 6001, 6443)), split.Containers)
 
 	for _, c := range []struct {
 		name string
@@ -437,6 +455,9 @@ func TestPortHoldersForwarder(t *testing.T) {
 		{"orbstack", orb, "6000", "port 6000 · 1 holder · next free 6001", model.RowKey{ContainerID: "aaa"}},
 		{"orbstack own port", orb, "32222", "port 32222 · 1 holder · next free 32223", orb.Processes[len(orb.Processes)-1].Key()},
 		{"forwarder drawn as the container", fixture(), "5432", "port 5432 · 1 holder · next free 5433", keyOf(fixture(), 300)},
+		{"one proxy per family", families, "5432", "port 5432 · 1 holder · next free 5433", keyOf(families, 300)},
+		{"split, the container's process", split, "6000", "port 6000 · 1 holder · next free 6002", keyOf(split, 401)},
+		{"split, the forwarder's", split, "6001", "port 6001 · 1 holder · next free 6002", keyOf(split, 401)},
 	} {
 		m := newPortTest(t, 120, 40, c.s, &fakeProbe{})
 		search(m, c.q)
