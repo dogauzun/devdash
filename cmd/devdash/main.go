@@ -213,7 +213,7 @@ func runDashboard(ctx context.Context, o options, c collector.Collector, sudo bo
 // is drawn, so it follows a rediscovering Source; nothing without one (--no-docker, none found
 // yet, or endpointError, whose warning already says why).
 func tuiOptions(o options, e *engine.Engine, src engine.ContainerSource) tui.Options {
-	to := tui.Options{Source: e, Kill: e.Kill, ShowAll: o.All}
+	to := tui.Options{Source: e, ShowAll: o.All}
 	if s, ok := src.(*docker.Source); ok {
 		to.DockerSocket = func() string { return dockerLabel(s.Endpoint()) }
 	}

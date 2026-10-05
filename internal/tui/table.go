@@ -646,8 +646,10 @@ func (m *Model) tableKey(k tea.KeyPressMsg) tea.Cmd {
 		case m.view.Collapsed[r.Key]:
 			delete(m.view.Collapsed, r.Key)
 			m.rebuild()
-		case r.Links != nil: // unfold the chain, by its first process; its last stays selected (DEV-157)
-			m.view.Unfolded[r.Links[0].Key()] = true
+		// Unfold the chain by its first link; rebuild's unfold moves the key to the first link
+		// the label draws (DEV-193). Its last process stays selected (DEV-157).
+		case r.Links != nil:
+			m.unfolded[r.Links[0].Key()] = true
 			m.rebuild()
 		}
 	case "a":
@@ -673,8 +675,8 @@ func (m *Model) collapse() {
 		return
 	}
 	r := m.rows[i]
-	if m.filter == "" && m.view.Unfolded[r.Key] {
-		delete(m.view.Unfolded, r.Key)
+	if m.filter == "" && m.unfolded[r.Key] {
+		delete(m.unfolded, r.Key)
 		m.rebuild()
 		if m.sel != r.Key { // folded: rebuild selected the chain's row
 			return

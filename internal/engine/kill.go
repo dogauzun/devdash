@@ -279,14 +279,6 @@ func Kill(p Plan, timeout time.Duration) (Result, error) {
 	return kill(p, timeout, realOS)
 }
 
-// Kill is the package-level Kill followed by a Refresh, so the next snapshot shows the result
-// at once when the loop is running.
-func (e *Engine) Kill(p Plan, timeout time.Duration) (Result, error) {
-	r, err := Kill(p, timeout)
-	e.Refresh()
-	return r, err
-}
-
 func kill(p Plan, timeout time.Duration, sy osys) (Result, error) {
 	if err := p.check(sy); err != nil {
 		return Result{}, err

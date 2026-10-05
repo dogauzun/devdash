@@ -45,7 +45,7 @@ type killState struct {
 	stage      killStage
 	killTarget // what the plan is from and the titles name: own, or tree in tree mode
 	// own is the selected row's process; tree is where tree mode plans from: on a folded row
-	// the chain's first process as its label draws it (DEV-179), otherwise own.
+	// the chain's first process the view shows (DEV-179, DEV-191), otherwise own.
 	own, tree killTarget
 	opts      engine.KillOptions
 	// plan is what is shown and exactly what Kill gets: it changes only on p, t, f and the
@@ -100,8 +100,11 @@ func (m *Model) startKill() tea.Cmd {
 	}
 	own := killTarget{r.Key, name}
 	tree := own
-	if ls := m.drawnLinks(r.Links); len(ls) > 0 { // the label's rule, so the plan and the label agree
-		tree = killTarget{ls[0].Key(), ls[0].Label()}
+	for _, l := range r.Links { // the first link the view shows; never a hidden shell, filter or not (DEV-191)
+		if !hiddenBy(model.Row{Process: l}, m.view) {
+			tree = killTarget{l.Key(), l.Label()}
+			break
+		}
 	}
 	s := m.upd.Snapshot
 	p, err := m.o.Plan(s, r.Key, engine.KillOptions{})
@@ -390,7 +393,11 @@ func (m *Model) killView(w, h int) string {
 			}
 			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Label()), outcome))
 		}
-		rest += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), killSig(k.plan.Signal))
+		sig := killSig(k.plan.Signal)
+		if k.survivors && !k.opts.Force { // the report covers the whole kill (DEV-165), so both rounds' signals (DEV-178)
+			sig = "SIGTERM, then SIGKILL"
+		}
+		rest += fmt.Sprintf(": %d of %s exited after %s", exited, killCount(len(k.result.Outcomes), "process"), sig)
 		list = killTable(rows)
 		tail = []string{"esc close"}
 		if len(k.result.Survivors()) > 0 {

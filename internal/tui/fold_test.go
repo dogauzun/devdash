@@ -129,15 +129,20 @@ func TestFoldLabelHiddenLinks(t *testing.T) {
 	}
 	press(m, "a")
 
-	// → unfolds the row that shows one name; ← on its first row folds it again.
+	// → on the row that shows one name has nothing to unfold: the view hides zsh (DEV-193).
 	selectKey(t, m, viteKey)
 	press(m, "right")
-	if !m.view.Unfolded[zsh] || !strings.HasPrefix(line(m, "zsh"), "  ▾ zsh ") || !strings.HasPrefix(line(m, "vite"), "      vite ") {
-		t.Fatalf("right did not unfold the chain:\n%s", screen(m))
+	if len(m.unfolded) != 0 || line(m, "▾ zsh") != "" || !strings.HasPrefix(line(m, "vite"), "    vite ") || m.sel != viteKey {
+		t.Fatalf("right on a one-name row (unfolded %v):\n%s", m.unfolded, screen(m))
+	}
+	// With `a` it unfolds as any chain, and ← on its first row folds it again.
+	press(m, "a", "right")
+	if !m.unfolded[zsh] || !strings.HasPrefix(line(m, "zsh"), "  ▾ zsh ") || !strings.HasPrefix(line(m, "vite"), "      vite ") {
+		t.Fatalf("with a, right did not unfold the chain:\n%s", screen(m))
 	}
 	selectKey(t, m, zsh)
-	press(m, "left")
-	if m.view.Unfolded[zsh] || m.sel != viteKey || !strings.HasPrefix(line(m, "vite"), "    vite ") {
+	press(m, "left", "a")
+	if m.unfolded[zsh] || m.sel != viteKey || !strings.HasPrefix(line(m, "vite"), "    vite ") {
 		t.Fatalf("left did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
 	}
 
@@ -210,26 +215,26 @@ func TestFoldKeys(t *testing.T) {
 	if m.view.Collapsed[xargs] || line(m, "▾ "+chainLine) == "" {
 		t.Fatalf("right did not expand the folded row:\n%s", screen(m))
 	}
-	press(m, "right")
-	if !m.view.Unfolded[bash] || line(m, chainLine) != "" || !strings.HasPrefix(line(m, "claude"), "    ▾ claude ") ||
-		!strings.HasPrefix(line(m, "xargs"), "              ▾ xargs ") || m.sel != xargs {
+	press(m, "right") // the row for each process the label names, from claude (DEV-193)
+	if !m.unfolded[claude] || line(m, chainLine) != "" || !strings.HasPrefix(line(m, "claude"), "  ▾ claude ") ||
+		!strings.HasPrefix(line(m, "xargs"), "    ▾ xargs ") || m.sel != xargs {
 		t.Fatalf("right did not unfold the chain with xargs selected (%+v):\n%s", m.sel, screen(m))
 	}
 	press(m, "right") // nothing more to unfold
-	if m.sel != xargs || len(m.view.Unfolded) != 1 {
-		t.Errorf("right on an unfolded row: sel %+v, unfolded %v", m.sel, m.view.Unfolded)
+	if m.sel != xargs || len(m.unfolded) != 1 {
+		t.Errorf("right on an unfolded row: sel %+v, unfolded %v", m.sel, m.unfolded)
 	}
 
 	// ← on the first row folds the chain again and selects the folded row; elsewhere it collapses.
-	selectKey(t, m, bash)
-	press(m, "left")
-	if m.view.Unfolded[bash] || line(m, "▾ "+chainLine) == "" || m.sel != xargs {
-		t.Fatalf("left on the first row did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
-	}
-	press(m, "right")
 	selectKey(t, m, claude)
 	press(m, "left")
-	if !m.view.Collapsed[claude] || !m.view.Unfolded[bash] || line(m, "▸ claude") == "" {
+	if len(m.unfolded) != 0 || line(m, "▾ "+chainLine) == "" || m.sel != xargs {
+		t.Fatalf("left on the first row did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
+	}
+	press(m, "a", "right")
+	selectKey(t, m, claude)
+	press(m, "left")
+	if !m.view.Collapsed[claude] || !m.unfolded[bash] || line(m, "▸ claude") == "" {
 		t.Fatalf("left on a link of an unfolded chain did not collapse it:\n%s", screen(m))
 	}
 	press(m, "left") // claude is collapsed: ← moves to its parent, the first row
@@ -238,8 +243,79 @@ func TestFoldKeys(t *testing.T) {
 	}
 	// A collapsed process ends a chain: folded again, the row stops at claude.
 	press(m, "left")
-	if got := line(m, "claude"); !strings.HasPrefix(got, "  ▸ claude ") || m.sel != claude {
+	if got := line(m, "claude"); !strings.HasPrefix(got, "  ▸ bash › claude ") || m.sel != claude {
 		t.Errorf("refolded with claude collapsed: %q, sel %+v", got, m.sel)
+	}
+}
+
+// TestFoldUnfoldHiddenLinks (DEV-193): → unfolds a folded row into one row for each process its
+// label names, each a level below the one before: a link the view hides gets no row, and while
+// a filter is set one that matches it does (DEV-160). The chain stays unfolded while `a` or a
+// filter changes which link comes first, and ← on that first row folds it.
+func TestFoldUnfoldHiddenLinks(t *testing.T) {
+	s := chainFixture()
+	m, _ := newTest(t, 160, 30)
+	feed(m, s)
+	// rows are the process rows as "depth label", a folded row by its processes' names.
+	rows := func() []string {
+		var out []string
+		for _, r := range m.rows {
+			if r.Process != nil {
+				names := []string{}
+				for _, l := range r.Links {
+					names = append(names, l.Name)
+				}
+				out = append(out, strconv.Itoa(r.Depth)+" "+strings.Join(append(names, r.Process.Name), " › "))
+			}
+		}
+		return out
+	}
+	below := []string{"sh › time", "timeout › lte_scanner", "grep", "sleep"} // xargs's subtree, depths added below
+	tree := func(top ...string) []string {
+		d := len(top)
+		return append(top, strconv.Itoa(d+1)+" "+below[0], strconv.Itoa(d+2)+" "+below[1], strconv.Itoa(d+2)+" "+below[2], strconv.Itoa(d+1)+" "+below[3])
+	}
+	selectKey(t, m, keyOf(s, 16))
+	press(m, "right")
+	for _, step := range []struct {
+		name string
+		keys []string
+		want []string
+	}{
+		{"plain", nil, tree("1 claude", "2 xargs")},
+		{"show all", []string{"a"}, tree("1 bash", "2 claude", "3 bash", "4 bash", "5 guard.sh", "6 run55.sh", "7 xargs")},
+		{"plain again", []string{"a"}, tree("1 claude", "2 xargs")},
+		{"filter matching the shells", []string{"/", "b", "a", "s", "h", "enter"}, []string{"1 bash", "2 claude", "3 bash", "4 bash"}},
+		{"filter cleared", []string{"/", "esc"}, tree("1 claude", "2 xargs")},
+	} {
+		press(m, step.keys...)
+		if got := rows(); !slices.Equal(got, step.want) {
+			t.Errorf("%s: rows %q, want %q\n%s", step.name, got, step.want, screen(m))
+		}
+	}
+	selectKey(t, m, keyOf(s, 11))
+	press(m, "left")
+	if got := rows(); len(m.unfolded) != 0 || len(got) == 0 || got[0] != "1 bash › claude › bash › bash › guard.sh › run55.sh › xargs" || m.sel != keyOf(s, 16) {
+		t.Errorf("left on claude did not fold the chain: rows %q, unfolded %v, sel %+v", got, m.unfolded, m.sel)
+	}
+}
+
+// TestFoldUnfoldHiddenSelection (DEV-193): a selected link of an unfolded chain that `a` then
+// hides has no row any more; the selection goes to the chain's first drawn row, not up to the
+// group header.
+func TestFoldUnfoldHiddenSelection(t *testing.T) {
+	s := chainFixture()
+	for _, pid := range []int{10, 13} { // the first link, and one inside the chain
+		m, _ := newTest(t, 160, 30)
+		feed(m, s)
+		press(m, "a")
+		selectKey(t, m, keyOf(s, 16))
+		press(m, "right")
+		selectKey(t, m, keyOf(s, pid))
+		press(m, "a")
+		if m.sel != keyOf(s, 11) {
+			t.Errorf("bash %d hidden: selection %+v, want claude 11\n%s", pid, m.sel, screen(m))
+		}
 	}
 }
 
@@ -253,10 +329,11 @@ func TestFoldUnfoldedSurvivesRefresh(t *testing.T) {
 	if line(m, chainLine) != "" || line(m, "▾ claude") == "" || m.sel != keyOf(s, 16) {
 		t.Errorf("unfolded chain refolded on refresh:\n%s", screen(m))
 	}
-	// Pruned once its first process is gone, as collapsed keys are.
-	feed(m, drop(chainFixture(), 10))
-	if len(m.view.Unfolded) != 0 {
-		t.Errorf("unfolded keys after bash exited: %v", m.view.Unfolded)
+	// Kept by the first process the label names (DEV-193), and pruned once it is gone, as
+	// collapsed keys are.
+	feed(m, drop(chainFixture(), 11))
+	if len(m.unfolded) != 0 {
+		t.Errorf("unfolded keys after claude exited: %v", m.unfolded)
 	}
 }
 
@@ -421,9 +498,9 @@ func TestFoldKillTree(t *testing.T) {
 	}
 }
 
-// TestFoldKillTreeRoot: the tree's root is the first link the label draws, by the label's own
-// rule: bash 10 with `a` and while a filter it matches is set; the row's own process on an
-// unfolded chain.
+// TestFoldKillTreeRoot: the tree's root is the first link the view shows: bash 10 with `a`,
+// claude 11 otherwise, a filter that matches the shell included (DEV-191); the row's own
+// process on an unfolded chain.
 func TestFoldKillTreeRoot(t *testing.T) {
 	s := chainFixture()
 	for _, tc := range []struct {
@@ -433,7 +510,7 @@ func TestFoldKillTreeRoot(t *testing.T) {
 	}{
 		{"plain", func(*Model) {}, 11},
 		{"show all", func(m *Model) { press(m, "a") }, 10},
-		{"filter matching the shell", func(m *Model) { press(m, "/"); typeText(m, "bash"); press(m, "enter") }, 10},
+		{"filter matching the shell", func(m *Model) { press(m, "/"); typeText(m, "bash"); press(m, "enter") }, 11},
 		{"filter matching claude", func(m *Model) { press(m, "/"); typeText(m, "claude"); press(m, "enter") }, 11},
 		{"unfolded", func(m *Model) { selectRow(t, m, keyOf(s, 16)); press(m, "right") }, 16},
 	} {
@@ -447,6 +524,55 @@ func TestFoldKillTreeRoot(t *testing.T) {
 		if pids := planPIDs(m); len(pids) == 0 || pids[0] != tc.root || slices.Contains(pids, 10) != (tc.root == 10) {
 			t.Errorf("%s: listed pids %v, want from %d\n%s", tc.name, pids, tc.root, screen(m))
 		}
+	}
+}
+
+// TestFoldKillTreeRootFilter (DEV-191): a hidden shell is never the root of a tree kill on a
+// folded row, whatever a filter draws: a filter that matches the shell by its argv (drive.py)
+// or its name (sh) draws it in the label, and `x`, `t` still plans the same processes as
+// without the filter.
+func TestFoldKillTreeRootFilter(t *testing.T) {
+	s := chainFixture()
+	s.Processes[0].Argv = []string{"bash", "-c", "python3 drive.py"} // bash 10
+	for _, query := range []string{"", "drive.py", "sh"} {
+		m, _, fp, _ := newKillTest(t, 160, 40, s)
+		if query != "" {
+			press(m, "/")
+			typeText(m, query)
+			press(m, "enter")
+			if !strings.Contains(line(m, "xargs"), " bash › claude › ") {
+				t.Fatalf("/%s does not draw the shell in the label:\n%s", query, screen(m))
+			}
+		}
+		selectRow(t, m, keyOf(s, 16))
+		press(m, "x", "t")
+		if got := fp.calls[len(fp.calls)-1].key; got != keyOf(s, 11) {
+			t.Errorf("/%s: tree planned from pid %d, want 11\n%s", query, got.PID, screen(m))
+		}
+		if got := planPIDs(m); !slices.Equal(got, lteTree) {
+			t.Errorf("/%s: listed pids %v, want %v", query, got, lteTree)
+		}
+	}
+}
+
+// TestFoldKillTreeRootCut (DEV-190): when the name column cuts the label to `… › xargs`, the
+// root tree mode plans from is not on the row; the modal's title and pid list name it before
+// the kill is confirmed.
+func TestFoldKillTreeRootCut(t *testing.T) {
+	s := chainFixture()
+	long := "claude_" + strings.Repeat("c", 31)
+	s.Processes[1].Name, s.Processes[1].Argv = long, []string{long}
+	m, _, _, _ := newKillTest(t, 80, 24, s)
+	if got := line(m, "xargs"); !strings.HasPrefix(got, "  ▾ … › xargs ") {
+		t.Fatalf("label not cut: %q", got)
+	}
+	selectRow(t, m, keyOf(s, 16))
+	press(m, "x", "t")
+	if got := line(m, "kill "); !strings.HasPrefix(got, "kill claude_c") || !strings.HasSuffix(got, "… (pid 11): tree mode, SIGTERM to 12 processes") {
+		t.Errorf("title %q does not name the root", got)
+	}
+	if got := strings.Fields(line(m, "11 ")); len(got) < 2 || got[0] != "11" || !strings.HasPrefix(got[1], "claude_c") {
+		t.Errorf("first pid line %q does not name the root\n%s", got, screen(m))
 	}
 }
 

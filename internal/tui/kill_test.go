@@ -569,7 +569,8 @@ func TestKillForceKeepsUnsignalled(t *testing.T) {
 		if !strings.Contains(line(m, "101 "), "permission denied, run with sudo") || line(m, "102 ") != "" {
 			t.Errorf("sudo %v: report does not name only vite as still running:\n%s", sudo, screen(m))
 		}
-		if line(m, "1 of 2 processes exited") == "" || line(m, "force-kill") != "" {
+		// The title covers the whole kill, so it names both rounds' signals (DEV-178).
+		if line(m, "1 of 2 processes exited after SIGTERM, then SIGKILL") == "" || line(m, "force-kill") != "" {
 			t.Errorf("sudo %v: report title or hints:\n%s", sudo, screen(m))
 		}
 		if got := line(m, "esc close, then S rerun with sudo") != ""; got != sudo {
@@ -591,12 +592,23 @@ func TestKillForceKeepsUnsignalled(t *testing.T) {
 	press(m, "x", "t")
 	run(t, m, press(m, "enter"))
 	run(t, m, press(m, "f"))
-	if line(m, "1 of 2 processes exited") == "" || line(m, "101 ") != "" || line(m, "102 ") == "" {
+	if line(m, "1 of 2 processes exited after SIGTERM, then SIGKILL") == "" || line(m, "101 ") != "" || line(m, "102 ") == "" {
 		t.Errorf("after one force round:\n%s", screen(m))
 	}
 	run(t, m, press(m, "f"))
 	if m.kill.active() || status(m) != "killed 2 processes" {
 		t.Errorf("after two force rounds: modal open %v, status %q", m.kill.active(), status(m))
+	}
+
+	// A first round sent with f already was SIGKILL: the title names it once.
+	m, _, _, fk = newKillTest(t, 80, 24, s)
+	fk.results = append(fk.results, survive, survive)
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "x", "t", "f")
+	run(t, m, press(m, "enter"))
+	run(t, m, press(m, "f"))
+	if line(m, "1 of 2 processes exited after SIGKILL") == "" {
+		t.Errorf("forced first round, then a force round:\n%s", screen(m))
 	}
 }
 
