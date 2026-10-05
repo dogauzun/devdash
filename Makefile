@@ -7,6 +7,8 @@ GO            ?= go
 GOLANGCI_LINT ?= golangci-lint
 GORELEASER    ?= goreleaser
 VHS           ?= vhs
+DOCKER        ?= docker
+DEMO_IMAGE    ?= devdash-demo
 
 # The release targets; the darwin files are build-tagged, so vet and lint run once per OS.
 TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
@@ -14,7 +16,7 @@ OSES    := darwin linux
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check build install cross vet lint fmt test bench licenses licenses-check snapshot docker-gate demo clean
+.PHONY: help check build install cross vet lint fmt test bench licenses licenses-check snapshot docker-gate demo demo-docker clean
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-15s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -73,6 +75,12 @@ docker-gate: ## Phase 3 Docker gate (needs docker with compose v2, jq, curl)
 # vhs drives Chromium, which refuses to start sandboxed as root, and scripts/demo.sh needs root.
 demo: ## Re-record docs/demo.gif from demo.tape (Linux, as root; needs vhs, ttyd, ffmpeg, Chromium)
 	VHS_NO_SANDBOX=true $(VHS) demo.tape
+
+# The same recording from macOS: the image's entrypoint is vhs and it sets VHS_NO_SANDBOX itself.
+# --privileged because scripts/demo.sh unshares, mounts and sets the hostname.
+demo-docker: ## make demo in a Linux container (needs docker; the way to record on macOS)
+	$(DOCKER) build -t $(DEMO_IMAGE) --build-arg GO_VERSION=$$(sed -n 's/^go //p' go.mod) - <scripts/demo.Dockerfile
+	$(DOCKER) run --rm --privileged -v "$(CURDIR)":/src -w /src $(DEMO_IMAGE) demo.tape
 
 clean: ## Remove ./devdash and dist/
 	rm -rf devdash dist
