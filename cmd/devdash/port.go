@@ -293,7 +293,8 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 	}
 	// Where gives way so that the uptime stays on the line: a cwd keeps its end, the directory that
 	// names it, and is cut on the left (DEV-146); a project label keeps its start, the project's
-	// name, and is cut on the right (DEV-171).
+	// name, and is cut on the right (DEV-171), before its " (worktree)" while the name keeps a cell
+	// (DEV-178).
 	where := model.Clean(cmp.Or(p.Cwd, "-"))
 	if pr != nil {
 		where = model.Clean(pr.Label())
@@ -301,9 +302,13 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 	ww := ansi.StringWidth(where)
 	if over := len(detailIndent) + ansi.StringWidth(strings.Join(append([]string{where}, rest...), ", ")) - width; width > 0 && over > 0 && ww > 1 {
 		var cut string
-		if pr != nil {
+		const wt = " (worktree)" // how model.Project.Label ends for a worktree
+		switch {
+		case pr != nil && pr.Worktree && ww-over-len(wt) > 1:
+			cut = ansi.Truncate(strings.TrimSuffix(where, wt), ww-over-len(wt), "…") + wt
+		case pr != nil:
 			cut = ansi.Truncate(where, ww-over, "…") // a two-cell character that does not fit is dropped whole
-		} else {
+		default:
 			cut = ansi.TruncateLeft(where, over+1, "…")
 			if ansi.StringWidth(cut) > ww-over { // the cut fell inside a two-cell character, which TruncateLeft keeps
 				cut = ansi.TruncateLeft(where, over+2, "…")

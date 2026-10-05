@@ -182,8 +182,16 @@ func TestWriteAnswer(t *testing.T) {
 				"       …c0719ffa45/fx/shop-search, up 3h\n" +
 				"       cwd deleted\n" +
 				"next free: 5174\n"},
-		{"a long project label keeps its start, the uptime and the marker on the line (DEV-171)", with(func(s *model.Snapshot) {
+		{"a long project label keeps its start, its (worktree), the uptime and the marker on the line (DEV-171, DEV-178)", with(func(s *model.Snapshot) {
 			s.Projects[1].Branch = "feature/very-long-branch-name-for-the-login-rewrite"
+			proc(s).Tags = 0
+		}), 5173, 80,
+			"15669  python3  shop  0.0.0.0:5173\n" +
+				"       uvicorn app:main --reload --port 5173\n" +
+				"       shop @ feature/very-long-br… (worktree), up 3h, this repo, other worktree\n" +
+				"next free: 5174\n"},
+		{"a long label of a repository's main checkout has no (worktree) to keep", with(func(s *model.Snapshot) {
+			s.Projects[1].Branch, s.Projects[1].Worktree = "feature/very-long-branch-name-for-the-login-rewrite", false
 			proc(s).Tags = 0
 		}), 5173, 80,
 			"15669  python3  shop  0.0.0.0:5173\n" +

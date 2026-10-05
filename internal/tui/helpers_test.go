@@ -23,12 +23,11 @@ var now = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
 // TestMain pins the local zone to UTC: the detail pane shows start times in local time, and
 // the goldens and expected lines must not depend on the TZ of the machine running them (DEV-90).
+// It is not restored: a tick timer a Run test left behind may still read it (a race under
+// -race), and the process exits next.
 func TestMain(m *testing.M) {
-	local := time.Local
 	time.Local = time.UTC
-	code := m.Run()
-	time.Local = local
-	os.Exit(code)
+	os.Exit(m.Run())
 }
 
 // pinLocal sets the local zone to loc for the rest of the test.
