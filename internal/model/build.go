@@ -43,6 +43,19 @@ type RawListener struct {
 // bytes of comm (TASK_COMM_LEN 16 with the NUL), macOS 16 of p_comm (MAXCOMLEN).
 const commCut = 15
 
+// NeedsArgv reports whether a process with kernel name name needs its argv read even when the
+// collector limits argv reads over the process limit, because a model rule reads it:
+//   - a name at least commCut long may have been cut by the kernel, and fullName restores it
+//     only from argv[0] or the script an interpreter runs;
+//   - a name that MayBeRuntime is a runtime process only by the basename of argv[0] when the
+//     name is cut or re-exec'd (pasta as pasta.avx2), and without it IsContainerRuntime is
+//     false: Resolve puts the process in a project and kill does not refuse it;
+//   - systemd is a subreaper only by the --user in its argv (userSubreaper), and without it
+//     Tag never marks its children orphaned.
+func NeedsArgv(name string) bool {
+	return len(name) >= commCut || MayBeRuntime(name) || name == "systemd"
+}
+
 // fullName undoes the kernel's truncation of Name: when Name is at least commCut long and is
 // a strict prefix of the basename of a known argv[0] (its program; a login shell's "-" dropped,
 // as Classify does), that basename is the name; else, likewise, the basename of the script an

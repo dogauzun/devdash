@@ -28,23 +28,8 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	res := Result{TakenAt: time.Now(), Host: host(), Timings: model.Timing{}}
 
 	t := time.Now()
-	kps, err := unix.SysctlKinfoProcSlice("kern.proc.all")
-	if err != nil {
-		return Result{}, fmt.Errorf("collector: sysctl kern.proc.all: %w", err)
-	}
-	res.Processes = make([]Process, 0, len(kps))
-	for i := range kps {
-		kp := &kps[i]
-		if kp.Proc.P_pid == 0 {
-			continue // kernel_task; PID 0 is the "unknown owner" pseudo-process in model.Build
-		}
-		res.Processes = append(res.Processes, Process{
-			PID:       int(kp.Proc.P_pid),
-			PPID:      int(kp.Eproc.Ppid),
-			UID:       int(kp.Eproc.Ucred.Uid),
-			StartTime: startTime(kp),
-			Name:      cstring(kp.Proc.P_comm[:]),
-		})
+	if res.Processes, err = procTable(); err != nil {
+		return Result{}, err
 	}
 	res.Timings["proctable"] = time.Since(t)
 	if err := ctx.Err(); err != nil {
@@ -56,52 +41,11 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("collector: sysctl kern.argmax: %w", err)
 	}
-	argBuf := make([]byte, argmax)
-	pathBuf := make([]byte, sizeofVnodePathInfo)
-	taskBuf := make([]byte, sizeofProcTaskInfo)
 	uid := os.Geteuid()
+	r := &fieldReader{lib: lib, argBuf: make([]byte, argmax), pathBuf: make([]byte, sizeofVnodePathInfo),
+		taskBuf: make([]byte, sizeofProcTaskInfo), uid: uid, denied: map[int]bool{}}
 	limit := o.InProject != nil
-	denied := map[int]bool{} // processes with a field denied by EPERM
-	kept := res.Processes[:0]
-	for _, p := range res.Processes {
-		var argvErr, cwdErr, taskErr error
-		if !limit {
-			var drop bool
-			if drop, argvErr = readArgv(lib, argBuf, &p, uid); drop {
-				continue
-			}
-		}
-		if n, err := lib.pidinfo(p.PID, procPidVnodePathInfo, pathBuf); err != nil {
-			cwdErr = err
-		} else if cwd, ok := decodeVnodePathInfo(pathBuf[:n]); ok {
-			p.Cwd, p.CwdDeleted = cwd, cwdGone(cwd)
-		} else {
-			cwdErr = syscall.EINVAL
-		}
-		if n, err := lib.pidinfo(p.PID, procPidTaskInfo, taskBuf); err != nil {
-			taskErr = err
-		} else if rss, ticks, ok := decodeTaskInfo(taskBuf[:n]); !ok {
-			taskErr = syscall.EINVAL
-		} else {
-			p.RSSBytes, p.CPUTime = rss, time.Duration(lib.machToNs(ticks))
-		}
-		if exited(cwdErr) || exited(taskErr) {
-			continue
-		}
-		for _, f := range []struct {
-			bit model.FieldSet
-			err error
-		}{{model.FieldArgv, argvErr}, {model.FieldCwd, cwdErr}, {model.FieldCPU, taskErr}, {model.FieldMem, taskErr}} {
-			if f.err != nil {
-				p.Unknown |= f.bit
-			}
-		}
-		if errors.Is(argvErr, syscall.EPERM) || errors.Is(cwdErr, syscall.EPERM) || errors.Is(taskErr, syscall.EPERM) {
-			denied[p.PID] = true
-		}
-		kept = append(kept, p)
-	}
-	res.Processes = kept
+	res.Processes = r.processes(res.Processes, !limit)
 	res.Timings["argv_cwd"] = time.Since(t)
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -117,31 +61,13 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 
 	if limit {
 		t = time.Now()
-		want := argvWanted(o, res.Processes, res.Listeners)
-		kept := res.Processes[:0]
-		for i, p := range res.Processes {
-			if !want[i] {
-				p.Unknown |= model.FieldArgv // not read, so not counted as denied
-				kept = append(kept, p)
-				continue
-			}
-			drop, argvErr := readArgv(lib, argBuf, &p, uid)
-			if drop {
-				continue
-			}
-			if argvErr != nil {
-				p.Unknown |= model.FieldArgv
-				denied[p.PID] = denied[p.PID] || errors.Is(argvErr, syscall.EPERM)
-			}
-			kept = append(kept, p)
-		}
-		res.Processes = kept
+		res.Processes = r.limitedArgv(res.Processes, argvWanted(o, res.Processes, res.Listeners))
 		res.Timings["argv_cwd"] += time.Since(t)
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
 	}
-	if n := countDenied(res.Processes, denied); n > 0 {
+	if n := countDenied(res.Processes, r.denied); n > 0 {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: n,
 			Hint: "other users' processes: argv, cwd, cpu and mem need root; run with sudo", Sudo: uid != 0})
 	}
@@ -150,6 +76,113 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 		res.Warnings = append(res.Warnings, model.Warning{Code: "pcblist_unavailable", Count: 1, Hint: pcbWarn})
 	}
 	return res, nil
+}
+
+// procTable reads every process but kernel_task from kern.proc.all: pid, ppid, uid, start
+// time and name.
+func procTable() ([]Process, error) {
+	kps, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, fmt.Errorf("collector: sysctl kern.proc.all: %w", err)
+	}
+	procs := make([]Process, 0, len(kps))
+	for i := range kps {
+		kp := &kps[i]
+		if kp.Proc.P_pid == 0 {
+			continue // kernel_task; PID 0 is the "unknown owner" pseudo-process in model.Build
+		}
+		procs = append(procs, Process{
+			PID:       int(kp.Proc.P_pid),
+			PPID:      int(kp.Eproc.Ppid),
+			UID:       int(kp.Eproc.Ucred.Uid),
+			StartTime: startTime(kp),
+			Name:      cstring(kp.Proc.P_comm[:]),
+		})
+	}
+	return procs, nil
+}
+
+// fieldReader reads the per-process fields of one Collect into buffers allocated once:
+// argBuf is kern.argmax bytes, uid is devdash's effective uid, and denied collects the
+// processes with a field denied by EPERM.
+type fieldReader struct {
+	lib                      *libSystem
+	argBuf, pathBuf, taskBuf []byte
+	uid                      int
+	denied                   map[int]bool
+}
+
+// processes reads the argv, cwd, CPU time and RSS of each of procs, in place, and returns
+// those kept: a process that exited mid-read is dropped, and a field it denied is marked
+// unknown. Without withArgv, Argv is left for limitedArgv.
+func (r *fieldReader) processes(procs []Process, withArgv bool) []Process {
+	kept := procs[:0]
+	for _, p := range procs {
+		if withArgv && !r.argv(&p) {
+			continue
+		}
+		var cwdErr, taskErr error
+		if n, err := r.lib.pidinfo(p.PID, procPidVnodePathInfo, r.pathBuf); err != nil {
+			cwdErr = err
+		} else if cwd, ok := decodeVnodePathInfo(r.pathBuf[:n]); ok {
+			p.Cwd, p.CwdDeleted = cwd, cwdGone(cwd)
+		} else {
+			cwdErr = syscall.EINVAL
+		}
+		if n, err := r.lib.pidinfo(p.PID, procPidTaskInfo, r.taskBuf); err != nil {
+			taskErr = err
+		} else if rss, ticks, ok := decodeTaskInfo(r.taskBuf[:n]); !ok {
+			taskErr = syscall.EINVAL
+		} else {
+			p.RSSBytes, p.CPUTime = rss, time.Duration(r.lib.machToNs(ticks))
+		}
+		if exited(cwdErr) || exited(taskErr) {
+			continue
+		}
+		r.unknown(&p, model.FieldCwd, cwdErr)
+		r.unknown(&p, model.FieldCPU|model.FieldMem, taskErr)
+		kept = append(kept, p)
+	}
+	return kept
+}
+
+// limitedArgv reads argv for the processes want marks and marks the others' argv unknown, not
+// denied. A process that exited since its first read is dropped.
+func (r *fieldReader) limitedArgv(procs []Process, want []bool) []Process {
+	kept := procs[:0]
+	for i, p := range procs {
+		switch {
+		case !want[i]:
+			p.Unknown |= model.FieldArgv // not read, so not counted as denied
+		case !r.argv(&p):
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
+}
+
+// argv reads p's argv (readArgv); keep is false when p is dropped. A failed read marks
+// FieldArgv unknown. A process dropped later in the same read may stay in denied, which
+// countDenied ignores.
+func (r *fieldReader) argv(p *Process) (keep bool) {
+	drop, err := readArgv(r.lib, r.argBuf, p, r.uid)
+	if drop {
+		return false
+	}
+	r.unknown(p, model.FieldArgv, err)
+	return true
+}
+
+// unknown marks bits unknown in p when its read failed with err, and p denied when err is EPERM.
+func (r *fieldReader) unknown(p *Process, bits model.FieldSet, err error) {
+	if err == nil {
+		return
+	}
+	p.Unknown |= bits
+	if errors.Is(err, syscall.EPERM) {
+		r.denied[p.PID] = true
+	}
 }
 
 // cwdGone reports whether a process's cwd was removed. PROC_PIDVNODEPATHINFO keeps reporting
