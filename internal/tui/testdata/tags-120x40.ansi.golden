@@ -4,7 +4,7 @@
 [7;36m    api[m[7;2;36m  orphaned, cwd deleted[m[7;36m                server    8080,8081       200   1d[m[2m|[m tags      orphaned: parent exited; now
     go                                        test                      201  30s[2m|[m           a child of launchd          
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m[2m|[m           cwd deleted: working        
-  ▾ zsh › vite (node)                         server    *5173           101   3h[2m|[m           directory deleted           
+  ▾ vite (node)                               server    *5173           101   3h[2m|[m           directory deleted           
       esbuild                                 other                     102   2h[2m|[m cwd       /src/api                    
     claude                                    agent                     103  20m[2m|[m project   api @ main · this repo      
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m root      /src/api                    

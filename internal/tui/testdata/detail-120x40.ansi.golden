@@ -4,7 +4,7 @@
     api[2m  orphaned, cwd deleted[m                server    8080,8081       200   1d[2m|[m           --port 5173                 
     go                                        test                      201  30s[2m|[m cwd       /src/shop                   
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m[2m|[m project   shop @ feat/cart (worktree) 
-[7;36m  ▾ zsh › vite (node)                         server    *5173           101   3h[m[2m|[m root      /src/shop                   
+[7;36m  ▾ vite (node)                               server    *5173           101   3h[m[2m|[m root      /src/shop                   
       esbuild                                 other                     102   2h[2m|[m main repo /src/shop-main              
     claude                                    agent                     103  20m[2m|[m listeners tcp6 [::]:5173              
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m[2m|[m           (every interface)           

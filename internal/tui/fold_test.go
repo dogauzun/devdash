@@ -39,7 +39,12 @@ func chainFixture() model.Snapshot {
 	}
 }
 
-const chainLine = "bash › claude › bash › bash › guard.sh › run55.sh › xargs"
+// chainLine is the folded row as drawn without `a`, which leaves the shells out of the label
+// (DEV-160); fullChain with `a`.
+const (
+	chainLine = "claude › xargs"
+	fullChain = "bash › claude › bash › bash › guard.sh › run55.sh › xargs"
+)
 
 func TestFoldLabel(t *testing.T) {
 	s := chainFixture()
@@ -48,6 +53,11 @@ func TestFoldLabel(t *testing.T) {
 	if !strings.HasPrefix(line(m, chainLine), "  ▾ "+chainLine+" ") {
 		t.Errorf("no folded row at depth 1:\n%s", screen(m))
 	}
+	press(m, "a")
+	if !strings.HasPrefix(line(m, fullChain), "  ▾ "+fullChain+" ") {
+		t.Errorf("with a, no full folded row at depth 1:\n%s", screen(m))
+	}
+	press(m, "a")
 	for _, want := range []string{"    ▾ sh › time ", "        timeout › lte_scanner ", "        grep ", "      sleep "} {
 		if !strings.HasPrefix(line(m, strings.TrimSpace(want)), want) {
 			t.Errorf("no row %q:\n%s", want, screen(m))
@@ -58,11 +68,109 @@ func TestFoldLabel(t *testing.T) {
 		t.Errorf("header counts changed:\n%s", screen(m))
 	}
 
-	// At 80 columns the name column is 45 cells: leading links give way to `… › `.
+	// At 80 columns the name column is 45 cells: leading links give way to `… › `, counting
+	// only the links drawn. Without `a` the label fits; with a long claude it does not.
 	m, _ = newTest(t, 80, 24)
 	feed(m, s)
-	if got := line(m, "xargs"); !strings.HasPrefix(got, "  ▾ … › bash › guard.sh › run55.sh › xargs ") {
+	if got := line(m, "xargs"); !strings.HasPrefix(got, "  ▾ "+chainLine+" ") {
 		t.Errorf("narrow folded row %q", got)
+	}
+	press(m, "a")
+	if got := line(m, "xargs"); !strings.HasPrefix(got, "  ▾ … › bash › guard.sh › run55.sh › xargs ") {
+		t.Errorf("narrow folded row with a %q", got)
+	}
+	long := strings.Repeat("c", 38)
+	s.Processes[1].Name, s.Processes[1].Argv = long, []string{long}
+	m, _ = newTest(t, 80, 24)
+	feed(m, s)
+	if got := line(m, "xargs"); !strings.HasPrefix(got, "  ▾ … › xargs ") {
+		t.Errorf("narrow folded row with a long link %q", got)
+	}
+}
+
+// TestFoldLabelHiddenLinks (DEV-160): a link the view hides (a shell or editor, without `a`)
+// is left out of a folded row's label, unless a filter is set and it matches; the row's own
+// process always keeps its label. Nothing else about the row changes.
+//
+//	zsh 30 → vite 31 (5173)                       drawn `vite`, unfolds to zsh (dim) and vite
+//	disclaimer 40 → claude 41 → zsh 42 → x 43, y 44 drawn `disclaimer › claude › zsh` (dim)
+func TestFoldLabelHiddenLinks(t *testing.T) {
+	s := chainFixture()
+	proc := func(pid, ppid int, name string, kind model.Kind) model.Process {
+		p := s.Processes[0]
+		p.PID, p.PPID, p.Name, p.Argv, p.Kind = pid, ppid, name, []string{name}, kind
+		p.StartTime = at(time.Hour - time.Duration(pid)*time.Second)
+		return p
+	}
+	vite := proc(31, 30, "vite", model.KindServer)
+	vite.Listeners = []model.Listener{lis("tcp4", "0.0.0.0", 5173)}
+	s.Processes = []model.Process{
+		proc(30, 9, "zsh", model.KindShell), vite,
+		proc(40, 9, "disclaimer", model.KindOther), proc(41, 40, "claude", model.KindAgent),
+		proc(42, 41, "zsh", model.KindShell), proc(43, 42, "x", model.KindOther), proc(44, 42, "y", model.KindOther),
+	}
+	zsh, viteKey := keyOf(s, 30), keyOf(s, 31)
+
+	m, _ := newTest(t, 160, 30)
+	feed(m, s)
+	if got := line(m, "vite"); !strings.HasPrefix(got, "    vite ") || strings.Contains(got, "zsh") {
+		t.Errorf("hidden link drawn: %q\n%s", got, screen(m))
+	}
+	if !strings.HasPrefix(line(m, "claude"), "  ▾ disclaimer › claude › zsh ") {
+		t.Errorf("chain ending in a hidden shell:\n%s", screen(m))
+	}
+	if r := m.rows[1+slices.IndexFunc(m.rows[1:], func(r model.Row) bool { return r.Key == viteKey })]; len(r.Links) != 1 || r.Depth != 1 {
+		t.Errorf("vite row: links %v depth %d", r.Links, r.Depth)
+	}
+	press(m, "a")
+	if !strings.HasPrefix(line(m, "vite"), "    zsh › vite ") {
+		t.Errorf("with a, no zsh › vite:\n%s", screen(m))
+	}
+	press(m, "a")
+
+	// → unfolds the row that shows one name; ← on its first row folds it again.
+	selectKey(t, m, viteKey)
+	press(m, "right")
+	if !m.view.Unfolded[zsh] || !strings.HasPrefix(line(m, "zsh"), "  ▾ zsh ") || !strings.HasPrefix(line(m, "vite"), "      vite ") {
+		t.Fatalf("right did not unfold the chain:\n%s", screen(m))
+	}
+	selectKey(t, m, zsh)
+	press(m, "left")
+	if m.view.Unfolded[zsh] || m.sel != viteKey || !strings.HasPrefix(line(m, "vite"), "    vite ") {
+		t.Fatalf("left did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
+	}
+
+	// Name sort orders by the label of the plain view, with a filter set too: the search
+	// flattens with every row shown, yet `vite` still sorts before `watch`.
+	w := proc(50, 9, "watch", model.KindOther)
+	sorted := s
+	sorted.Processes = append([]model.Process{w}, s.Processes[:2]...)
+	for _, query := range []string{"", "lte"} {
+		m, _ := newTest(t, 160, 30)
+		m.view.Sort = model.SortName
+		feed(m, sorted)
+		if query != "" {
+			press(m, "/")
+			typeText(m, query)
+		}
+		if v, w := lineIndex(m, "*5173"), lineIndex(m, "watch"); v < 0 || w < 0 || v > w {
+			t.Errorf("/%s: name sort puts vite after watch:\n%s", query, screen(m))
+		}
+	}
+
+	// A filter draws a hidden link that matches it.
+	for _, tc := range []struct{ query, want string }{
+		{"zsh", "    zsh › vite "},
+		{"vite", "    vite "},
+		{"5173", "    vite "},
+	} {
+		m, _ := newTest(t, 160, 30)
+		feed(m, s)
+		press(m, "/")
+		typeText(m, tc.query)
+		if !strings.HasPrefix(line(m, "*5173"), tc.want) {
+			t.Errorf("/%s: want %q\n%s", tc.query, tc.want, screen(m))
+		}
 	}
 }
 
@@ -129,7 +237,7 @@ func TestFoldKeys(t *testing.T) {
 	}
 	// A collapsed process ends a chain: folded again, the row stops at claude.
 	press(m, "left")
-	if got := line(m, "claude"); !strings.HasPrefix(got, "  ▸ bash › claude ") || m.sel != claude {
+	if got := line(m, "claude"); !strings.HasPrefix(got, "  ▸ claude ") || m.sel != claude {
 		t.Errorf("refolded with claude collapsed: %q, sel %+v", got, m.sel)
 	}
 }
@@ -236,7 +344,7 @@ func TestFoldSelection(t *testing.T) {
 	feed(m, s)
 	claude := keyOf(s, 11)
 	selectKey(t, m, claude)
-	if r, _ := m.selected(); len(r.Links) != 1 || line(m, "bash › claude ") == "" {
+	if r, _ := m.selected(); len(r.Links) != 1 || line(m, "  ▾ claude ") == "" {
 		t.Fatalf("selected %+v:\n%s", r, screen(m))
 	}
 	// watch exits: claude is folded into the xargs row, which takes the selection.

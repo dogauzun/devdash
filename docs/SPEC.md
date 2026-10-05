@@ -265,7 +265,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 
 **Table.** Columns in priority order: name (indented by tree depth, container rows carry the container name and image), kind, ports (comma-joined, with a leading `*` when bound to every interface), pid, uptime, cpu, mem, user, command (argv joined with single spaces, an absolute argv[0] by its basename, truncated to the remaining width; the detail pane shows the full path, DEV-146). Below 100 columns cpu, mem and user are dropped; below 90 the command is dropped. Project headers show `name @ branch (worktree)`, the process count and the port count, and collapse with `←`. Groups are ordered by most recent activity (latest start time in the group), `containers` and `other` last.
 
-A chain of processes P1 → … → Pn (n ≥ 2) in one group, where every process before the last has exactly one shown child, the next, is one row (DEV-157): `bash › claude › bash › xargs`, the labels joined by ` › `, at P1's depth, with Pn's children one level below it. The row is Pn's: kind, ports, pid, uptime, cpu, mem, user, command, tags, arguments, detail pane, `o` and `x` (which plans for Pn alone, as on Pn's own row) are the last process's, it is dimmed only when Pn is, and it sorts among its siblings by Pn, or in name mode by the joined label. A process with a listener or a tag, a container's process, a collapsed row and the unknown owner can end a chain but never sit inside one, so no port or tag leaves the table. When the label does not fit the name column, leading links give way to `… › ` and the last label is always kept. The filter matches a folded row when any of its processes would match as its own row. A search flattens with every row shown, so a chain can end in a process the view hides; when that process neither matches nor leads to a match, the row is cut back to its last process the view shows or that matches, drawn as that process (`claude` for claude and its idle shell), or left out when there is none. Group headers count processes, not rows.
+A chain of processes P1 → … → Pn (n ≥ 2) in one group, where every process before the last has exactly one shown child, the next, is one row (DEV-157): `bash › claude › bash › xargs`, the labels joined by ` › `, at P1's depth, with Pn's children one level below it. A process before Pn that the view hides (a shell or an editor without a listener, unless `a`) is left out of the label, so that chain reads `claude › xargs` and `zsh › vite (node)` reads `vite (node)`; while a filter is set, such a process that matches it is drawn, so `/zsh` shows `zsh › vite (node)`. Pn's own label always stays, hidden kind or not (`disclaimer › claude › zsh` above zsh's children), and `→` unfolds a folded row even when its label is one name (DEV-160). The row is Pn's: kind, ports, pid, uptime, cpu, mem, user, command, tags, arguments, detail pane, `o` and `x` (which plans for Pn alone, as on Pn's own row) are the last process's, it is dimmed only when Pn is, and it sorts among its siblings by Pn, or in name mode by the label the view draws without a filter. A process with a listener or a tag, a container's process, a collapsed row and the unknown owner can end a chain but never sit inside one, so no port or tag leaves the table. When the label does not fit the name column, leading drawn links give way to `… › ` and the last label is always kept. The filter matches a folded row when any of its processes would match as its own row. A search flattens with every row shown, so a chain can end in a process the view hides; when that process neither matches nor leads to a match, the row is cut back to its last process the view shows or that matches, drawn as that process (`claude` for claude and its idle shell), or left out when there is none. Group headers count processes, not rows.
 
 **Detail pane.** `enter` opens it as a right split at 120 columns or more, otherwise as a full-screen overlay: full argv (wrapped), cwd, project and branch, listeners with bind address, parent chain up to the root, start time, user, and the Docker socket in use when the row is a container.
 
@@ -436,7 +436,7 @@ mbp · 2 s ago · 2 projects · 6 listeners · 2 containers · /5173_
 port 5173 · 1 holder · next free 5174
 NAME                                          KIND      PORTS           PID   UP
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
->   zsh › vite (node)  --port 5173            server    *5173           101   3h
+>   vite (node)  --port 5173                  server    *5173           101   3h
 ```
 
 That screen is what the user gets even when the shop group was collapsed (`>` marks the selected row, drawn in reverse video).
@@ -451,7 +451,7 @@ NAME                                          KIND      PORTS           PID   UP
     api  !  -addr :8080                       server    8080,8081       200   1d
     go  test ./...                            test                      201  30s
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
-  ▾ zsh › vite (node)  --port 5173            server    *5173           101   3h
+  ▾ vite (node)  --port 5173                  server    *5173           101   3h
       esbuild  --service=0.21.5 --ping        other                     102   2h
     claude                                    agent                     103  20m
 ```

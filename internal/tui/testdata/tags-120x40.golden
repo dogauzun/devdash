@@ -4,7 +4,7 @@ NAME                                          KIND      PORTS           PID   UP
     api  orphaned, cwd deleted                server    8080,8081       200   1d| tags      orphaned: parent exited; now
     go                                        test                      201  30s|           a child of launchd
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            |           cwd deleted: working
-  ▾ zsh › vite (node)                         server    *5173           101   3h|           directory deleted
+  ▾ vite (node)                               server    *5173           101   3h|           directory deleted
       esbuild                                 other                     102   2h| cwd       /src/api
     claude                                    agent                     103  20m| project   api @ main · this repo
 ▾ shop (compose) · 2 containers · 2 ports                                       | root      /src/api
