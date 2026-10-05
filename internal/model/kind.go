@@ -126,8 +126,8 @@ func Tool(p Process) (tool string, args []string, ok bool) {
 // the module after -m (python's also attached, -mpytest: DEV-153), else the first argument
 // that is not a flag or one of subcommands. A flag of inlineCodeFlags before it means the
 // interpreter runs inline code, which names no tool (DEV-137); a flag of valueFlags skips its
-// value too (DEV-138). Other flags taking a separate value are not known, so `node -r x app.js`
-// yields x; good enough to find jest or pytest. A shell's flags start with - or +; a cluster
+// value too (DEV-138, DEV-170). Other flags taking a separate value are not known, so
+// `ruby -r x app.rb` yields x. A shell's flags start with - or +; a cluster
 // of short ones holding c (inline code) or s (standard input) names no tool, and one ending in
 // o or O takes the next argument as its value (`-eo pipefail`) (DEV-159).
 func toolArg(name string, args []string) (i int, tool string, module bool) {
@@ -143,6 +143,9 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 		case skip:
 			skip = false
 			continue
+		case valueFlags[name+" "+a]: // before a shell's short flags, for fish's -C (DEV-170)
+			skip = true
+			continue
 		case shell && len(a) > 1 && (a[0] == '-' || a[0] == '+') && a[1] != '-':
 			if strings.ContainsAny(a, "cs") {
 				return -1, "", false
@@ -155,9 +158,6 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 			return i, a[2:], true
 		case inlineCodeFlags[name+" "+flag]:
 			return -1, "", false
-		case valueFlags[name+" "+a]:
-			skip = true
-			continue
 		case !sub && subcommands[name+" "+a]:
 			sub = true
 			continue
