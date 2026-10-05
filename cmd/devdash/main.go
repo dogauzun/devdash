@@ -66,12 +66,13 @@ kill prints every pid it will signal, then asks for confirmation on the terminal
 
 Exit codes: 0 ok (port: found; free: a port printed; kill: every signalled process
 exited, or nothing listens on N), 1 only answers the question asked, never a failure
-(port: N is free; free: nothing free in range), 2 usage error (kill: also no terminal
-to confirm on), 3 kill: permission denied (also an owner devdash cannot see; try sudo),
-4 kill: survivors remain, 5 devdash failed (no snapshot could be taken, free could
-not probe a port, or output could not be written; kill: only before anything was
-signalled), 6 kill: nothing signalled (devdash refuses the target, or the
-confirmation was declined).
+(port: N is free; free: nothing free in range), 2 usage error (the dashboard: also
+stdout is not a terminal; kill: also no terminal to confirm on), 3 kill: permission
+denied (also an owner devdash cannot see; try sudo), 4 kill: survivors remain,
+5 devdash failed (no snapshot could be taken, free could not probe a port, or output
+could not be written; kill: only before anything was signalled), 6 kill: nothing
+signalled (devdash refuses the target, or the confirmation was declined).
+The dashboard exits 0 when quit, by q, ctrl-c, SIGINT or SIGTERM.
 `
 
 // exitFailed is the exit code of every command when devdash itself fails: the snapshot could
@@ -135,7 +136,7 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 	if o.JSON {
 		return runJSON(ctx, o.engine(c), stdout, stderr)
 	}
-	return runTUI(ctx, o, args, c, stderr)
+	return runTUI(ctx, o, args, c, stdout, stderr)
 }
 
 // The dashboard and its rerun under sudo (DEV-144); tests replace all three.
@@ -157,8 +158,13 @@ var (
 )
 
 // runTUI runs the dashboard until the user quits, then, if the user confirmed S, replaces
-// devdash with `sudo -- <this executable> args...` (args as devdash got them).
-func runTUI(ctx context.Context, o options, args []string, c collector.Collector, stderr io.Writer) int {
+// devdash with `sudo -- <this executable> args...` (args as devdash got them). Without a
+// terminal on stdout it starts nothing: a pipe or file would get escape sequences and no rows.
+func runTUI(ctx context.Context, o options, args []string, c collector.Collector, stdout, stderr io.Writer) int {
+	if !stdoutTerminal(stdout) {
+		fmt.Fprintln(stderr, "devdash: the dashboard needs a terminal; use --json, port N or free N in scripts")
+		return 2
+	}
 	sudo := lookSudo()
 	asked, err := runDashboard(ctx, o, c, sudo != "")
 	switch {
