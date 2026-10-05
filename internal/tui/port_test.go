@@ -254,12 +254,12 @@ func TestPortRefreshKeepsSelection(t *testing.T) {
 	m := newPortTest(t, 80, 24, s, &fakeProbe{})
 	search(m, "5173")
 	press(m, "enter", "up")
-	if m.sel != keyOf(s, 100) {
-		t.Fatalf("up selected %+v, want zsh 100", m.sel)
+	if m.sel != shopHeader { // zsh is folded into the holder's row (DEV-157)
+		t.Fatalf("up selected %+v, want the shop header", m.sel)
 	}
 	_, cmd := m.Update(updateMsg(engine.Update{Snapshot: fixture(), Interval: 2 * time.Second}))
 	runAll(m, cmd)
-	if m.sel != keyOf(s, 100) {
+	if m.sel != shopHeader {
 		t.Errorf("a refresh moved the selection to %+v", m.sel)
 	}
 }

@@ -10,15 +10,16 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
-// Fixture rows in display order (80x24, default view, with other opened: it starts collapsed):
+// Fixture rows in display order (80x24, default view, with other opened: it starts collapsed);
+// zsh 100 and its only shown child node 101 are one folded row, node's (DEV-157):
 //
-//	0 api            7   claude
-//	1   api 200      8 shop (compose)
-//	2   go 201       9   shop-web-1
-//	3 shop          10   shop-db-1 (300)
-//	4   zsh 100     11 other
-//	5     node 101  12   unknown
-//	6       esbuild 13   sshd 1
+//	0 api                    7 shop (compose)
+//	1   api 200              8   shop-web-1
+//	2   go 201               9   shop-db-1 (300)
+//	3 shop                  10 other
+//	4   zsh › node 101      11   unknown
+//	5     esbuild           12   sshd 1
+//	6   claude
 
 var (
 	rowsAPIHeader     = model.RowKey{Header: model.GroupProject, Group: apiID}
@@ -126,7 +127,7 @@ func TestSelectionHoldsAcrossRefresh(t *testing.T) {
 	if m.rows[0].Key != rowsShopHeader {
 		t.Fatalf("shop is not first: %+v", m.rows[0].Key)
 	}
-	wantSel(t, m, goTest, 7)
+	wantSel(t, m, goTest, 6)
 }
 
 // When the selected row is gone the selection moves to the nearest row above it (in the rows
@@ -142,11 +143,11 @@ func TestSelectedProcessExits(t *testing.T) {
 		wantIdx int          // where that row is now
 	}{
 		{"middle row: its parent", keyOf(s, 200), drop(fixture(), 200), 1, rowsAPIHeader, 0},
-		{"last row: the row above it", keyOf(s, 1), drop(fixture(), 1), 13, keyOf(s, 0), 12},
-		{"its whole group exits: the last row of the group above", keyOf(s, 103), dropShop(fixture()), 7, keyOf(s, 201), 2},
+		{"last row: the row above it", keyOf(s, 1), drop(fixture(), 1), 12, keyOf(s, 0), 11},
+		{"its whole group exits: the last row of the group above", keyOf(s, 103), dropShop(fixture()), 6, keyOf(s, 201), 2},
 		{"a header whose group exits: nothing above, the first row", rowsAPIHeader, withoutAPI(fixture()), 0, rowsShopHeader, 0},
 		// api loses its newest process and shop sorts first: the selection stays in api.
-		{"the group order changes: its sibling, now further down", keyOf(s, 201), notHere(drop(fixture(), 201)), 2, keyOf(s, 200), 6},
+		{"the group order changes: its sibling, now further down", keyOf(s, 201), notHere(drop(fixture(), 201)), 2, keyOf(s, 200), 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
@@ -171,10 +172,10 @@ func TestSelectionHiddenByView(t *testing.T) {
 	m, _ := newTest(t, 80, 24)
 	s := fixture()
 	feed(m, s)
-	rowsSelect(t, m, webKey) // index 9, under the shop compose header
+	rowsSelect(t, m, webKey) // index 8, under the shop compose header
 	m.view.HideContainers = true
 	m.rebuild()
-	wantSel(t, m, keyOf(s, 103), 7) // claude
+	wantSel(t, m, keyOf(s, 103), 6) // claude
 }
 
 // dropShop returns s without the shop project and its processes.
@@ -303,7 +304,7 @@ func TestFilterPrompt(t *testing.T) {
 	s := fixture()
 	feed(m, s)
 	all := len(m.rows)
-	vite := []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101)}
+	vite := []model.RowKey{rowsShopHeader, keyOf(s, 101)}
 
 	press(m, "/")
 	if !m.filtering || line(m, "· /_") == "" {
@@ -368,13 +369,13 @@ func TestFilterKeepsAncestors(t *testing.T) {
 		header string // the group header's name, on screen
 		want   []model.RowKey
 	}{
-		{"51", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101)}}, // port prefix of 5173
-		{"808", "api", []model.RowKey{rowsAPIHeader, keyOf(s, 200)}},                 // 8080 and 8081
-		{"ESBUILD", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101), keyOf(s, 102)}},
-		{"--service", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 100), keyOf(s, 101), keyOf(s, 102)}}, // argv
-		{"api", "api", []model.RowKey{rowsAPIHeader, keyOf(s, 200), keyOf(s, 201)}},                        // a project keeps its group
-		{"postgres", "shop", []model.RowKey{rowsComposeHeader, keyOf(s, 300)}},                             // container image
-		{"shop-web", "shop", []model.RowKey{rowsComposeHeader, webKey}},                                    // container name
+		{"51", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 101)}}, // port prefix of 5173; zsh is folded into node's row
+		{"808", "api", []model.RowKey{rowsAPIHeader, keyOf(s, 200)}},  // 8080 and 8081
+		{"ESBUILD", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 101), keyOf(s, 102)}},
+		{"--service", "shop", []model.RowKey{rowsShopHeader, keyOf(s, 101), keyOf(s, 102)}}, // argv
+		{"api", "api", []model.RowKey{rowsAPIHeader, keyOf(s, 200), keyOf(s, 201)}},         // a project keeps its group
+		{"postgres", "shop", []model.RowKey{rowsComposeHeader, keyOf(s, 300)}},              // container image
+		{"shop-web", "shop", []model.RowKey{rowsComposeHeader, webKey}},                     // container name
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			m, _ := newTest(t, 80, 24)
@@ -407,41 +408,41 @@ func TestFilterSelection(t *testing.T) {
 	// The selection stays on its row while it matches.
 	press(m, "/")
 	typeText(m, "nod")
-	wantSel(t, m, vite, 2)
+	wantSel(t, m, vite, 1)
 	// Nothing matches: nothing is selected, the key is kept.
 	typeText(m, "x")
 	if _, ok := m.selected(); ok || m.selIdx != -1 || m.sel != vite {
 		t.Errorf("no match: sel %+v at %d, want %+v kept at -1", m.sel, m.selIdx, vite)
 	}
 	press(m, "backspace")
-	wantSel(t, m, vite, 2)
+	wantSel(t, m, vite, 1)
 	press(m, "esc")
-	wantSel(t, m, vite, 5)
+	wantSel(t, m, vite, 4)
 
 	// The filter hides the selected row: the nearest row above it that matches is selected
 	// while the filter is set, and the row comes back when the filter is cleared.
-	claude := keyOf(s, 103) // index 7
+	claude := keyOf(s, 103) // index 6
 	rowsSelect(t, m, claude)
 	press(m, "/")
 	typeText(m, "api")
 	wantSel(t, m, keyOf(s, 201), 2)
 	press(m, "enter", "esc")
-	wantSel(t, m, claude, 7)
+	wantSel(t, m, claude, 6)
 
 	// Typed, narrowed to nothing, then cancelled in the prompt.
 	press(m, "/")
 	typeText(m, "apz")
 	press(m, "esc")
-	wantSel(t, m, claude, 7)
+	wantSel(t, m, claude, 6)
 
 	// Backspace back past the queries that hid it, and ctrl+u.
 	press(m, "/")
 	typeText(m, "api")
 	press(m, "backspace", "backspace", "backspace")
-	wantSel(t, m, claude, 7)
+	wantSel(t, m, claude, 6)
 	typeText(m, "api")
 	m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	wantSel(t, m, claude, 7)
+	wantSel(t, m, claude, 6)
 	press(m, "esc")
 
 	// A selection made while the filter is set is the one kept when it is cleared.
@@ -508,12 +509,13 @@ func TestFilterSeesCollapsed(t *testing.T) {
 		want      []model.RowKey
 		open      string // a line drawn with the open marker while the filter is set
 	}{
+		// zsh has one shown child, node: with nothing collapsed they are one row, node's (DEV-157).
 		{"port in a collapsed group", []model.RowKey{rowsShopHeader}, "5173",
-			[]model.RowKey{rowsShopHeader, zsh, vite}, "▾ shop @ feat/cart"},
+			[]model.RowKey{rowsShopHeader, vite}, "▾ shop @ feat/cart"},
 		{"port under a collapsed node", []model.RowKey{zsh}, "5173",
-			[]model.RowKey{rowsShopHeader, zsh, vite}, "▾ zsh"},
+			[]model.RowKey{rowsShopHeader, vite}, "▾ shop @ feat/cart"},
 		{"port under nested folds", []model.RowKey{rowsShopHeader, zsh, vite}, "esbuild",
-			[]model.RowKey{rowsShopHeader, zsh, vite, keyOf(s, 102)}, "▾ vite (node)"},
+			[]model.RowKey{rowsShopHeader, vite, keyOf(s, 102)}, "▾ zsh › vite (node)"},
 		{"tag in a collapsed group", []model.RowKey{rowsAPIHeader}, "orphaned",
 			[]model.RowKey{rowsAPIHeader, keyOf(s, 200)}, "▾ api @ main (here)"},
 		{"a collapsed group that matches keeps its rows", []model.RowKey{rowsAPIHeader}, "api",
@@ -552,12 +554,14 @@ func TestFilterSeesCollapsed(t *testing.T) {
 // rowsNotes is the header of the notes project, which only an editor references.
 var rowsNotes = model.RowKey{Header: model.GroupProject, Group: "/src/notes"}
 
-// withHidden returns the fixture with an idle shell in shop (zsh 104, no children) and a notes
-// project whose only process is an editor (nvim 400), so neither shows in the default view.
+// withHidden returns the fixture with an idle shell in shop (zsh 104, no children, a second
+// child of zsh 100) and a notes project whose only process is an editor (nvim 400), so neither
+// shows in the default view. With every row shown zsh 100 has two children and starts no
+// chain (DEV-157), so the search draws it on its own row.
 func withHidden() model.Snapshot {
 	s := fixture()
 	idle := s.Processes[0] // zsh 100
-	idle.PID, idle.StartTime, idle.Argv = 104, at(time.Hour), []string{"-zsh"}
+	idle.PID, idle.PPID, idle.StartTime, idle.Argv = 104, 100, at(time.Hour), []string{"-zsh"}
 	notes := s.Processes[6] // nvim 202
 	notes.PID, notes.ProjectID, notes.Cwd, notes.Argv = 400, "/src/notes", "/src/notes", []string{"nvim", "todo.md"}
 	s.Processes = append(slices.Clone(s.Processes), idle, notes)
@@ -689,24 +693,25 @@ func TestFilterNoFolding(t *testing.T) {
 	m, _ := newTest(t, 120, 30)
 	s := fixture()
 	feed(m, s)
-	zsh, vite := keyOf(s, 100), keyOf(s, 101)
+	vite := keyOf(s, 101)
 	m.view.Collapsed[rowsShopHeader] = true
 	m.rebuild()
 
 	press(m, "/")
 	typeText(m, "esbuild")
 	press(m, "enter")
-	rowsSelect(t, m, vite)
+	rowsSelect(t, m, keyOf(s, 102))
 	press(m, "left")
-	wantSel(t, m, zsh, 1)
+	wantSel(t, m, vite, 1) // zsh › node: zsh is folded into node's row (DEV-157)
 	press(m, "left", "left")
 	wantSel(t, m, rowsShopHeader, 0)
 	press(m, "right", "down", "right")
-	if len(m.view.Collapsed) != 2 || !m.view.Collapsed[rowsShopHeader] || !m.view.Collapsed[rowsOtherHeader] {
-		t.Errorf("collapsed under a filter: %v, want only the shop header and other (folded at start)", m.view.Collapsed)
+	if len(m.view.Collapsed) != 2 || !m.view.Collapsed[rowsShopHeader] || !m.view.Collapsed[rowsOtherHeader] || len(m.view.Unfolded) != 0 {
+		t.Errorf("collapsed under a filter: %v, want only the shop header and other (folded at start); unfolded %v, want none",
+			m.view.Collapsed, m.view.Unfolded)
 	}
-	if got := len(m.rows); got != 4 {
-		t.Errorf("%d rows, want shop, zsh, node and esbuild:\n%s", got, screen(m))
+	if got := len(m.rows); got != 3 {
+		t.Errorf("%d rows, want shop, zsh › node and esbuild:\n%s", got, screen(m))
 	}
 
 	// The selection made under the filter is inside the folded group: clearing the filter

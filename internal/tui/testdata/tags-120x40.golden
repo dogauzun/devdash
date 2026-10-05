@@ -4,14 +4,14 @@ NAME                                          KIND      PORTS           PID   UP
     api  orphaned, cwd deleted                server    8080,8081       200   1d| tags      orphaned: parent exited; now
     go                                        test                      201  30s|           a child of launchd
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            |           cwd deleted: working
-  ▾ zsh                                       shell                     100   5h|           directory deleted
-    ▾ vite (node)                             server    *5173           101   3h| cwd       /src/api
-        esbuild                               other                     102   2h| project   api @ main · this repo
-    claude                                    agent                     103  20m| root      /src/api
-▾ shop (compose) · 2 containers · 2 ports                                       | listeners tcp4 127.0.0.1:8080
-    shop-web-1 (nginx:1.27)                   container *8000                   |           tcp6 [::1]:8081
-    shop-db-1 (postgres:16)                   container *5432           300   4h| next free …
-▸ other · 2 processes · 2 ports                                                 | parents   sshd 1
+  ▾ zsh › vite (node)                         server    *5173           101   3h|           directory deleted
+      esbuild                                 other                     102   2h| cwd       /src/api
+    claude                                    agent                     103  20m| project   api @ main · this repo
+▾ shop (compose) · 2 containers · 2 ports                                       | root      /src/api
+    shop-web-1 (nginx:1.27)                   container *8000                   | listeners tcp4 127.0.0.1:8080
+    shop-db-1 (postgres:16)                   container *5432           300   4h|           tcp6 [::1]:8081
+▸ other · 2 processes · 2 ports                                                 | next free …
+                                                                                | parents   sshd 1
                                                                                 | started   2026-10-01 10:00:00
                                                                                 |           (26 h ago)
                                                                                 | user      me (uid 501)

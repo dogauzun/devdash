@@ -157,7 +157,7 @@ Resolution results are cached per directory path with the mtime of the `.git` en
 
 Within a project group, rows form a tree by ppid, and each process gets one kind from a small ordered rule table; the first matching rule wins.
 
-The tree is built from the snapshot's pid → ppid map, restricted to processes in the same project. A process whose parent is outside the project (or is pid 1 or launchd after a re-parent) becomes a root of that group. Roots are sorted with listeners first, then by start time; children keep their parent's order. Kernel threads on Linux and processes with an empty argv are never rows.
+The tree is built from the snapshot's pid → ppid map, restricted to processes in the same project. A process whose parent is outside the project (or is pid 1 or launchd after a re-parent) becomes a root of that group. Roots are sorted with listeners first, then by start time; children keep their parent's order. Kernel threads on Linux and processes with an empty argv are never rows. The dashboard draws a chain of processes that each have one child as one row (see "TUI design"); JSON and the CLI keep one entry per process.
 
 | Kind | Rule (matched against the basename of argv[0], then the rest of argv) | Examples |
 | --- | --- | --- |
@@ -262,12 +262,14 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 
 **Table.** Columns in priority order: name (indented by tree depth, container rows carry the container name and image), kind, ports (comma-joined, with a leading `*` when bound to every interface), pid, uptime, cpu, mem, user, command (truncated to the remaining width). Below 100 columns cpu, mem and user are dropped; below 90 the command is dropped. Project headers show `name @ branch (worktree)`, the process count and the port count, and collapse with `←`. Groups are ordered by most recent activity (latest start time in the group), `containers` and `other` last.
 
+A chain of processes P1 → … → Pn (n ≥ 2) in one group, where every process before the last has exactly one shown child, the next, is one row (DEV-157): `bash › claude › bash › xargs`, the labels joined by ` › `, at P1's depth, with Pn's children one level below it. The row is Pn's: kind, ports, pid, uptime, cpu, mem, user, command, tags, arguments, detail pane, `o` and `x` (which plans for Pn alone, as on Pn's own row) are the last process's, it is dimmed only when Pn is, and it sorts among its siblings by Pn, or in name mode by the joined label. A process with a listener or a tag, a container's process, a collapsed row and the unknown owner can end a chain but never sit inside one, so no port or tag leaves the table. When the label does not fit the name column, leading links give way to `… › ` and the last label is always kept. The filter matches a folded row when any of its processes would match as its own row. Group headers count processes, not rows.
+
 **Detail pane.** `enter` opens it as a right split at 120 columns or more, otherwise as a full-screen overlay: full argv (wrapped), cwd, project and branch, listeners with bind address, parent chain up to the root, start time, user, and the Docker socket in use when the row is a container.
 
 | Key | Action |
 | --- | --- |
 | `↑` `↓` `j` `k` | move the selection |
-| `←` `→` `h` `l` | collapse or expand a project group or a tree node |
+| `←` `→` `h` `l` | collapse or expand a project group or a tree node; `→` on a folded chain unfolds it, `←` on its first row folds it again |
 | `enter` | open or close the detail pane |
 | `/` | filter by port, name, argv, project, container or tag (Release 1.0); `esc` clears |
 | `0`-`9` | port search: opens the filter with the digit typed and selects the port's holder (Release 1.1) |
@@ -280,7 +282,7 @@ One screen: a header line, a tree table grouped by project, and a footer with ke
 | `?` | help overlay |
 | `q` `ctrl-c` | quit |
 
-**Refresh and selection.** The model keeps the latest snapshot and a flattened row list computed from it. Selection is stored as a row key, `(pid, start_time)` for a process or the project ID for a header, never as an index; after a new snapshot the key is looked up again, and if it is gone the selection moves to the row that now occupies the nearest previous index. Expansion state is a map keyed the same way and survives refreshes. The filter runs on the rows flattened as if nothing were collapsed, so a match inside a collapsed group or under a collapsed tree node is found, and keeps the ancestors of every match visible so the tree never shows a child without its parent. The expansion state is kept and applies again when the filter is cleared; while a filter is set, `←` only moves to the parent row and `→` does nothing. All of this is pure and tested by sending messages to the model and asserting on `View()`.
+**Refresh and selection.** The model keeps the latest snapshot and a flattened row list computed from it. Selection is stored as a row key, `(pid, start_time)` for a process or the project ID for a header, never as an index; after a new snapshot the key is looked up again (a process folded into a chain's row finds that row), and if it is gone the selection moves to the row that now occupies the nearest previous index. Expansion state is a map keyed the same way and survives refreshes, and so is the set of unfolded chains, keyed by their first process. The filter runs on the rows flattened as if nothing were collapsed, so a match inside a collapsed group or under a collapsed tree node is found, and keeps the ancestors of every match visible so the tree never shows a child without its parent. The expansion state is kept and applies again when the filter is cleared; while a filter is set, `←` only moves to the parent row and `→` does nothing. All of this is pure and tested by sending messages to the model and asserting on `View()`.
 
 **Style.** Bubble Tea v2 with Lip Gloss adaptive colours: one accent for the selection, dimmed text for hidden-but-connected rows, a warning colour for `stale` and for permission hints. No emoji, no box-drawing beyond the table borders, and everything readable with colour disabled.
 
@@ -429,8 +431,7 @@ mbp · 2 s ago · 2 projects · 6 listeners · 2 containers · /5173_
 port 5173 · 1 holder · next free 5174
 NAME                                          KIND      PORTS           PID   UP
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
-  ▾ zsh                                       shell                     100   5h
->     vite (node)  --port 5173                server    *5173           101   3h
+>   zsh › vite (node)  --port 5173            server    *5173           101   3h
 ```
 
 That screen is what the user gets even when the shop group was collapsed (`>` marks the selected row, drawn in reverse video).
@@ -445,9 +446,8 @@ NAME                                          KIND      PORTS           PID   UP
     api  !  -addr :8080                       server    8080,8081       200   1d
     go  test ./...                            test                      201  30s
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port
-  ▾ zsh                                       shell                     100   5h
-    ▾ vite (node)  --port 5173                server    *5173           101   3h
-        esbuild  --service=0.21.5 --ping      other                     102   2h
+  ▾ zsh › vite (node)  --port 5173            server    *5173           101   3h
+      esbuild  --service=0.21.5 --ping        other                     102   2h
     claude                                    agent                     103  20m
 ```
 

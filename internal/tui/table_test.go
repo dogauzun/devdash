@@ -169,8 +169,8 @@ func TestTableCells(t *testing.T) {
 		find string
 		want []string
 	}{
-		{"*5173", []string{"    ▾ vite (node) ", " server ", " 101 ", " 3h ", " 12.3 ", " 179M ", " me ", " node node_modules/.bin/vite --port 5173"}},
-		{"esbuild", []string{"        esbuild ", " other ", " 102 ", " 2h ", " 0.5 ", " 50M "}},
+		{"*5173", []string{"  ▾ zsh › vite (node) ", " server ", " 101 ", " 3h ", " 12.3 ", " 179M ", " me ", " node node_modules/.bin/vite --port 5173"}},
+		{"esbuild", []string{"      esbuild ", " other ", " 102 ", " 2h ", " 0.5 ", " 50M "}},
 		{"claude", []string{"    claude ", " agent ", " 103 ", " 20m ", " – "}},
 		{"8080", []string{"    api ", " 8080,8081 ", " 200 ", " 1d "}},
 		{"go test", []string{"    go ", " test ", " 201 ", " 30s "}},
@@ -250,8 +250,14 @@ func TestTableHeaders(t *testing.T) {
 
 func TestTableStyles(t *testing.T) {
 	m, _ := newTest(t, 120, 30)
-	feed(m, fixture())
+	s := fixture()
+	feed(m, s)
 	const faint = "\x1b[2m"
+	if l := rawLine(m, "zsh › vite"); strings.Contains(l, faint) {
+		t.Errorf("zsh folded into node's row makes it faint: %q", l)
+	}
+	s.Processes[3].PPID = 100 // claude: zsh has two children, so it starts no chain and is a row of its own
+	feed(m, s)
 	if l := rawLine(m, "zsh"); !strings.Contains(l, faint) {
 		t.Errorf("hidden-but-connected zsh is not faint: %q", l)
 	}
@@ -376,16 +382,17 @@ func TestTableCollapse(t *testing.T) {
 		t.Errorf("l did not expand shop:\n%s", screen(m))
 	}
 
-	// A tree node: h collapses node (esbuild disappears), h again goes to its parent zsh.
+	// A tree node: h collapses node (esbuild disappears), h again goes to its parent, the
+	// header: zsh is folded into node's row (DEV-157).
 	vite := keyOf(s, 101)
 	selectKey(t, m, vite)
 	press(m, "h")
-	if !m.view.Collapsed[vite] || line(m, "esbuild") != "" || line(m, "▸ vite (node)") == "" {
+	if !m.view.Collapsed[vite] || line(m, "esbuild") != "" || line(m, "▸ zsh › vite (node)") == "" {
 		t.Errorf("h did not collapse node:\n%s", screen(m))
 	}
 	press(m, "h")
-	if m.sel != keyOf(s, 100) {
-		t.Errorf("h on a collapsed node: %+v, want its parent zsh", m.sel)
+	if m.sel != shopHeader {
+		t.Errorf("h on a collapsed node: %+v, want its parent, the shop header", m.sel)
 	}
 	press(m, "down", "right")
 	if m.view.Collapsed[vite] || line(m, "esbuild") == "" {
@@ -418,7 +425,7 @@ func TestTableCollapse(t *testing.T) {
 		t.Errorf("childless collapsed node keeps a marker: %q", l)
 	}
 	feed(m, s)
-	if line(m, "▸ vite (node)") == "" {
+	if line(m, "▸ zsh › vite (node)") == "" {
 		t.Errorf("children back: node is collapsed again:\n%s", screen(m))
 	}
 	press(m, "l")
@@ -680,7 +687,7 @@ func TestTableToolLabels(t *testing.T) {
 	for _, w := range []int{80, 120} {
 		m, _ := newTest(t, w, 30)
 		feed(m, fixture())
-		if l := line(m, "5173"); !strings.Contains(l, "▾ vite (node)") {
+		if l := line(m, "5173"); !strings.Contains(l, "▾ zsh › vite (node)") { // zsh folded into its row (DEV-157)
 			t.Errorf("%d columns: vite's row %q, want the label vite (node)", w, l)
 		}
 		for _, want := range []string{"    claude ", "    shop-db-1 (postgres:16) "} {
@@ -733,8 +740,8 @@ func TestTableArgs(t *testing.T) {
 	for _, want := range []string{
 		"    api  !  -addr :8080 ",
 		"    go  test ./... ",
-		"    ▾ vite (node)  --port 5173 ",
-		"        esbuild  --service=0.21.5 --ping ",
+		"  ▾ zsh › vite (node)  --port 5173 ",
+		"      esbuild  --service=0.21.5 --ping ",
 	} {
 		if !strings.Contains(screen(m), want) {
 			t.Errorf("no row %q:\n%s", want, screen(m))

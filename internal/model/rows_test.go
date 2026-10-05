@@ -24,7 +24,7 @@ func fp(pid, ppid, startSec int, name, project string, kind Kind, ports ...uint1
 var groupNames = map[GroupKind]string{GroupProject: "project", GroupCompose: "compose", GroupContainers: "containers", GroupOther: "other"}
 
 // render draws rows as indented labels: "[project /src/shop]", "api", "zsh (dim)", "proxy@db",
-// "ctr:db".
+// "ctr:db", "zsh › vite" (a folded chain).
 func render(rows []Row) []string {
 	out := make([]string, len(rows))
 	for i, r := range rows {
@@ -33,7 +33,10 @@ func render(rows []Row) []string {
 		case r.Key.Header != GroupNone:
 			s = "[" + strings.TrimSpace(groupNames[r.Key.Header]+" "+r.Key.Group) + "]"
 		case r.Process != nil:
-			s = r.Process.Name
+			for _, l := range r.Links {
+				s += l.Name + ChainSep
+			}
+			s += r.Process.Name
 			if r.Container != nil {
 				s += "@" + r.Container.Name
 			}
@@ -164,6 +167,172 @@ func TestFlattenTree(t *testing.T) {
 				t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
 		})
+	}
+}
+
+// issueChain is GitHub issue #107's tree (DEV-157): a chain of single-child processes from bash
+// to xargs, whose children are sh (then time, with timeout and grep below it) and sleep.
+func issueChain() []Process {
+	const s = "/src/shop"
+	return []Process{
+		fp(10, 1, 0, "bash", s, KindShell),
+		fp(11, 10, 1, "claude", s, KindAgent),
+		fp(12, 11, 2, "bash", s, KindShell),
+		fp(13, 12, 3, "bash", s, KindShell),
+		fp(14, 13, 4, "guard.sh", s, KindShell),
+		fp(15, 14, 5, "run55.sh", s, KindShell),
+		fp(16, 15, 6, "xargs", s, KindOther),
+		fp(17, 16, 7, "sh", s, KindOther),
+		fp(18, 17, 8, "time", s, KindOther),
+		fp(19, 18, 9, "timeout", s, KindOther),
+		fp(20, 19, 10, "lte_scanner", s, KindOther),
+		fp(21, 18, 11, "grep", s, KindOther),
+		fp(22, 16, 12, "sleep", s, KindOther),
+	}
+}
+
+func TestFlattenFold(t *testing.T) {
+	const s = "/src/shop"
+	tagged := fp(31, 30, 1, "b", s, KindOther)
+	tagged.Tags = TagCwdDeleted
+	proxy, kid := fp(60, 1, 0, "proxy", "", KindContainer, 5432), fp(61, 60, 1, "kid", "", KindOther)
+	proxy.ContainerID, kid.ContainerID = "c1", "c1"
+	tests := []struct {
+		name  string
+		procs []Process
+		opts  ViewOptions
+		want  []string
+	}{
+		{
+			name:  "issue 107",
+			procs: issueChain(),
+			want: []string{
+				"[project /src/shop]",
+				"  bash › claude › bash › bash › guard.sh › run55.sh › xargs",
+				"    sh › time",
+				"      timeout › lte_scanner",
+				"      grep",
+				"    sleep",
+			},
+		},
+		{
+			name:  "unfolded chain: one row per process, the last one's children fold",
+			procs: issueChain(),
+			opts:  ViewOptions{Unfolded: map[RowKey]bool{issueChain()[0].Key(): true}},
+			want: []string{
+				"[project /src/shop]",
+				"  bash (dim)", "    claude", "      bash (dim)", "        bash (dim)", "          guard.sh (dim)",
+				"            run55.sh (dim)", "              xargs",
+				"                sh › time",
+				"                  timeout › lte_scanner",
+				"                  grep",
+				"                sleep",
+			},
+		},
+		{
+			name:  "a listener ends a chain",
+			procs: []Process{fp(30, 1, 0, "a", s, KindOther), fp(31, 30, 1, "b", s, KindServer, 3000), fp(32, 31, 2, "c", s, KindOther)},
+			want:  []string{"[project /src/shop]", "  a › b", "    c"},
+		},
+		{
+			name:  "a tag ends a chain",
+			procs: []Process{fp(30, 1, 0, "a", s, KindOther), tagged, fp(32, 31, 2, "c", s, KindOther)},
+			want:  []string{"[project /src/shop]", "  a › b", "    c"},
+		},
+		{
+			name: "a branch ends a chain",
+			procs: []Process{fp(30, 1, 0, "a", s, KindOther), fp(31, 30, 1, "b", s, KindOther),
+				fp(32, 31, 2, "c", s, KindOther), fp(33, 31, 3, "d", s, KindOther)},
+			want: []string{"[project /src/shop]", "  a › b", "    c", "    d"},
+		},
+		{
+			name: "a collapsed process ends a chain",
+			procs: []Process{fp(30, 1, 0, "a", s, KindOther), fp(31, 30, 1, "b", s, KindOther),
+				fp(32, 31, 2, "c", s, KindOther)},
+			opts: ViewOptions{Collapsed: map[RowKey]bool{fp(31, 30, 1, "b", s, KindOther).Key(): true}},
+			want: []string{"[project /src/shop]", "  a › b"},
+		},
+		{
+			name: "a hidden connector is a link; its idle sibling is not shown",
+			procs: []Process{fp(40, 1, 0, "zsh", s, KindShell), fp(41, 40, 1, "vite", s, KindServer, 5173),
+				fp(42, 40, 2, "zsh2", s, KindShell)},
+			want: []string{"[project /src/shop]", "  zsh › vite"},
+		},
+		{
+			name: "show all: the idle shell is a second child",
+			procs: []Process{fp(40, 1, 0, "zsh", s, KindShell), fp(41, 40, 1, "vite", s, KindServer, 5173),
+				fp(42, 40, 2, "zsh2", s, KindShell)},
+			opts: ViewOptions{ShowAll: true},
+			want: []string{"[project /src/shop]", "  zsh", "    vite", "    zsh2"},
+		},
+		{
+			name: "dimmed only when the last process is",
+			procs: []Process{fp(50, 1, 0, "a", s, KindOther), fp(51, 50, 1, "sh", s, KindShell),
+				fp(52, 51, 2, "x", s, KindOther), fp(53, 51, 3, "y", s, KindOther)},
+			want: []string{"[project /src/shop]", "  a › sh (dim)", "    x", "    y"},
+		},
+		{
+			name:  "a process holding a container's ports is never a link",
+			procs: []Process{proxy, kid},
+			want:  []string{"[containers]", "  proxy", "    kid"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.opts.Fold = true
+			snap := Snapshot{Processes: tt.procs, Projects: shop()}
+			rows := Flatten(snap, tt.opts)
+			if got := render(rows); !slices.Equal(got, tt.want) {
+				t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+			for _, r := range rows { // the row is the chain's last process; its links are its ancestors, first to last
+				if len(r.Links) == 0 {
+					continue
+				}
+				chain := append(slices.Clone(r.Links), r.Process)
+				for i := 1; i < len(chain); i++ {
+					if chain[i].PPID != chain[i-1].PID || r.Key != r.Process.Key() {
+						t.Errorf("folded row %q: key %v, links %v", render([]Row{r}), r.Key, r.Links)
+					}
+				}
+			}
+		})
+	}
+	// Without Fold the issue's tree is drawn one row per process, as before DEV-157.
+	if got := Flatten(Snapshot{Processes: issueChain(), Projects: shop()}, ViewOptions{}); len(got) != 14 || got[13].Depth != 8 {
+		t.Errorf("Fold off: %q", render(got))
+	}
+}
+
+// TestFlattenFoldSort: a folded row sorts among its siblings by its last process, and in name
+// mode by the chain's label (DEV-157).
+func TestFlattenFoldSort(t *testing.T) {
+	const s = "/src/shop"
+	cpu := func(p Process, c float64) Process { p.CPUPercent = c; return p }
+	procs := []Process{
+		cpu(fp(10, 1, 0, "zz", s, KindOther), 1),
+		cpu(fp(11, 10, 10, "bb", s, KindServer, 9000), 50), // folded: `zz › bb`
+		cpu(fp(12, 1, 5, "kk", s, KindServer, 9500), 10),
+		cpu(fp(13, 1, -3, "mm", s, KindOther), 5),
+	}
+	tests := []struct {
+		mode SortMode
+		want string
+	}{
+		{SortDefault, "kk,zz › bb,mm"}, // listeners first, then oldest: bb started after kk
+		{SortPort, "zz › bb,kk,mm"},
+		{SortCPU, "zz › bb,kk,mm"},
+		{SortStart, "zz › bb,kk,mm"},
+		{SortName, "kk,mm,zz › bb"},
+	}
+	for _, tt := range tests {
+		var got []string
+		for _, r := range Flatten(Snapshot{Processes: procs, Projects: shop()}, ViewOptions{Sort: tt.mode, Fold: true})[1:] {
+			got = append(got, strings.TrimSpace(render([]Row{r})[0]))
+		}
+		if strings.Join(got, ",") != tt.want {
+			t.Errorf("sort %d: %q, want %s", tt.mode, got, tt.want)
+		}
 	}
 }
 
@@ -377,7 +546,7 @@ func bigSnapshot(n int) Snapshot {
 func TestFlattenDeterministicAndPure(t *testing.T) {
 	snap := bigSnapshot(2000)
 	before := slices.Clone(snap.Processes)
-	for _, opts := range []ViewOptions{{}, {ShowAll: true, Sort: SortCPU}, {Sort: SortPort}, {Sort: SortStart, HideContainers: true}} {
+	for _, opts := range []ViewOptions{{}, {ShowAll: true, Sort: SortCPU}, {Sort: SortPort}, {Sort: SortStart, HideContainers: true}, {Fold: true, Sort: SortName}} {
 		want := render(Flatten(snap, opts))
 		shuffled := snap
 		shuffled.Processes = slices.Clone(snap.Processes)
@@ -570,6 +739,20 @@ func TestMatch(t *testing.T) {
 		if got := Match(r, tt.query); got != tt.want {
 			t.Errorf("Match(%s, %q) = %v, want %v", tt.row, tt.query, got, tt.want)
 		}
+	}
+}
+
+// TestMatchFolded: a folded row matches when one of its processes would as its own row (DEV-157).
+func TestMatchFolded(t *testing.T) {
+	rows := Flatten(Snapshot{Processes: issueChain(), Projects: shop()}, ViewOptions{Fold: true})
+	r := rows[1] // bash › claude › … › xargs
+	for q, want := range map[string]bool{"claude": true, "GUARD": true, "xargs": true, "sleep": false} {
+		if got := Match(r, q); got != want {
+			t.Errorf("Match(%q, %q) = %v, want %v", render([]Row{r}), q, got, want)
+		}
+	}
+	if got := render(Filter(rows, "claude")); !slices.Equal(got, []string{"[project /src/shop]", "  bash › claude › bash › bash › guard.sh › run55.sh › xargs"}) {
+		t.Errorf("Filter(claude) = %q", got)
 	}
 }
 
