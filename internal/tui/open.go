@@ -58,7 +58,7 @@ func (m *Model) openSelected() tea.Cmd {
 	return func() tea.Msg { return openedMsg{url: url, err: open(url)} }
 }
 
-// openPort returns the lowest port of r's process listeners, or when it has none, of its
+// openPort returns the lowest TCP port of r's process (lowestPort), or when it has none, of its
 // container's published TCP ports (a browser cannot use a UDP one); 0 for a header or a row
 // without a port.
 func openPort(r model.Row) int {
@@ -72,13 +72,13 @@ func openPort(r model.Row) int {
 		return 0
 	}
 	if r.Process != nil {
-		for _, l := range r.Process.Listeners {
-			lower(int(l.Port))
+		if p, ok := lowestPort(r.Process); ok {
+			lower(int(p))
 		}
 	}
 	if low == 0 && r.Container != nil {
 		for _, pm := range r.Container.Ports {
-			if pm.Proto == "tcp" {
+			if pm.TCP() {
 				lower(int(pm.HostPort))
 			}
 		}

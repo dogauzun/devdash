@@ -26,7 +26,7 @@ func Reconcile(procs []Process, containers []Container) []Process {
 	byPort := map[uint16][]mapping{}
 	for _, c := range containers {
 		for _, m := range c.Ports {
-			if m.Proto != "tcp" || m.HostPort == 0 {
+			if !m.TCP() || m.HostPort == 0 {
 				continue
 			}
 			byPort[m.HostPort] = append(byPort[m.HostPort], mapping{c.ID, m.HostIP.Unmap()})

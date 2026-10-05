@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"golang.org/x/sys/unix"
 
@@ -25,32 +24,19 @@ func Last(from uint16) uint16 {
 	return uint16(min(int(from)+span-1, 65535))
 }
 
-// Find returns the first port in from..Last(from) that s does not hold (no listener on any
-// address, no container publishing it on any host address, tcp) and that probe reports free;
-// ok is false when none is; err is the first probe error (the search stops there).
+// Find returns the first port in from..Last(from) that has no model.Holders in s (no listener
+// of any proto but UDP, on any address, the unknown owner included; no container publishing
+// it over tcp, on any host address or none) and that probe reports free; ok is false when none
+// is; err is the first probe error (the search stops there).
 //
 // The snapshot comes first because a port published only by iptables (Docker without its
 // userland proxy) has no socket for the probe's bind to hit; the probe catches what the
 // snapshot cannot see, such as another user's listener when devdash runs without root.
 func Find(s model.Snapshot, from uint16, probe Prober) (port uint16, ok bool, err error) {
-	held := map[uint16]bool{}
-	for _, p := range s.Processes {
-		for _, l := range p.Listeners {
-			// Only UDP is skipped (planned for v1.2), so a listener of any other proto holds the port.
-			if !strings.HasPrefix(l.Proto, "udp") {
-				held[l.Port] = true
-			}
-		}
-	}
-	for _, c := range s.Containers {
-		for _, m := range c.Ports {
-			if m.Proto == "tcp" {
-				held[m.HostPort] = true // any host IP, an invalid one (every interface) included
-			}
-		}
-	}
 	for p := int(from); p <= int(Last(from)); p++ {
-		if held[uint16(p)] {
+		// ponytail: one snapshot scan per candidate port, at most 100 per search, off the UI
+		// goroutine; build a held-port set once if snapshots or the span grow.
+		if len(model.Holders(s, uint16(p))) > 0 {
 			continue
 		}
 		free, err := probe(uint16(p))
