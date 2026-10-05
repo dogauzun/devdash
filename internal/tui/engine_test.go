@@ -82,17 +82,33 @@ func TestRunReturnsOnCancel(t *testing.T) {
 }
 
 // runAsked runs the dashboard with S already confirmed by the first message; then, when sig is
-// set, sends sig to this process. With quit, once the process has received sig, it also sends
-// the quit y sends, so the program returns at once, likely before Run's handler has acted on
-// sig. Without quit, Run ends on the signal alone. It fails the test when Run does not return
-// within 5 s.
-func runAsked(t *testing.T, sig syscall.Signal, quit bool) (sudo bool, err error) {
+// set, sends sig to this process. Without late, Run ends on the signal alone. With late, the
+// first message is also the quit y sends, and sig is sent after the program returned, just
+// before Run removes its signal handler (beforeSignalStop), and received by this process before
+// Run goes on. It fails the test when Run does not return within 10 s.
+func runAsked(t *testing.T, sig syscall.Signal, late bool) (sudo bool, err error) {
 	t.Helper()
-	ch := make(chan os.Signal, 1)
+	send := func() {
+		if err := syscall.Kill(os.Getpid(), sig); err != nil {
+			t.Error(err)
+		}
+	}
 	if sig != 0 {
 		// Also delivered here, so a signal Run no longer catches does not end the test binary.
+		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, sig)
 		defer signal.Stop(ch)
+		if late {
+			beforeSignalStop = func() {
+				send()
+				select { // macOS may deliver a signal sent to the process after kill returns
+				case <-ch:
+				case <-time.After(5 * time.Second):
+					t.Errorf("%v not received", sig)
+				}
+			}
+			defer func() { beforeSignalStop = func() {} }()
+		}
 	}
 	first := true
 	filter := tea.WithFilter(func(tm tea.Model, msg tea.Msg) tea.Msg {
@@ -101,22 +117,10 @@ func runAsked(t *testing.T, sig syscall.Signal, quit bool) (sudo bool, err error
 		}
 		first = false
 		tm.(*Model).sudo.asked = true
-		if sig != 0 {
-			if err := syscall.Kill(os.Getpid(), sig); err != nil {
-				t.Error(err)
-			}
-		}
-		if quit {
-			// macOS may deliver a signal sent to the process after kill returns.
-			select {
-			case <-ch:
-			case <-time.After(5 * time.Second):
-				t.Errorf("%v not received", sig)
-			}
-		}
-		if sig == 0 || quit {
+		if sig == 0 || late {
 			return tea.QuitMsg{} // the quit y sends
 		}
+		send()
 		return msg
 	})
 	type result struct {
@@ -133,7 +137,7 @@ func runAsked(t *testing.T, sig syscall.Signal, quit bool) (sudo bool, err error
 	select {
 	case r := <-done:
 		return r.sudo, r.err
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second): // longer than beforeSignalStop's wait, so no t.Errorf comes after the test
 		t.Fatalf("Run did not return on %v", sig)
 		return false, nil
 	}
@@ -157,14 +161,12 @@ func TestRunReturnsOnSignal(t *testing.T) {
 	}
 }
 
-// TestRunSignalWithQuit: a signal sent with y's quit still cancels the sudo request, though the
-// program returns before the signal has cancelled anything (DEV-177).
-func TestRunSignalWithQuit(t *testing.T) {
-	for range 20 {
-		for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
-			if sudo, err := runAsked(t, sig, true); err != nil || sudo {
-				t.Fatalf("Run on %v with y's quit: sudo %v, %v; want false, nil", sig, sudo, err)
-			}
+// TestRunSignalAfterProgram: after y, a signal that arrives once the program has returned, before
+// Run removes its handler, still cancels the sudo request (DEV-177).
+func TestRunSignalAfterProgram(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+		if sudo, err := runAsked(t, sig, true); err != nil || sudo {
+			t.Errorf("Run on %v after the program returned: sudo %v, %v; want false, nil", sig, sudo, err)
 		}
 	}
 }

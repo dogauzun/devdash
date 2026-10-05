@@ -152,6 +152,10 @@ func serialProbe(probe freeport.Prober) freeport.Prober {
 	}
 }
 
+// beforeSignalStop runs in Run after the program returned, just before Run's signal handler is
+// removed: a test sends a signal there, in the window DEV-177 closes.
+var beforeSignalStop = func() {}
+
 // Run starts the dashboard on the terminal and blocks until the user quits, ctx is done or
 // the engine stops. sudo reports that the user confirmed S: the caller reruns devdash under
 // sudo, now that the terminal is restored. SIGINT, SIGTERM and SIGHUP quit like ctrl-c, and
@@ -175,6 +179,7 @@ func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) (sudo bool, 
 	}()
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}, opts...)
 	final, err := tea.NewProgram(New(o), opts...).Run()
+	beforeSignalStop()
 	signal.Stop(sigs) // waits for signals already received to reach sigs
 	close(returned)
 	<-handled
