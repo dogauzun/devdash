@@ -142,19 +142,19 @@ func TestWriteAnswer(t *testing.T) {
 		{"the command is cut to the terminal width", answerFixture(), 5173, 33,
 			"15669  python3  shop  0.0.0.0:5173\n" +
 				"       uvicorn app:main --reload…\n" +
-				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+				"       …, up 3h, this repo, other worktree\n" +
 				"       orphaned, cwd deleted\n" +
 				"next free: 5174\n"},
 		{"a command that fits exactly is not cut", answerFixture(), 5173, 7 + 37, // the command is 37 cells
 			"15669  python3  shop  0.0.0.0:5173\n" +
 				"       uvicorn app:main --reload --port 5173\n" +
-				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+				"       sh…, up 3h, this repo, other worktree\n" +
 				"       orphaned, cwd deleted\n" +
 				"next free: 5174\n"},
 		{"one cell less is cut", answerFixture(), 5173, 7 + 36,
 			"15669  python3  shop  0.0.0.0:5173\n" +
 				"       uvicorn app:main --reload --port 51…\n" +
-				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+				"       s…, up 3h, this repo, other worktree\n" +
 				"       orphaned, cwd deleted\n" +
 				"next free: 5174\n"},
 		{"wide characters count two cells", with(func(s *model.Snapshot) {
@@ -162,7 +162,7 @@ func TestWriteAnswer(t *testing.T) {
 		}), 5173, 7 + 12,
 			"15669  python3  shop  0.0.0.0:5173\n" +
 				"       serve 日本…\n" +
-				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+				"       …, up 3h, this repo, other worktree\n" +
 				"next free: 5174\n"},
 		{"an absolute argv[0] by its basename (DEV-146)", with(func(s *model.Snapshot) {
 			proc(s).Name, proc(s).Tags = "Python", 0
@@ -181,6 +181,14 @@ func TestWriteAnswer(t *testing.T) {
 				"       uvicorn app:main --reload --port…\n" +
 				"       …c0719ffa45/fx/shop-search, up 3h\n" +
 				"       cwd deleted\n" +
+				"next free: 5174\n"},
+		{"a long project label keeps its start, the uptime and the marker on the line (DEV-171)", with(func(s *model.Snapshot) {
+			s.Projects[1].Branch = "feature/very-long-branch-name-for-the-login-rewrite"
+			proc(s).Tags = 0
+		}), 5173, 80,
+			"15669  python3  shop  0.0.0.0:5173\n" +
+				"       uvicorn app:main --reload --port 5173\n" +
+				"       shop @ feature/very-long-branch-name-f…, up 3h, this repo, other worktree\n" +
 				"next free: 5174\n"},
 		{"a cwd that fits exactly is not cut", with(func(s *model.Snapshot) {
 			proc(s).ProjectID, proc(s).Tags, proc(s).Cwd = "", 0, "/wt/shop-login"
@@ -242,16 +250,19 @@ func TestWriteAnswer(t *testing.T) {
 // TestWriteAnswerNextFree: the next free port is the search `devdash free N+1` makes, with the
 // snapshot's holders skipped; none in range names the range; a probe that fails leaves the line
 // out, says why on stderr and keeps exit 0 (DEV-114); a free port is answered without a search.
-// TestHolderLinesWideCwd: a cwd cut on the left fits the terminal even when the cut lands
-// inside a two-cell character (DEV-146).
-func TestHolderLinesWideCwd(t *testing.T) {
+// TestHolderLinesWideWhere: a cwd cut on the left (DEV-146) and a project label cut on the
+// right (DEV-171) fit the terminal even when the cut lands inside a two-cell character.
+func TestHolderLinesWideWhere(t *testing.T) {
 	p := answerFixture().Processes[0]
 	p.ProjectID, p.Cwd = "", "/home/u/日本語のディレクトリ/プロジェクト"
-	for width := 15; width <= 60; width++ { // from 15 the where line has a cell for "…"
-		lines := holderLines(p, nil, nil, answerFixture().TakenAt, width)
-		where := lines[1]
-		if w := len(detailIndent) + ansi.StringWidth(where); w > width || !strings.HasSuffix(where, ", up 3h") {
-			t.Errorf("width %d: where line %q is %d cells", width, where, w)
+	pr := &model.Project{ID: "/home/u/店", Name: "店", Branch: "機能/ログイン画面の作り直し", Worktree: true}
+	for _, pr := range []*model.Project{nil, pr} {
+		for width := 15; width <= 60; width++ { // from 15 the where line has a cell for "…"
+			lines := holderLines(p, pr, nil, answerFixture().TakenAt, width)
+			where := lines[1]
+			if w := len(detailIndent) + ansi.StringWidth(where); w > width || !strings.HasSuffix(where, ", up 3h") {
+				t.Errorf("width %d: where line %q is %d cells", width, where, w)
+			}
 		}
 	}
 }
