@@ -223,6 +223,25 @@ func TestTool(t *testing.T) {
 		{argv: "npx -n --inspect vite", tool: "vite"},
 		{argv: "npx -n vite"}, // npx drops the removed -n with its value
 		{argv: "fish +o", tool: "+o"},
+		// npx's --registry, -w, --workspace, --prefix and --loglevel take a value (npm's config
+		// definitions); bun picks its subcommand as the first argument not starting with -, so
+		// after a value flag's value x is the script bun runs (run it still strips), and the
+		// flags before x are read by bunx too; fish's lone - is its script, the other shells'
+		// ends their options (DEV-200).
+		{argv: "npx --registry http://localhost:4873 vite", tool: "vite"},
+		{argv: "npx -w web vite", tool: "vite"},
+		{argv: "npx --workspace web vite", tool: "vite"},
+		{argv: "npx --prefix ./web vite", tool: "vite"},
+		{argv: "npx --loglevel warn vite", tool: "vite"},
+		{argv: "bun --bun x vite", tool: "vite"},
+		{argv: "bun --bun x --package @angular/cli ng", tool: "ng"},
+		{argv: "bun --preload=./p.ts x vite", tool: "vite"},
+		{argv: "bun -r ./p.ts x vite", tool: "x", args: "vite"},
+		{argv: "bun -r ./p.ts x --package cli ng", tool: "x", args: "--package cli ng"},
+		{argv: "bun --preload ./p.ts run dev", tool: "dev"},
+		{argv: "fish - a", tool: "-", args: "a"},
+		{argv: "fish -n -- -", tool: "-"},
+		{argv: "bash - script.sh", tool: "script.sh"},
 		{argv: "fish -n +x args", tool: "+x", args: "args"},
 		// python's -m takes its module attached too, a flag of its own for other interpreters;
 		// bun's run and x are subcommands, the tool follows them (DEV-153).
@@ -307,6 +326,7 @@ func TestToolMatchesClassify(t *testing.T) {
 		"npx -p jest-cli jest", "npx --package @vitest/ui vitest", "bunx -p x Jest --ci", "ruby -r json /usr/local/bin/rspec",
 		"bun -r ./x.ts jest.ts", "bun --preload ./x.ts vitest", "bun --import x run jest", "node --env-file-if-exists .env nodemon.js",
 		"bun x -p jest-cli Jest", "bun x --package x vitest", "npx --cache /tmp/c jest", "npx -n --inspect nodemon",
+		"npx -w web Jest", "bun --bun x vitest", "bun -r ./p.ts x jest", "bun --preload ./p.ts run Jest.ts",
 	} {
 		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
 		for i := range argv {
