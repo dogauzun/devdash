@@ -22,6 +22,27 @@ func TestProjectLabel(t *testing.T) {
 	}
 }
 
+// TestProcessLabel: a shell's script is labelled after the shell on both systems, though Linux
+// names the process of a #! script after the script (DEV-159).
+func TestProcessLabel(t *testing.T) {
+	for _, tt := range []struct {
+		name, want string
+		argv       []string
+	}{
+		{"node", "vite (node)", []string{"node", "node_modules/.bin/vite"}},
+		{"Python", "http.server (Python)", []string{"python3", "-mhttp.server"}},
+		{"bash", "link.sh (bash)", []string{"/bin/bash", "./link.sh", "4"}},    // macOS
+		{"link.sh", "link.sh (bash)", []string{"/bin/bash", "./link.sh", "4"}}, // Linux
+		{"a-very-long-scr", "a-very-long-script.sh (sh)", []string{"/bin/sh", "./a-very-long-script.sh"}},
+		{"bash", "bash", []string{"bash", "-c", "make"}},
+		{"zsh", "zsh", nil},
+	} {
+		if got := (Process{PID: 42, Name: tt.name, Argv: tt.argv}).Label(); got != tt.want {
+			t.Errorf("%q %q: Label() = %q, want %q", tt.name, tt.argv, got, tt.want)
+		}
+	}
+}
+
 func TestUptime(t *testing.T) {
 	for d, want := range map[time.Duration]string{
 		-time.Second: "0s", 0: "0s", 45 * time.Second: "45s", time.Minute: "1m", 59*time.Minute + 59*time.Second: "59m",
