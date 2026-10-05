@@ -3,7 +3,6 @@ package tui
 import (
 	"errors"
 	"reflect"
-	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -106,32 +105,6 @@ func newKillTest(t *testing.T, w, h int, s model.Snapshot) (*Model, *fakeSource,
 	m, src := newTest(t, w, h, func(o *Options) { o.Plan, o.Kill = fp.plan, fk.kill })
 	feed(m, s)
 	return m, src, fp, fk
-}
-
-// selectRow moves the selection down to the row with key k.
-func selectRow(t *testing.T, m *Model, k model.RowKey) {
-	t.Helper()
-	for range 100 {
-		if m.sel == k {
-			return
-		}
-		press(m, "down")
-	}
-	t.Fatalf("row %+v not reachable", k)
-}
-
-// scroll sends key presses like press, plus "pgup" and "pgdown", which press does not know.
-func scroll(m *Model, keys ...string) {
-	for _, k := range keys {
-		switch k {
-		case "pgup":
-			m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
-		case "pgdown":
-			m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-		default:
-			press(m, k)
-		}
-	}
 }
 
 // run executes cmd as the program would and delivers its message.
@@ -764,7 +737,7 @@ func TestKillScroll(t *testing.T) {
 	if line(m, "pids 2-19 of 40") == "" {
 		t.Errorf("k did not scroll up:\n%s", screen(m))
 	}
-	scroll(m, "pgdown", "pgdown", "pgdown", "down")
+	press(m, "pgdown", "pgdown", "pgdown", "down")
 	if line(m, "pids 23-40 of 40") == "" || line(m, "1037 ") == "" || line(m, "1020 ") == "" || line(m, "1019 ") != "" {
 		t.Errorf("not at the end after paging past it:\n%s", screen(m))
 	}
@@ -772,11 +745,11 @@ func TestKillScroll(t *testing.T) {
 	if line(m, "pids 22-39 of 40") == "" {
 		t.Errorf("one up from the end:\n%s", screen(m))
 	}
-	scroll(m, "pgup", "pgup", "pgup")
+	press(m, "pgup", "pgup", "pgup")
 	if line(m, "pids 1-18 of 40") == "" {
 		t.Errorf("not at the top after paging past it:\n%s", screen(m))
 	}
-	scroll(m, "pgdown")
+	press(m, "pgdown")
 	if len(fp.calls) != 2 || !m.kill.active() {
 		t.Fatal("scrolling re-planned or closed the modal")
 	}
@@ -799,18 +772,18 @@ func TestKillScrollResets(t *testing.T) {
 		return outcomes(p, func(model.Process) engine.Outcome { return engine.Outcome{Signalled: true} }), nil
 	})
 	selectRow(t, m, keyOf(s, 101))
-	scroll(m, "x", "t", "pgdown")
+	press(m, "x", "t", "pgdown")
 	press(m, "f") // a re-plan starts at the top
 	if line(m, "pids 1-18 of 40") == "" {
 		t.Errorf("re-plan kept the scroll:\n%s", screen(m))
 	}
-	scroll(m, "pgdown")
+	press(m, "pgdown")
 	run(t, m, press(m, "enter"))
 	// Every pid survived: the report scrolls too, from the top.
 	if line(m, "0 of 40 processes exited") == "" || !strings.Contains(line(m, "of 40, ↑↓ to scroll"), "pids 1-") {
 		t.Fatalf("survivor report does not start at the top:\n%s", screen(m))
 	}
-	scroll(m, "pgdown", "pgdown", "pgdown")
+	press(m, "pgdown", "pgdown", "pgdown")
 	if !strings.Contains(line(m, "of 40, ↑↓ to scroll"), "-40 of 40") || line(m, "1037 ") == "" {
 		t.Errorf("survivor report does not scroll to the end:\n%s", screen(m))
 	}
@@ -823,12 +796,6 @@ func TestKillScrollResets(t *testing.T) {
 // now); a negative d is a snapshot started before it.
 func afterKill(s model.Snapshot, d time.Duration) model.Snapshot {
 	s.TakenAt = now.Add(d)
-	return s
-}
-
-// without returns s without the processes with pids.
-func without(s model.Snapshot, pids ...int) model.Snapshot {
-	s.Processes = slices.DeleteFunc(slices.Clone(s.Processes), func(p model.Process) bool { return slices.Contains(pids, p.PID) })
 	return s
 }
 
@@ -861,11 +828,11 @@ func TestKillResultPorts(t *testing.T) {
 		t.Fatalf("status %q, want %q", got, want)
 	}
 	// A snapshot that started before the kill finished may still list vite: not reported.
-	feed(m, afterKill(without(s, 101, 102), -time.Millisecond))
+	feed(m, afterKill(drop(s, 101, 102), -time.Millisecond))
 	if got, want := status(m), "killed 2 processes"; got != want {
 		t.Errorf("a snapshot from before the kill finished: %q, want %q", got, want)
 	}
-	feed(m, afterKill(without(s, 101, 102), time.Second))
+	feed(m, afterKill(drop(s, 101, 102), time.Second))
 	if got, want := status(m), "killed 2 processes · 5173 free"; got != want {
 		t.Errorf("status %q, want %q", got, want)
 	}
@@ -878,7 +845,7 @@ func TestKillResultPorts(t *testing.T) {
 	// A forked child holds the port, by its label and pid, and a container publishes it, by
 	// its name; comma-joined in snapshot order.
 	m = killed(t, s, 101)
-	after := without(s, 101)
+	after := drop(s, 101)
 	child := model.Process{PID: 105, PPID: 1, StartTime: at(time.Hour), UID: 501, Name: "node", ProjectID: shopID,
 		Argv: []string{"node", "node_modules/.bin/vite"}, Listeners: []model.Listener{lis("tcp6", "::", 5173)}}
 	after.Processes = append(after.Processes, child)
@@ -893,7 +860,7 @@ func TestKillResultPorts(t *testing.T) {
 	s2 := fixture()
 	s2.Processes[4].Listeners = []model.Listener{lis("tcp6", "::1", 8081), lis("tcp4", "127.0.0.1", 8080), lis("udp4", "0.0.0.0", 8125)}
 	m = killed(t, s2, 200)
-	after = without(s2, 200)
+	after = drop(s2, 200)
 	after.Processes[len(after.Processes)-1].Listeners = append(after.Processes[len(after.Processes)-1].Listeners, lis("tcp4", "0.0.0.0", 8081))
 	feed(m, afterKill(after, time.Second))
 	if got, want := status(m), "killed 1 process · 8080 free · 8081 still held by unknown owner"; got != want {
@@ -902,7 +869,7 @@ func TestKillResultPorts(t *testing.T) {
 
 	// No port held: the status stays as it was.
 	m = killed(t, s, 103)
-	feed(m, afterKill(without(s, 103), time.Second))
+	feed(m, afterKill(drop(s, 103), time.Second))
 	if got, want := status(m), "killed 1 process"; got != want {
 		t.Errorf("status %q, want %q", got, want)
 	}
@@ -930,7 +897,7 @@ func TestKillResultPorts(t *testing.T) {
 			selectRow(t, m, keyOf(withPort, 101))
 			press(m, "x", "t")
 			run(t, m, press(m, "enter"))
-			feed(m, afterKill(without(withPort, 101, 102), time.Second))
+			feed(m, afterKill(drop(withPort, 101, 102), time.Second))
 			if got := status(m); got != c.want {
 				t.Errorf("status %q, want %q", got, c.want)
 			}
@@ -949,7 +916,7 @@ func TestKillResultPorts(t *testing.T) {
 	press(m, "x", "t")
 	run(t, m, press(m, "enter"))
 	run(t, m, press(m, "f"))
-	feed(m, afterKill(without(withPort, 101, 102), time.Second))
+	feed(m, afterKill(drop(withPort, 101, 102), time.Second))
 	if got, want := status(m), "killed 2 processes · 5173 free · 5174 free"; got != want {
 		t.Errorf("after the force round: %q, want %q", got, want)
 	}
@@ -971,7 +938,7 @@ func TestKillResultKeyClears(t *testing.T) {
 	s := fixture()
 	m := killed(t, s, 101, "t")
 	press(m, "down")
-	feed(m, afterKill(without(s, 101, 102), time.Second))
+	feed(m, afterKill(drop(s, 101, 102), time.Second))
 	if got := status(m); got != "" || line(m, "5173 free") != "" {
 		t.Errorf("status %q after a key:\n%s", got, screen(m))
 	}
@@ -986,7 +953,7 @@ func TestKillResultKeyClears(t *testing.T) {
 	selectRow(t, m, keyOf(s, 101))
 	press(m, "x", "t")
 	run(t, m, press(m, "enter"))
-	feed(m, afterKill(without(s, 101), time.Second))
+	feed(m, afterKill(drop(s, 101), time.Second))
 	if !m.kill.active() || line(m, "5173") != "" {
 		t.Errorf("survivors: modal open %v\n%s", m.kill.active(), screen(m))
 	}

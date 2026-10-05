@@ -130,7 +130,7 @@ func TestFoldLabelHiddenLinks(t *testing.T) {
 	press(m, "a")
 
 	// → on the row that shows one name has nothing to unfold: the view hides zsh (DEV-193).
-	selectKey(t, m, viteKey)
+	selectRow(t, m, viteKey)
 	press(m, "right")
 	if len(m.unfolded) != 0 || line(m, "▾ zsh") != "" || !strings.HasPrefix(line(m, "vite"), "    vite ") || m.sel != viteKey {
 		t.Fatalf("right on a one-name row (unfolded %v):\n%s", m.unfolded, screen(m))
@@ -140,7 +140,7 @@ func TestFoldLabelHiddenLinks(t *testing.T) {
 	if !m.unfolded[zsh] || !strings.HasPrefix(line(m, "zsh"), "  ▾ zsh ") || !strings.HasPrefix(line(m, "vite"), "      vite ") {
 		t.Fatalf("with a, right did not unfold the chain:\n%s", screen(m))
 	}
-	selectKey(t, m, zsh)
+	selectRow(t, m, zsh)
 	press(m, "left", "a")
 	if m.unfolded[zsh] || m.sel != viteKey || !strings.HasPrefix(line(m, "vite"), "    vite ") {
 		t.Fatalf("left did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
@@ -206,7 +206,7 @@ func TestFoldKeys(t *testing.T) {
 	xargs, bash, claude := keyOf(s, 16), keyOf(s, 10), keyOf(s, 11)
 
 	// → on a folded row that is collapsed expands it first; a second → unfolds it.
-	selectKey(t, m, xargs)
+	selectRow(t, m, xargs)
 	press(m, "left")
 	if !m.view.Collapsed[xargs] || line(m, "▸ "+chainLine) == "" || line(m, "sleep") != "" {
 		t.Fatalf("left did not collapse the folded row:\n%s", screen(m))
@@ -226,13 +226,13 @@ func TestFoldKeys(t *testing.T) {
 	}
 
 	// ← on the first row folds the chain again and selects the folded row; elsewhere it collapses.
-	selectKey(t, m, claude)
+	selectRow(t, m, claude)
 	press(m, "left")
 	if len(m.unfolded) != 0 || line(m, "▾ "+chainLine) == "" || m.sel != xargs {
 		t.Fatalf("left on the first row did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
 	}
 	press(m, "a", "right")
-	selectKey(t, m, claude)
+	selectRow(t, m, claude)
 	press(m, "left")
 	if !m.view.Collapsed[claude] || !m.unfolded[bash] || line(m, "▸ claude") == "" {
 		t.Fatalf("left on a link of an unfolded chain did not collapse it:\n%s", screen(m))
@@ -275,7 +275,7 @@ func TestFoldUnfoldHiddenLinks(t *testing.T) {
 		d := len(top)
 		return append(top, strconv.Itoa(d+1)+" "+below[0], strconv.Itoa(d+2)+" "+below[1], strconv.Itoa(d+2)+" "+below[2], strconv.Itoa(d+1)+" "+below[3])
 	}
-	selectKey(t, m, keyOf(s, 16))
+	selectRow(t, m, keyOf(s, 16))
 	press(m, "right")
 	for _, step := range []struct {
 		name string
@@ -293,7 +293,7 @@ func TestFoldUnfoldHiddenLinks(t *testing.T) {
 			t.Errorf("%s: rows %q, want %q\n%s", step.name, got, step.want, screen(m))
 		}
 	}
-	selectKey(t, m, keyOf(s, 11))
+	selectRow(t, m, keyOf(s, 11))
 	press(m, "left")
 	if got := rows(); len(m.unfolded) != 0 || len(got) == 0 || got[0] != "1 bash › claude › bash › bash › guard.sh › run55.sh › xargs" || m.sel != keyOf(s, 16) {
 		t.Errorf("left on claude did not fold the chain: rows %q, unfolded %v, sel %+v", got, m.unfolded, m.sel)
@@ -309,9 +309,9 @@ func TestFoldUnfoldHiddenSelection(t *testing.T) {
 		m, _ := newTest(t, 160, 30)
 		feed(m, s)
 		press(m, "a")
-		selectKey(t, m, keyOf(s, 16))
+		selectRow(t, m, keyOf(s, 16))
 		press(m, "right")
-		selectKey(t, m, keyOf(s, pid))
+		selectRow(t, m, keyOf(s, pid))
 		press(m, "a")
 		if m.sel != keyOf(s, 11) {
 			t.Errorf("bash %d hidden: selection %+v, want claude 11\n%s", pid, m.sel, screen(m))
@@ -334,7 +334,7 @@ func TestFoldUnfoldOneName(t *testing.T) {
 	m, _ := newTest(t, 160, 30)
 	feed(m, s)
 	press(m, "a")
-	selectKey(t, m, keyOf(s, 31))
+	selectRow(t, m, keyOf(s, 31))
 	press(m, "right")
 	for _, step := range []struct {
 		name string
@@ -355,7 +355,7 @@ func TestFoldUnfoldOneName(t *testing.T) {
 
 	m, _ = newTest(t, 160, 30)
 	feed(m, s)
-	selectKey(t, m, keyOf(s, 31))
+	selectRow(t, m, keyOf(s, 31))
 	press(m, "right", "a")
 	if unfolded(m) || len(m.unfolded) != 0 {
 		t.Errorf("→ on the one-name row unfolded the chain: unfolded %v\n%s", m.unfolded, screen(m))
@@ -366,7 +366,7 @@ func TestFoldUnfoldedSurvivesRefresh(t *testing.T) {
 	s := chainFixture()
 	m, _ := newTest(t, 160, 30)
 	feed(m, s)
-	selectKey(t, m, keyOf(s, 16))
+	selectRow(t, m, keyOf(s, 16))
 	press(m, "right")
 	feed(m, chainFixture())
 	if line(m, chainLine) != "" || line(m, "▾ claude") == "" || m.sel != keyOf(s, 16) {
@@ -464,7 +464,7 @@ func TestFoldSelection(t *testing.T) {
 	m, _ := newTest(t, 160, 30)
 	feed(m, s)
 	claude := keyOf(s, 11)
-	selectKey(t, m, claude)
+	selectRow(t, m, claude)
 	if r, _ := m.selected(); len(r.Links) != 1 || line(m, "  ▾ claude ") == "" {
 		t.Fatalf("selected %+v:\n%s", r, screen(m))
 	}
@@ -724,7 +724,7 @@ func TestFoldKillTreeResult(t *testing.T) {
 	if m.kill.active() || status(m) != "killed 12 processes" {
 		t.Fatalf("modal open or status %q:\n%s", status(m), screen(m))
 	}
-	feed(m, afterKill(without(s, lteTree...), time.Second))
+	feed(m, afterKill(drop(s, lteTree...), time.Second))
 	if got, want := status(m), "killed 12 processes · 9000 free"; got != want {
 		t.Errorf("status %q, want %q", got, want)
 	}

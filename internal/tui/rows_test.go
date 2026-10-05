@@ -29,14 +29,6 @@ var (
 	webKey            = model.RowKey{ContainerID: "4e5d6c7b8a90"}
 )
 
-// drop returns s without the processes with the given pids (0 drops the unknown owner).
-func drop(s model.Snapshot, pids ...int) model.Snapshot {
-	s.Processes = slices.DeleteFunc(slices.Clone(s.Processes), func(p model.Process) bool {
-		return slices.Contains(pids, p.PID)
-	})
-	return s
-}
-
 // notHere returns s with no Here project, so the groups follow the activity order alone.
 func notHere(s model.Snapshot) model.Snapshot {
 	s.Projects = slices.Clone(s.Projects)
@@ -51,15 +43,6 @@ func withoutAPI(s model.Snapshot) model.Snapshot {
 	s = drop(s, 200, 201, 202)
 	s.Projects = slices.DeleteFunc(slices.Clone(s.Projects), func(p model.Project) bool { return p.ID == apiID })
 	return s
-}
-
-// rowsKeys returns the keys of the rows the table shows.
-func rowsKeys(m *Model) []model.RowKey {
-	ks := make([]model.RowKey, len(m.rows))
-	for i, r := range m.rows {
-		ks[i] = r.Key
-	}
-	return ks
 }
 
 // rowsSelect moves the selection onto k with the arrow keys.

@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,13 +84,43 @@ func openOther(m *Model) {
 }
 
 // press sends key presses: single characters ("j", "/", "?"), or names ("up", "down",
-// "left", "right", "enter", "esc", "backspace", "ctrl+c"). It returns the last command.
+// "left", "right", "pgup", "pgdown", "home", "end", "enter", "esc", "backspace", "ctrl+c").
+// It returns the last command.
 func press(m *Model, keys ...string) tea.Cmd {
 	var cmd tea.Cmd
 	for _, k := range keys {
 		_, cmd = m.Update(key(k))
 	}
 	return cmd
+}
+
+// selectRow moves the selection onto the row with key k directly, as moveTo does: no key
+// press, so the status is not cleared and the detail pane asks for nothing. A test about
+// the key path selects with rowsSelect.
+func selectRow(t *testing.T, m *Model, k model.RowKey) {
+	t.Helper()
+	i := slices.Index(rowsKeys(m), k)
+	if i < 0 {
+		t.Fatalf("selectRow: %+v is not a row", k)
+	}
+	m.moveTo(i)
+}
+
+// rowsKeys returns the keys of the rows the table shows.
+func rowsKeys(m *Model) []model.RowKey {
+	ks := make([]model.RowKey, len(m.rows))
+	for i, r := range m.rows {
+		ks[i] = r.Key
+	}
+	return ks
+}
+
+// drop returns s without the processes with the given pids (0 drops the unknown owner).
+func drop(s model.Snapshot, pids ...int) model.Snapshot {
+	s.Processes = slices.DeleteFunc(slices.Clone(s.Processes), func(p model.Process) bool {
+		return slices.Contains(pids, p.PID)
+	})
+	return s
 }
 
 // typeText sends each rune of s as a key press.
@@ -109,6 +140,14 @@ func key(k string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
 		return tea.KeyPressMsg{Code: tea.KeyRight}
+	case "pgup":
+		return tea.KeyPressMsg{Code: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyPressMsg{Code: tea.KeyPgDown}
+	case "home":
+		return tea.KeyPressMsg{Code: tea.KeyHome}
+	case "end":
+		return tea.KeyPressMsg{Code: tea.KeyEnd}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "esc":
