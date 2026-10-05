@@ -55,6 +55,9 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 		fmt.Fprintln(stderr, "devdash:", err)
 		return exitFailed
 	}
+	// Every name kill prints, the engine's refusals included, comes from s or after, so both are
+	// cleaned, piped or not (DEV-150). Plans match processes by pid and start time, which Clean keeps.
+	s = cleanText(s)
 	ts := targets(s, port)
 	if len(ts) == 0 {
 		return write(stdout, stderr, fmt.Sprintf("nothing listens on port %d\n", port), 0)
@@ -161,7 +164,9 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	// A socket shared after fork is credited to the lowest pid only (DEV-45), so a forked
 	// child can still hold the port. It is reported but does not change the exit code, which
 	// is about the processes that were signalled.
-	if after, err := snapshotFn(ctx, eo); err != nil {
+	after, err := snapshotFn(ctx, eo)
+	after = cleanText(after)
+	if err != nil {
 		fmt.Fprintln(stderr, "devdash: cannot check the port again:", err)
 	} else if held := targets(after, port); len(held) > 0 {
 		var who []string
