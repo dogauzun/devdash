@@ -161,6 +161,71 @@ func TestFoldFilter(t *testing.T) {
 	}
 }
 
+// TestFoldSearchHiddenLast: a search flattens with every row shown, so a chain can end in a
+// process the view hides. With nothing kept below it and no match of its own, the row is cut
+// back to its last process the view shows or that matches, drawn as that process; with a kept
+// row below it, it is dimmed as the plain view draws it.
+//
+//	claude 11 → bash 12 (idle)      the view shows claude
+//	zsh 13 → bash 14 (idle)         the view shows neither
+//	node 20 → sh 21 → x 22, y 23    the view shows node › sh, dimmed, then x and y
+func TestFoldSearchHiddenLast(t *testing.T) {
+	s := chainFixture()
+	proc := func(pid, ppid int, name string, kind model.Kind) model.Process {
+		p := s.Processes[0]
+		p.PID, p.PPID, p.Name, p.Argv, p.Kind = pid, ppid, name, []string{name}, kind
+		p.StartTime = at(time.Hour - time.Duration(pid)*time.Second)
+		return p
+	}
+	s.Processes = []model.Process{
+		proc(11, 9, "claude", model.KindAgent), proc(12, 11, "bash", model.KindShell),
+		proc(13, 9, "zsh", model.KindShell), proc(14, 13, "bash", model.KindShell),
+		proc(20, 9, "node", model.KindOther), proc(21, 20, "sh", model.KindShell),
+		proc(22, 21, "x", model.KindOther), proc(23, 21, "y", model.KindOther),
+	}
+	// draw is a row as the test reads it: its processes' names, and "(dim)" when dimmed.
+	draw := func(r model.Row) string {
+		if r.Process == nil {
+			return "[" + r.Project.Name + "]"
+		}
+		var names []string
+		for _, l := range r.Links {
+			names = append(names, l.Name)
+		}
+		d := strings.Join(append(names, r.Process.Name), " › ")
+		if r.Dimmed {
+			d += " (dim)"
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{"[lte-scanner]", "claude", "node › sh (dim)", "x", "y"}},
+		{"lte", []string{"[lte-scanner]", "claude", "node › sh (dim)", "x", "y"}}, // the header alone matches
+		{"claude", []string{"[lte-scanner]", "claude"}},                           // a link the view shows
+		{"zsh", []string{"[lte-scanner]", "zsh"}},                                 // a link the view hides
+		{"bash", []string{"[lte-scanner]", "claude › bash", "zsh › bash"}},        // the last process itself
+		{"node", []string{"[lte-scanner]", "node"}},
+		{"x", []string{"[lte-scanner]", "node › sh (dim)", "x"}},
+	} {
+		m, _ := newTest(t, 160, 30)
+		feed(m, s)
+		if tc.query != "" {
+			press(m, "/")
+			typeText(m, tc.query)
+		}
+		var got []string
+		for _, r := range m.rows {
+			got = append(got, draw(r))
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("/%s: rows %q, want %q\n%s", tc.query, got, tc.want, screen(m))
+		}
+	}
+}
+
 func TestFoldSelection(t *testing.T) {
 	// watch 23 is claude's second child, so the first chain ends at claude.
 	s := chainFixture()
