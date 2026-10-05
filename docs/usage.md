@@ -194,10 +194,10 @@ Prints the version, the commit, and the commit's date (labelled `built`: the com
 the build time). Exits 0. What a binary knows depends on how it was built:
 
 - Release archives and the Homebrew cask (which installs the archive's binary) record all three:
-  `devdash v1.1.0 (commit dbadac7e5ba856d776e36251559b8abd03de2654, built 2026-10-04T10:31:26Z)`.
-- `go install github.com/dogauzun/devdash/cmd/devdash@latest` (or `@v1.1.0`) records the
+  `devdash v1.2.0 (commit 6dd088ce7c82cb5cdcd36b24d5d27fbb7c4cc664, built 2026-10-05T15:39:14Z)`.
+- `go install github.com/dogauzun/devdash/cmd/devdash@latest` (or `@v1.2.0`) records the
   version only, since a module from the proxy carries no git data:
-  `devdash v1.1.0 (commit none, built unknown)`.
+  `devdash v1.2.0 (commit none, built unknown)`.
 - `make build`, `go build` or `go install` inside a git checkout record the commit and its time,
   with a Go pseudo-version as the version; uncommitted changes add `+dirty` to the version and
   `-dirty` to the commit:
