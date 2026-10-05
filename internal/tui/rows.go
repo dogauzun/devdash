@@ -21,7 +21,8 @@ import (
 // keys are kept and apply again once the filter is cleared. They are also flattened with
 // every row the view toggles hide shown (shells and editors without `a`, container rows with
 // `d`), so `/zsh` finds a shell the view hides (Release 1.1, "Search"); searchHidden then keeps
-// only the hidden rows the query reaches.
+// only the hidden rows the query reaches. Shells and editors are shown by Search, not ShowAll,
+// so a folded row still sorts by name as the plain view labels it (DEV-160).
 //
 // A selected process folded into a chain's row (model.ViewOptions.Fold) selects that row, and
 // the row's key becomes the selection (DEV-157). Otherwise, when the key is gone the selection
@@ -36,7 +37,7 @@ func (m *Model) rebuild() {
 	m.pruneCollapsed()
 	view := m.view
 	if m.filter != "" {
-		view.Collapsed, view.ShowAll, view.HideContainers = nil, true, false
+		view.Collapsed, view.Search, view.HideContainers = nil, true, false
 	}
 	m.all = model.Flatten(m.upd.Snapshot, view)
 	m.rows = model.Filter(m.all, m.filter)

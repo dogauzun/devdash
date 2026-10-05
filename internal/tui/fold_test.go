@@ -140,6 +140,24 @@ func TestFoldLabelHiddenLinks(t *testing.T) {
 		t.Fatalf("left did not fold the chain (sel %+v):\n%s", m.sel, screen(m))
 	}
 
+	// Name sort orders by the label of the plain view, with a filter set too: the search
+	// flattens with every row shown, yet `vite` still sorts before `watch`.
+	w := proc(50, 9, "watch", model.KindOther)
+	sorted := s
+	sorted.Processes = append([]model.Process{w}, s.Processes[:2]...)
+	for _, query := range []string{"", "lte"} {
+		m, _ := newTest(t, 160, 30)
+		m.view.Sort = model.SortName
+		feed(m, sorted)
+		if query != "" {
+			press(m, "/")
+			typeText(m, query)
+		}
+		if v, w := lineIndex(m, "*5173"), lineIndex(m, "watch"); v < 0 || w < 0 || v > w {
+			t.Errorf("/%s: name sort puts vite after watch:\n%s", query, screen(m))
+		}
+	}
+
 	// A filter draws a hidden link that matches it.
 	for _, tc := range []struct{ query, want string }{
 		{"zsh", "    zsh › vite "},

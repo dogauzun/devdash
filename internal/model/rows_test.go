@@ -338,7 +338,8 @@ func TestFlattenFoldSort(t *testing.T) {
 
 // TestFlattenFoldSortHiddenLinks: in name mode a folded row sorts by the label the plain view
 // draws, without the links the view hides (DEV-160): `zsh › vite` is `vite` before `ww`, and
-// with ShowAll `zsh › vite` after it.
+// with ShowAll `zsh › vite` after it. Search shows the rows as ShowAll does but keeps the
+// plain view's label.
 func TestFlattenFoldSortHiddenLinks(t *testing.T) {
 	const s = "/src/shop"
 	procs := []Process{
@@ -346,18 +347,19 @@ func TestFlattenFoldSortHiddenLinks(t *testing.T) {
 		fp(12, 1, 2, "ww", s, KindOther),
 	}
 	for _, tt := range []struct {
-		all  bool
-		want string
+		all, search bool
+		want        string
 	}{
-		{false, "zsh › vite,ww"},
-		{true, "ww,zsh › vite"},
+		{false, false, "zsh › vite,ww"},
+		{true, false, "ww,zsh › vite"},
+		{false, true, "zsh › vite,ww"},
 	} {
 		var got []string
-		for _, r := range Flatten(Snapshot{Processes: procs, Projects: shop()}, ViewOptions{Sort: SortName, Fold: true, ShowAll: tt.all})[1:] {
+		for _, r := range Flatten(Snapshot{Processes: procs, Projects: shop()}, ViewOptions{Sort: SortName, Fold: true, ShowAll: tt.all, Search: tt.search})[1:] {
 			got = append(got, strings.TrimSpace(render([]Row{r})[0]))
 		}
 		if strings.Join(got, ",") != tt.want {
-			t.Errorf("all %v: %q, want %s", tt.all, got, tt.want)
+			t.Errorf("all %v, search %v: %q, want %s", tt.all, tt.search, got, tt.want)
 		}
 	}
 }

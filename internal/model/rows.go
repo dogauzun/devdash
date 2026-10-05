@@ -83,6 +83,7 @@ const (
 // the returned rows (see Row.Depth).
 type ViewOptions struct {
 	ShowAll        bool            // `a` / --all: show shells and editors
+	Search         bool            // the TUI's search: show shells and editors as ShowAll does, which still names the folded labels (DEV-160)
 	HideContainers bool            // `d`: drop container rows (processes with a ContainerID and containers without one)
 	Sort           SortMode        // `s`
 	Collapsed      map[RowKey]bool // collapsed headers and tree nodes
@@ -95,7 +96,7 @@ type ViewOptions struct {
 // recent activity with `containers` and `other` last,
 // each followed by its process tree by ppid with roots sorted by opts.Sort; containers with no
 // process become rows under their compose project or `containers`; hidden kinds are dropped
-// unless ShowAll or needed to connect a visible descendant (then Dimmed); children of collapsed
+// unless ShowAll or Search or needed to connect a visible descendant (then Dimmed); children of collapsed
 // keys are skipped. s must not be modified while the rows are in use.
 //
 // With Fold, a chain is drawn as one row (DEV-157): a maximal run of processes P1 → … → Pn
@@ -144,7 +145,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 			continue
 		}
 		n := &node{row: Row{Key: p.Key(), Process: p}, start: p.StartTime, cpu: p.CPUPercent, port: noPort,
-			hidden: !opts.ShowAll && p.Hideable()}
+			hidden: !opts.ShowAll && !opts.Search && p.Hideable()}
 		for _, l := range p.Listeners {
 			n.port = min(n.port, int(l.Port))
 		}
@@ -294,7 +295,7 @@ func (g *group) tree() []*node {
 func order(nodes []*node, opts *ViewOptions) {
 	for _, n := range nodes {
 		if n.show && opts.Fold && !opts.Unfolded[n.row.Key] {
-			n.fold(opts.Collapsed, opts.Sort)
+			n.fold(opts)
 		}
 	}
 	slices.SortFunc(nodes, func(a, b *node) int { return compareNodes(a, b, opts.Sort) })
@@ -310,9 +311,9 @@ func order(nodes []*node, opts *ViewOptions) {
 
 // fold sets n's links and last when n starts a chain, and gives n its row's sort keys: the
 // last node's, and in name mode the chain's label as the TUI draws it without a filter: the
-// links the view shows, then the last node's own.
-func (n *node) fold(collapsed map[RowKey]bool, by SortMode) {
-	last := n
+// links ShowAll shows (whatever Search shows), then the last node's own.
+func (n *node) fold(opts *ViewOptions) {
+	collapsed, last := opts.Collapsed, n
 	for c := last.next(collapsed); c != nil; c = last.next(collapsed) {
 		n.links = append(n.links, last.row.Process)
 		last = c
@@ -322,11 +323,11 @@ func (n *node) fold(collapsed map[RowKey]bool, by SortMode) {
 	}
 	n.last = last
 	n.start, n.cpu, n.port = last.start, last.cpu, last.port
-	if by == SortName {
+	if opts.Sort == SortName {
 		var b strings.Builder
-		for c := n; c != last; c = c.next(collapsed) {
-			if !c.hidden { // the label leaves out the links the view hides (DEV-160)
-				b.WriteString(c.row.Process.Label() + ChainSep)
+		for _, p := range n.links {
+			if opts.ShowAll || !p.Hideable() { // the label leaves out the links the view hides (DEV-160)
+				b.WriteString(p.Label() + ChainSep)
 			}
 		}
 		n.name = strings.ToLower(b.String() + last.sortName())
