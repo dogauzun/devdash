@@ -36,7 +36,7 @@ func (p Project) Label() string {
 func (p Process) Label() string {
 	if tool, _, ok := Tool(p); ok {
 		name := p.Name
-		if sh := baseName(p.Argv[0]); scriptShells[sh] {
+		if sh := baseName(program(p)); scriptShells[sh] {
 			name = sh
 		}
 		return tool + " (" + name + ")"
