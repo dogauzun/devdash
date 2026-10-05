@@ -7,17 +7,22 @@ import (
 
 func TestProjectLabel(t *testing.T) {
 	for _, tt := range []struct {
-		p    Project
-		want string
+		p          Project
+		want, head string // head: LabelParts' first part, which the label's cuts shorten (DEV-201)
 	}{
-		{Project{Name: "shop", Branch: "main"}, "shop @ main"},
-		{Project{Name: "shop", Branch: "feat/login", Worktree: true, MainRepo: "/code/shop"}, "shop @ feat/login (worktree)"},
-		{Project{Name: "shop", ShortSHA: "1a2b3c4"}, "shop @ 1a2b3c4"},
-		{Project{Name: "shop", Worktree: true}, "shop (worktree)"},
-		{Project{Name: "shop", Branch: "main", Here: true}, "shop @ main"}, // (here) is the TUI's, not the label's
+		{Project{Name: "shop", Branch: "main"}, "shop @ main", "shop @ main"},
+		{Project{Name: "shop", Branch: "feat/login", Worktree: true, MainRepo: "/code/shop"}, "shop @ feat/login (worktree)", "shop @ feat/login"},
+		{Project{Name: "shop", ShortSHA: "1a2b3c4"}, "shop @ 1a2b3c4", "shop @ 1a2b3c4"},
+		{Project{Name: "shop", Worktree: true}, "shop (worktree)", "shop"},
+		{Project{Name: "shop", Branch: "main", Here: true}, "shop @ main", "shop @ main"}, // (here) is the TUI's, not the label's
 	} {
 		if got := tt.p.Label(); got != tt.want {
 			t.Errorf("%+v: Label() = %q, want %q", tt.p, got, tt.want)
+		}
+		// `port N`'s where line and the TUI header keep the suffix LabelParts returns when they cut
+		// the label, so it must be the one Label ends with.
+		if head, suffix := tt.p.LabelParts(); head != tt.head || head+suffix != tt.want {
+			t.Errorf("%+v: LabelParts() = %q, %q; want %q, then the rest of %q", tt.p, head, suffix, tt.head, tt.want)
 		}
 	}
 }
