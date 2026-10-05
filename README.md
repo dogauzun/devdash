@@ -27,7 +27,9 @@ go install github.com/dogauzun/devdash/cmd/devdash@latest
 
 **Release archives.** Each [GitHub release](https://github.com/dogauzun/devdash/releases) has
 an archive for darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64, and a `checksums.txt`.
-Check the download, unpack it and put `devdash` on your `PATH`:
+An archive holds `devdash`, `LICENSE`, `THIRD_PARTY_LICENSES`, this README and
+`docs/usage.md`, `docs/limitations.md` and `docs/json-schema.md`. Check the download, unpack it
+and put `devdash` on your `PATH`:
 
 ```sh
 sha256sum --ignore-missing -c checksums.txt            # Linux
@@ -50,8 +52,8 @@ devdash --json              # one snapshot as JSON
 **The dashboard** is one screen, usable at 80 columns by 24 rows. Processes are grouped by
 project (`name @ branch (worktree)`) and form a tree, each with a kind: agent, test, watcher,
 editor, shell, server, container or other. Processes with no project go under `other`. Type a
-port number to select whatever holds it, `enter` for the detail pane, `x` to kill, `?` for the
-keys.
+port number and `enter` to select whatever holds it, then `x` to kill or `enter` for the detail
+pane; `?` shows the keys.
 
 **In scripts**, `port N` exits 0 when something listens and 1 only when the port is free, and
 `free N` prints a port you can bind:
@@ -129,7 +131,7 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
 - **Docker** is optional. Only plain `unix://` and `tcp://` endpoints are supported, not TLS.
 - **Container processes on Linux** are listed as ordinary host processes under `other`, and a
   `--network host` container's port belongs to a plain process, which `kill N` signals.
-- **UDP and unix sockets** are not shown yet (planned for v1.2).
+- **UDP and unix sockets** are not shown yet.
 - **Windows** is not supported. Neither are remote hosts, a config file or a background daemon.
 
 The details and workarounds are in [docs/limitations.md](docs/limitations.md).

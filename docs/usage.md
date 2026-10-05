@@ -35,8 +35,9 @@ last process, and `t` in the kill modal switches to the whole chain as the row n
 shows without `a`, and a container row with `d`.
 
 **Port search.** Typing a port number in the table, `5173` say, searches for it and selects the
-process or container holding it, even inside a collapsed group, so `x` then kills it; a line
-under the header says how many rows hold the port and which port is free next (the search
+process or container holding it, even inside a collapsed group, so `enter` (which closes the
+filter prompt) and then `x` kills it, or `enter` again opens the detail pane; a line under the
+header says how many rows hold the port and which port is free next (the search
 `devdash free` runs), or that the port is free.
 
 | Exit code | Meaning |

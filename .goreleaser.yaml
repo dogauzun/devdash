@@ -31,7 +31,13 @@ archives:
   - id: devdash
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    # Fixed owner and mtime so the archive bytes depend only on the commit.
+    # Fixed owner and mtime so the archive bytes depend only on the commit,
+    # not on who builds (DEV-183).
+    builds_info:
+      owner: root
+      group: root
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
     files:
       - src: LICENSE
         info: &info
@@ -42,6 +48,13 @@ archives:
         info: *info
       # Notices for the Go standard library and every module linked in (DEV-98).
       - src: THIRD_PARTY_LICENSES
+        info: *info
+      # The README's links to these resolve inside the unpacked archive (DEV-183).
+      - src: docs/usage.md
+        info: *info
+      - src: docs/limitations.md
+        info: *info
+      - src: docs/json-schema.md
         info: *info
 
 checksum:

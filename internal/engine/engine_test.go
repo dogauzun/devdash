@@ -405,6 +405,50 @@ func TestCPUPercentUsesPrevious(t *testing.T) {
 	})
 }
 
+// TestCPUPercentRefreshDuringTick is DEV-181: after a kill, Engine.Kill and the TUI's killDone
+// both call Refresh, the second while the first one's tick is collecting, so the next tick starts
+// the moment that collection ends. Pid 7 plays devdash itself: 2 % of a core between
+// collections, 150 % during its own 40 ms collections (Collect plus GC and the redraw), so a
+// sample measured from the one just before it measured only devdash's collection and read 150 %.
+// Every sample is measured over at least one tick.
+func TestCPUPercentRefreshDuringTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		t0 := time.Now()
+		var cpu time.Duration
+		var taken []time.Time
+		var cpus []time.Duration
+		last := t0
+		c := collectFunc(func(context.Context) (collector.Result, error) {
+			at := time.Now()
+			cpu += at.Sub(last) * 2 / 100
+			time.Sleep(40 * time.Millisecond)
+			cpu += 60 * time.Millisecond
+			last = time.Now()
+			taken, cpus = append(taken, at), append(cpus, cpu)
+			return collector.Result{TakenAt: at, Processes: []collector.Process{{PID: 7, StartTime: t0, CPUTime: cpu}}}, nil
+		})
+		e, stop := start(t, Options{Collector: c})
+		defer stop()
+		<-e.Updates() // 0 s
+		<-e.Updates() // 2.04 s
+		time.Sleep(time.Second)
+		e.Refresh() // Engine.Kill
+		synctest.Wait()
+		e.Refresh() // killDone, while that tick collects
+		<-e.Updates()
+		u := <-e.Updates()
+		if len(taken) != 4 || taken[3].Sub(taken[2]) != 40*time.Millisecond {
+			t.Fatalf("samples at %v, want the last two 40 ms apart", taken)
+		}
+		// The last sample is 40 ms after the one before and 1.04 s after the regular tick, both
+		// less than a tick, so it is measured from the first sample.
+		want := float64(cpus[3]-cpus[0]) / float64(taken[3].Sub(taken[0])) * 100
+		if got := u.Snapshot.Processes[0].CPUPercent; got != want {
+			t.Errorf("cpu after a refresh during a tick: %.1f %%, want %.1f %%", got, want)
+		}
+	})
+}
+
 func TestSnapshot(t *testing.T) {
 	r := model.NewResolver("", nil)
 	boom := errors.New("boom")
