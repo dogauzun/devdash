@@ -379,6 +379,32 @@ func TestDetailContainerForwarder(t *testing.T) {
 	}
 }
 
+// TestDetailContainerUnheldPort is DEV-186: a container publishes 6000, which OrbStack Helper
+// forwards, and 6001 (on both families), which no host socket holds; the pane names the
+// forwarder and says, once, that nothing holds 6001.
+func TestDetailContainerUnheldPort(t *testing.T) {
+	m, _ := newTest(t, 100, 40)
+	s := fixture()
+	s.Containers = append(s.Containers, model.Container{ID: "aaa", Name: "qa-api", Image: "nginx:alpine", State: "running",
+		Ports: []model.PortMapping{
+			{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 6000, ContainerPort: 80, Proto: "tcp"},
+			{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 6001, ContainerPort: 81, Proto: "tcp"},
+			{HostIP: netip.MustParseAddr("::"), HostPort: 6001, ContainerPort: 81, Proto: "tcp"},
+			{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 6002, ContainerPort: 82, Proto: "udp"},
+		}})
+	helper := model.Process{PID: 400, PPID: 1, StartTime: at(time.Hour), UID: 501, Name: "OrbStack Helper", Argv: []string{"OrbStack Helper"},
+		Listeners: []model.Listener{lis("tcp6", "::", 8000), lis("tcp6", "::", 6000)}}
+	s.Processes = model.Reconcile(append(s.Processes, helper), s.Containers)
+	feed(m, s)
+	press(m, "enter")
+	detailSelect(t, m, model.RowKey{ContainerID: "aaa"})
+	hasLine(t, m, "held by OrbStack Helper 400 (forwards the container's port)")
+	hasLine(t, m, "no process holds port 6001 (published by Docker)")
+	if n := strings.Count(screen(m), "no process holds"); n != 1 {
+		t.Errorf("want one no-holder line (6001; 6002 is udp), got %d:\n%s", n, screen(m))
+	}
+}
+
 func hiddenProxy() model.Snapshot {
 	s := fixture()
 	s.Processes = slices.DeleteFunc(s.Processes, func(p model.Process) bool { return p.PID == 300 })

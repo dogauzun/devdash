@@ -13,6 +13,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"os/signal"
 	"strings"
 	"sync"
@@ -151,16 +152,40 @@ func serialProbe(probe freeport.Prober) freeport.Prober {
 	}
 }
 
+// beforeSignalStop runs in Run after the program returned, just before Run's signal handler is
+// removed: a test sends a signal there, in the window DEV-177 closes.
+var beforeSignalStop = func() {}
+
 // Run starts the dashboard on the terminal and blocks until the user quits, ctx is done or
 // the engine stops. sudo reports that the user confirmed S: the caller reruns devdash under
 // sudo, now that the terminal is restored. SIGINT, SIGTERM and SIGHUP quit like ctrl-c, and
 // never with sudo, even after y: they cancel ctx in place of Bubble Tea's own handler, which
-// knows no SIGHUP and turns SIGTERM into the same quit as y's.
+// knows no SIGHUP and turns SIGTERM into the same quit as y's. A signal that arrives after the
+// program returned, until the handler is removed, counts too; one after that meets Go's
+// default and ends devdash before any exec.
 func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) (sudo bool, err error) {
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	returned, handled := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(handled)
+		select {
+		case <-sigs:
+			cancel()
+		case <-returned:
+		}
+	}()
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}, opts...)
 	final, err := tea.NewProgram(New(o), opts...).Run()
+	beforeSignalStop()
+	signal.Stop(sigs) // waits for signals already received to reach sigs
+	close(returned)
+	<-handled
+	if len(sigs) > 0 { // one the goroutine did not take
+		cancel()
+	}
 	if ctx.Err() != nil && (err == nil || errors.Is(err, tea.ErrProgramKilled)) { // bubbletea wraps ctx.Err() into it
 		return false, nil
 	}
