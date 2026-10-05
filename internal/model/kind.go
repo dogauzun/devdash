@@ -18,7 +18,7 @@ func Classify(p Process) Kind {
 	if p.PID == 0 {
 		return KindOther
 	}
-	cmds := []command{{name: baseName(p.Name)}}
+	cmds := []command{{name: kernelName(p)}}
 	if prog := program(p); prog != "" {
 		cmds[0] = command{baseName(prog), p.Argv[1:]}
 		if c, ok := cmds[0].unwrap(); ok {
@@ -73,7 +73,8 @@ var kindRules = []struct {
 // setproctitle (Chromium's and Electron's children on Linux), the whole command line in one
 // string whose last "/" may be a later argument's: its text up to the first space, else the
 // whole string, is the program only when its basename is the kernel name or, cut, starts with
-// it (as fullName reads it); otherwise there is none and Name stands for it (DEV-168).
+// it (as fullName reads it); otherwise there is none and Name stands for it (DEV-168). The
+// first word of a title `name: role` (nginx, postgres) is read without its colon (DEV-175).
 func program(p Process) string {
 	if len(p.Argv) == 0 {
 		return ""
@@ -83,6 +84,7 @@ func program(p Process) string {
 		return a
 	}
 	first, _, _ := strings.Cut(a, " ")
+	first = strings.TrimSuffix(first, ":")
 	for _, s := range []string{first, a} {
 		if b := strings.TrimPrefix(path.Base(s), "-"); b == p.Name || len(p.Name) >= commCut && strings.HasPrefix(b, p.Name) {
 			return s
@@ -91,9 +93,31 @@ func program(p Process) string {
 	return ""
 }
 
+// TitleArgs is the text after the program of a one-element argv whose program is its first
+// word (a title rewritten with setproctitle: `--type=renderer …` for a Chromium child,
+// `checkpointer` for `postgres: checkpointer`), the arguments the title holds; "" otherwise
+// (DEV-175).
+func TitleArgs(p Process) string {
+	if len(p.Argv) != 1 {
+		return ""
+	}
+	if prog := program(p); prog == "" || prog == p.Argv[0] {
+		return ""
+	}
+	_, rest, _ := strings.Cut(p.Argv[0], " ")
+	return rest
+}
+
 // baseName lower-cases the basename of s and drops a login shell's leading "-".
 func baseName(s string) string {
 	return strings.ToLower(strings.TrimPrefix(path.Base(s), "-"))
+}
+
+// kernelName is p's Name as baseName reads a program, but whole: the kernel names a process
+// after its file's basename, so a "/" in Name was put there by a title rewrite (libuv's prctl)
+// or a kernel thread, and what follows it is an argument (DEV-175).
+func kernelName(p Process) string {
+	return strings.ToLower(strings.TrimPrefix(p.Name, "-"))
 }
 
 // Tool returns the tool an interpreter process runs, for the TUI's `<tool> (<name>)` label
@@ -126,10 +150,12 @@ func Tool(p Process) (tool string, args []string, ok bool) {
 // the module after -m (python's also attached, -mpytest: DEV-153), else the first argument
 // that is not a flag or one of subcommands. A flag of inlineCodeFlags before it means the
 // interpreter runs inline code, which names no tool (DEV-137); a flag of valueFlags skips its
-// value too (DEV-138, DEV-170). Other flags taking a separate value are not known, so
-// `ruby -r x app.rb` yields x. A shell's flags start with - or +; a cluster
+// value too (DEV-138, DEV-170, DEV-176). Other flags taking a separate value are not known, so
+// `node --title x app.js` yields x. A shell's flags start with - or +; a cluster
 // of short ones holding c (inline code) or s (standard input) names no tool, and one ending in
-// o or O takes the next argument as its value (`-eo pipefail`) (DEV-159).
+// o or O takes the next argument as its value (`-eo pipefail`) (DEV-159). fish's clusters are
+// read as its getopt reads them: the first of fishValueOpts takes the rest as its value, or
+// the next argument when it ends the cluster, and is inline code when it is c (DEV-176).
 func toolArg(name string, args []string) (i int, tool string, module bool) {
 	shell := scriptShells[name]
 	name = strings.TrimRight(name, "0123456789.")
@@ -145,6 +171,13 @@ func toolArg(name string, args []string) (i int, tool string, module bool) {
 			continue
 		case valueFlags[name+" "+a]: // before a shell's short flags, for fish's -C (DEV-170)
 			skip = true
+			continue
+		case name == "fish" && len(a) > 1 && a[0] == '-' && a[1] != '-': // getopt's reading (DEV-176)
+			j := strings.IndexAny(a[1:], fishValueOpts)
+			if j >= 0 && a[1+j] == 'c' {
+				return -1, "", false
+			}
+			skip = j == len(a)-2
 			continue
 		case shell && len(a) > 1 && (a[0] == '-' || a[0] == '+') && a[1] != '-':
 			if strings.ContainsAny(a, "cs") {

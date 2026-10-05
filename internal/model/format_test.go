@@ -60,6 +60,7 @@ func TestProcessLabel(t *testing.T) {
 		// Any interpreter of a #! script on Linux (DEV-169); macOS and `#!/usr/bin/env python3` keep the name.
 		{"manage.py", "manage.py (python3)", []string{"/usr/bin/python3", "./manage.py", "runserver"}},
 		{"a_very_long_scr", "a_very_long_script_name.py (python3)", []string{"/usr/bin/python3", "./a_very_long_script_name.py"}},
+		{"a_very_long_script_name.py", "a_very_long_script_name.py (python3)", []string{"/usr/bin/python3", "./a_very_long_script_name.py"}}, // as Build rebuilds it (DEV-175)
 		{"Python", "manage.py (Python)", []string{"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python", "./manage.py"}},
 		{"python3", "a_very_long_script_name.py (python3)", []string{"python3", "./a_very_long_script_name.py"}},
 		{"bash", "bash", []string{"bash", "-c", "make"}},
