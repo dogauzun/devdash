@@ -13,8 +13,10 @@ package tui
 import (
 	"context"
 	"errors"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -151,12 +153,15 @@ func serialProbe(probe freeport.Prober) freeport.Prober {
 
 // Run starts the dashboard on the terminal and blocks until the user quits, ctx is done or
 // the engine stops. sudo reports that the user confirmed S: the caller reruns devdash under
-// sudo, now that the terminal is restored. SIGINT quits like ctrl-c (SIGTERM already does).
+// sudo, now that the terminal is restored. SIGINT, SIGTERM and SIGHUP quit like ctrl-c, and
+// never with sudo, even after y: they cancel ctx in place of Bubble Tea's own handler, which
+// knows no SIGHUP and turns SIGTERM into the same quit as y's.
 func Run(ctx context.Context, o Options, opts ...tea.ProgramOption) (sudo bool, err error) {
-	opts = append([]tea.ProgramOption{tea.WithContext(ctx)}, opts...)
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	opts = append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}, opts...)
 	final, err := tea.NewProgram(New(o), opts...).Run()
-	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil || // bubbletea wraps ctx.Err() into it
-		errors.Is(err, tea.ErrInterrupted) {
+	if ctx.Err() != nil && (err == nil || errors.Is(err, tea.ErrProgramKilled)) { // bubbletea wraps ctx.Err() into it
 		return false, nil
 	}
 	if m, ok := final.(*Model); ok && err == nil {
