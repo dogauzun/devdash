@@ -41,8 +41,9 @@ type Options struct {
 	Source Source
 	// Plan computes what a kill would signal (engine.NewPlan when nil).
 	Plan func(model.Snapshot, model.RowKey, engine.KillOptions) (engine.Plan, error)
-	// Kill signals a plan and waits up to the timeout ((*engine.Engine).Kill in production,
-	// which also asks for a refresh; engine.Kill when nil). It runs off the UI goroutine.
+	// Kill signals a plan and waits up to the timeout (engine.Kill when nil, as in production).
+	// It runs off the UI goroutine and asks for no refresh: killDone asks for the kill's one
+	// refresh once it has returned (DEV-185).
 	Kill        func(engine.Plan, time.Duration) (engine.Result, error)
 	KillTimeout time.Duration // engine.DefaultKillTimeout when 0
 	// Open opens a URL in the browser (open on macOS, xdg-open on Linux, when nil).
@@ -69,9 +70,11 @@ type Model struct {
 	upd  engine.Update // latest update from the engine
 	have bool          // upd holds a good snapshot (SchemaVersion != 0)
 
-	view model.ViewOptions // ShowAll, HideContainers, Sort, Collapsed, Fold, Unfolded (table.go)
+	view model.ViewOptions // ShowAll, HideContainers, Sort, Collapsed, Fold (table.go)
 	all  []model.Row       // m.upd.Snapshot flattened with m.view; while a filter is set, nothing collapsed or hidden (rebuild)
 	rows []model.Row       // all, filtered: what the table shows
+	// unfolded are the unfolded chains, each by the first link its label draws (rows.go unfold)
+	unfolded map[model.RowKey]bool
 
 	sel    model.RowKey // selected row; never an index (rows.go)
 	selIdx int          // index of sel in rows, -1 when rows is empty
@@ -133,7 +136,7 @@ func New(o Options) *Model {
 	// that push down what the developer started. The fold is not remembered between runs.
 	collapsed := map[model.RowKey]bool{{Header: model.GroupOther}: true}
 	m := &Model{o: o, selIdx: -1, view: model.ViewOptions{ShowAll: o.ShowAll, Collapsed: collapsed,
-		Fold: true, Unfolded: map[model.RowKey]bool{}}}
+		Fold: true}, unfolded: map[model.RowKey]bool{}}
 	m.rebuild()
 	return m
 }

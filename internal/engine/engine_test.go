@@ -405,9 +405,9 @@ func TestCPUPercentUsesPrevious(t *testing.T) {
 	})
 }
 
-// TestCPUPercentRefreshDuringTick is DEV-181: after a kill, Engine.Kill and the TUI's killDone
-// both call Refresh, the second while the first one's tick is collecting, so the next tick starts
-// the moment that collection ends. Pid 7 plays devdash itself: 2 % of a core between
+// TestCPUPercentRefreshDuringTick is DEV-181: a Refresh while a refresh's tick is collecting (a
+// kill asked for two until DEV-185; `r` or a kill that ends mid-collection still can) starts the
+// next tick the moment that collection ends. Pid 7 plays devdash itself: 2 % of a core between
 // collections, 150 % during its own 40 ms collections (Collect plus GC and the redraw), so a
 // sample measured from the one just before it measured only devdash's collection and read 150 %.
 // Every sample is measured over at least one tick.
@@ -432,9 +432,9 @@ func TestCPUPercentRefreshDuringTick(t *testing.T) {
 		<-e.Updates() // 0 s
 		<-e.Updates() // 2.04 s
 		time.Sleep(time.Second)
-		e.Refresh() // Engine.Kill
+		e.Refresh()
 		synctest.Wait()
-		e.Refresh() // killDone, while that tick collects
+		e.Refresh() // while that tick collects
 		<-e.Updates()
 		u := <-e.Updates()
 		if len(taken) != 4 || taken[3].Sub(taken[2]) != 40*time.Millisecond {

@@ -39,7 +39,8 @@ func (m *Model) rebuild() {
 	if m.filter != "" {
 		view.Collapsed, view.Search, view.HideContainers = nil, true, false
 	}
-	m.all = model.Flatten(m.upd.Snapshot, view)
+	var left map[model.RowKey]model.RowKey
+	m.all, left = m.unfold(model.Flatten(m.upd.Snapshot, view))
 	m.rows = model.Filter(m.all, m.filter)
 	if m.filter != "" && (!m.view.ShowAll || m.view.HideContainers) {
 		m.rows = searchHidden(m.rows, m.filter, m.view)
@@ -55,6 +56,11 @@ func (m *Model) rebuild() {
 			at[l.Key()] = i
 		}
 	}
+	for k, first := range left { // a link an unfolded chain leaves out selects its first row (DEV-193)
+		if i, ok := at[first]; ok {
+			at[k] = i
+		}
+	}
 	if i, ok := at[m.sel]; ok {
 		m.moveTo(i)
 		return
@@ -67,6 +73,57 @@ func (m *Model) rebuild() {
 		}
 	}
 	m.moveTo(0) // also replaces the stale key
+}
+
+// unfold draws each unfolded chain among rows (flattened with every chain folded) as one row
+// for each process its label names (drawnLinks) and then its last, each a level below the one
+// before, so a link the view hides gets no row and the chain starts at the first link the
+// label draws (DEV-193); the last process's descendants move down with it. A chain is unfolded
+// when m.unfolded holds any of its links; the key is moved to the first link drawn, the
+// row where ← looks for it, so the chain stays unfolded when `a` or a filter changes which
+// link comes first. A chain whose label names no link has nothing to unfold and loses its key.
+// left maps each link an unfolded chain leaves out to the chain's first row, for the selection.
+func (m *Model) unfold(rows []model.Row) (out []model.Row, left map[model.RowKey]model.RowKey) {
+	if len(m.unfolded) == 0 {
+		return rows, nil
+	}
+	type moved struct{ depth, by int } // rows deeper than depth (before unfold) move down by rows
+	var stack []moved
+	out = make([]model.Row, 0, len(rows))
+	left = map[model.RowKey]model.RowKey{}
+	for _, r := range rows {
+		for len(stack) > 0 && stack[len(stack)-1].depth >= r.Depth {
+			stack = stack[:len(stack)-1]
+		}
+		depth := r.Depth
+		for _, s := range stack {
+			r.Depth += s.by
+		}
+		unfolded := false
+		for _, l := range r.Links {
+			unfolded = unfolded || m.unfolded[l.Key()]
+			delete(m.unfolded, l.Key())
+		}
+		ls := m.drawnLinks(r.Links)
+		if !unfolded || len(ls) == 0 {
+			out = append(out, r)
+			continue
+		}
+		m.unfolded[ls[0].Key()] = true
+		for _, l := range r.Links {
+			if !slices.Contains(ls, l) {
+				left[l.Key()] = ls[0].Key()
+			}
+		}
+		for i, l := range ls {
+			out = append(out, model.Row{Key: l.Key(), Process: l, Depth: r.Depth + i})
+		}
+		stack = append(stack, moved{depth, len(ls)})
+		r.Depth += len(ls)
+		r.Links = nil
+		out = append(out, r)
+	}
+	return out, left
 }
 
 // searchHidden takes rows flattened with every row shown and filtered by query, and draws
@@ -145,7 +202,7 @@ func hiddenBy(r model.Row, view model.ViewOptions) bool {
 // containers and other headers are two fixed keys and always kept. Nothing is pruned before
 // the first snapshot.
 func (m *Model) pruneCollapsed() {
-	if !m.have || len(m.view.Collapsed)+len(m.view.Unfolded) == 0 {
+	if !m.have || len(m.view.Collapsed)+len(m.unfolded) == 0 {
 		return
 	}
 	s := m.upd.Snapshot
@@ -165,7 +222,7 @@ func (m *Model) pruneCollapsed() {
 	maps.DeleteFunc(m.view.Collapsed, func(k model.RowKey, _ bool) bool {
 		return !live[k] && k.Header != model.GroupContainers && k.Header != model.GroupOther
 	})
-	maps.DeleteFunc(m.view.Unfolded, func(k model.RowKey, _ bool) bool { return !live[k] })
+	maps.DeleteFunc(m.unfolded, func(k model.RowKey, _ bool) bool { return !live[k] })
 }
 
 // filterSel keeps the row the user chose while filter changes hide it.
