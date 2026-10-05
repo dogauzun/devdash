@@ -44,14 +44,15 @@ type RawListener struct {
 const commCut = 15
 
 // fullName undoes the kernel's truncation of Name: when Name is at least commCut long and is
-// a strict prefix of the basename of a known argv[0] (a login shell's "-" dropped, as Classify
-// does), that basename is the name. Otherwise Name is kept, so a rewritten title
+// a strict prefix of the basename of a known argv[0] (its program; a login shell's "-" dropped,
+// as Classify does), that basename is the name. Otherwise Name is kept, so a rewritten title
 // ("nginx: master process ...") or a symlinked argv[0] never invents a name.
 func fullName(p Process) string {
-	if len(p.Name) < commCut || p.Unknown&FieldArgv != 0 || len(p.Argv) == 0 || p.Argv[0] == "" {
+	prog := program(p)
+	if len(p.Name) < commCut || p.Unknown&FieldArgv != 0 || prog == "" {
 		return p.Name
 	}
-	if b := strings.TrimPrefix(path.Base(p.Argv[0]), "-"); len(b) > len(p.Name) && strings.HasPrefix(b, p.Name) {
+	if b := strings.TrimPrefix(path.Base(prog), "-"); len(b) > len(p.Name) && strings.HasPrefix(b, p.Name) {
 		return b
 	}
 	return p.Name

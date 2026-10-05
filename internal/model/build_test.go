@@ -294,6 +294,8 @@ func TestBuildName(t *testing.T) {
 		{"cut, trailing slash", "my-very-long-se", []string{"/tmp/my-very-long-service-name/"}, 0, "my-very-long-service-name"},
 		{"cut login shell drops dash", "my-very-long-sh", []string{"-my-very-long-shell"}, 0, "my-very-long-shell"},
 		{"short name kept, login shell", "zsh", []string{"-zsh"}, 0, "zsh"},
+		{"cut, title rewritten", "chromium-browse", []string{"/usr/lib/chromium/chromium-browser --type=renderer --lang=en-US"}, 0, "chromium-browser"},
+		{"cut, title rewritten, later path", "chromium-browse", []string{"/usr/lib/chromium/chromium-browser --type=renderer --user-data-dir=/home/u/.config/chromium-browser-profile"}, 0, "chromium-browser"},
 		{"short name kept, title rewrite", "nginx", []string{"nginx: master process /usr/sbin/nginx -g daemon off;"}, 0, "nginx"},
 		{"short name kept, title rewrite, prefix", "postgres", []string{"postgres: checkpointer"}, 0, "postgres"},
 		{"short name kept, symlink argv[0]", "python3.12", []string{"python3"}, 0, "python3.12"},
