@@ -47,7 +47,7 @@ type killState struct {
 	projects  map[string]string // project names by ID, from the snapshot plan was made from
 	refusal   string            // why the target, or the current options, cannot be planned
 	result    engine.Result     // killReport
-	exited    []engine.Outcome  // the earlier rounds' exited processes, for the summary after a force round
+	earlier   []engine.Outcome  // the earlier rounds' outcomes but the survivors force-killed since
 	err       error             // killReport: Kill's own error, nothing was signalled
 	top       int               // first list line shown when the list scrolls
 	page      int               // list lines the last render showed (the pgup/pgdown step)
@@ -183,10 +183,11 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 		if sv := k.result.Survivors(); s == "f" && k.err == nil && len(sv) > 0 {
 			// Every survivor passed NewPlan's refusals when the target was planned, and Kill
 			// re-checks each pid (never 0, 1 or devdash's chain) and its start time.
-			k.survivors = true
+			// k.result already holds the rounds before it (killDone), so earlier is replaced.
+			k.survivors, k.earlier = true, nil
 			for _, o := range k.result.Outcomes {
-				if o.Exited {
-					k.exited = append(k.exited, o)
+				if !o.Signalled || o.Exited {
+					k.earlier = append(k.earlier, o)
 				}
 			}
 			return m.killSignal(engine.Plan{Procs: sv, Signal: syscall.SIGKILL})
@@ -206,9 +207,10 @@ func (m *Model) killSignal(p engine.Plan) tea.Cmd {
 }
 
 // killDone takes Kill's answer: it asks for a refresh when anything may have been signalled,
-// then closes the modal with a summary when every planned process is gone, or reports. The
-// summary covers the whole kill, the processes that exited in earlier rounds included, and
-// waits for the first snapshot taken after done to add the processes' ports.
+// then closes the modal with a summary when every planned process is gone, or reports. Both
+// cover the whole kill, earlier rounds included, so a process an earlier round did not signal
+// keeps the report open (DEV-165); the summary waits for the first snapshot taken after done to
+// add the processes' ports.
 func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	if m.kill.stage != killRunning {
 		return nil
@@ -218,7 +220,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 	}
 	all := err == nil && len(r.Outcomes) > 0
 	killed, gone := 0, 0
-	outcomes := slices.Concat(m.kill.exited, r.Outcomes) // the earlier rounds' all exited: all is r's
+	outcomes := slices.Concat(m.kill.earlier, r.Outcomes)
 	for _, o := range outcomes {
 		m.sudo.denied = m.sudo.denied || errors.Is(o.Err, engine.ErrPermission) // sudo.go
 		all = all && o.Exited
@@ -230,6 +232,7 @@ func (m *Model) killDone(r engine.Result, err error, done time.Time) tea.Cmd {
 		}
 	}
 	if !all {
+		r.Outcomes = outcomes
 		m.kill.stage, m.kill.result, m.kill.err, m.kill.top = killReport, r, err, 0
 		return nil
 	}
