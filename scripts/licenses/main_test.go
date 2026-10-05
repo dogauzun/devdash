@@ -89,6 +89,45 @@ func TestReadNoticesRefusesNoLicense(t *testing.T) {
 	}
 }
 
+const goLicense = "Copyright 2009 The Go Authors.\n\nRedistribution and use in source and binary forms...\n"
+
+func TestStdNotices(t *testing.T) {
+	// actions/setup-go and go.dev's archives: LICENSE and PATENTS in GOROOT.
+	goroot := t.TempDir()
+	write(t, filepath.Join(goroot, "LICENSE"), goLicense)
+	write(t, filepath.Join(goroot, "PATENTS"), "Go patents\n")
+	want := []notice{{Name: "LICENSE", Text: goLicense}, {Name: "PATENTS", Text: "Go patents\n"}}
+	if got, err := stdNotices(goroot); err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("stdNotices(go.dev layout) = %q, %v; want %q", got, err, want)
+	}
+
+	// Homebrew (DEV-145): GOROOT is <cellar>/go/<version>/libexec with PATENTS, LICENSE one level up.
+	goroot = filepath.Join(t.TempDir(), "go", "1.27.1", "libexec")
+	if err := os.MkdirAll(goroot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(goroot, "PATENTS"), "Go patents\n")
+	write(t, filepath.Join(goroot, "..", "LICENSE"), goLicense)
+	write(t, filepath.Join(goroot, "..", "README.md"), "# go\n")
+	if got, err := stdNotices(goroot); err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("stdNotices(Homebrew layout) = %q, %v; want %q", got, err, want)
+	}
+
+	// A license beside libexec that is not Go's is not taken for Go's.
+	write(t, filepath.Join(goroot, "..", "LICENSE"), "MIT License\n\nCopyright (c) Someone\n")
+	if got, err := stdNotices(goroot); err == nil {
+		t.Errorf("stdNotices took a parent license that is not Go's: %q", got)
+	}
+
+	// No license anywhere still fails, naming GOROOT.
+	if err := os.Remove(filepath.Join(goroot, "..", "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdNotices(goroot); err == nil || !strings.Contains(err.Error(), goroot) {
+		t.Errorf("stdNotices with no license = %v, want an error naming %s", err, goroot)
+	}
+}
+
 func TestRender(t *testing.T) {
 	parts := []part{
 		{Title: "Go standard library", Notices: []notice{{Name: "LICENSE", Text: "Go license\n"}}},
