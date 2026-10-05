@@ -309,7 +309,8 @@ func order(nodes []*node, opts *ViewOptions) {
 }
 
 // fold sets n's links and last when n starts a chain, and gives n its row's sort keys: the
-// last node's, and in name mode the chain's label.
+// last node's, and in name mode the chain's label as the TUI draws it without a filter: the
+// links the view shows, then the last node's own.
 func (n *node) fold(collapsed map[RowKey]bool, by SortMode) {
 	last := n
 	for c := last.next(collapsed); c != nil; c = last.next(collapsed) {
@@ -323,8 +324,10 @@ func (n *node) fold(collapsed map[RowKey]bool, by SortMode) {
 	n.start, n.cpu, n.port = last.start, last.cpu, last.port
 	if by == SortName {
 		var b strings.Builder
-		for _, p := range n.links {
-			b.WriteString(p.Label() + ChainSep)
+		for c := n; c != last; c = c.next(collapsed) {
+			if !c.hidden { // the label leaves out the links the view hides (DEV-160)
+				b.WriteString(c.row.Process.Label() + ChainSep)
+			}
 		}
 		n.name = strings.ToLower(b.String() + last.sortName())
 	}

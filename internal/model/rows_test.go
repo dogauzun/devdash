@@ -336,6 +336,32 @@ func TestFlattenFoldSort(t *testing.T) {
 	}
 }
 
+// TestFlattenFoldSortHiddenLinks: in name mode a folded row sorts by the label the plain view
+// draws, without the links the view hides (DEV-160): `zsh › vite` is `vite` before `ww`, and
+// with ShowAll `zsh › vite` after it.
+func TestFlattenFoldSortHiddenLinks(t *testing.T) {
+	const s = "/src/shop"
+	procs := []Process{
+		fp(10, 1, 0, "zsh", s, KindShell), fp(11, 10, 1, "vite", s, KindServer, 5173),
+		fp(12, 1, 2, "ww", s, KindOther),
+	}
+	for _, tt := range []struct {
+		all  bool
+		want string
+	}{
+		{false, "zsh › vite,ww"},
+		{true, "ww,zsh › vite"},
+	} {
+		var got []string
+		for _, r := range Flatten(Snapshot{Processes: procs, Projects: shop()}, ViewOptions{Sort: SortName, Fold: true, ShowAll: tt.all})[1:] {
+			got = append(got, strings.TrimSpace(render([]Row{r})[0]))
+		}
+		if strings.Join(got, ",") != tt.want {
+			t.Errorf("all %v: %q, want %s", tt.all, got, tt.want)
+		}
+	}
+}
+
 // TestListeningEditorShown: real Classify output for editors that listen; their ports must
 // stay visible and findable in the default view.
 func TestListeningEditorShown(t *testing.T) {

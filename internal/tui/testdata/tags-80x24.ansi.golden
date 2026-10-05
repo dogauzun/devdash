@@ -4,7 +4,7 @@
 [7;36m    api[m[7;2;36m  !  -addr :8080[m[7;36m                       server    8080,8081       200   1d[m
     go[2m  test ./...[m                            test                      201  30s
 [1m▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            [m
-  ▾ zsh › vite (node)[2m  --port 5173[m            server    *5173           101   3h
+  ▾ vite (node)[2m  --port 5173[m                  server    *5173           101   3h
       esbuild[2m  --service=0.21.5 --ping[m        other                     102   2h
     claude                                    agent                     103  20m
 [1m▾ shop (compose) · 2 containers · 2 ports                                       [m

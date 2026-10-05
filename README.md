@@ -50,8 +50,8 @@ Each project header shows `name @ branch (worktree)`. Inside a group, processes 
 parent pid, and each has a kind: agent, test, watcher, editor, shell, server, container or
 other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
 A chain of processes that each have one child is one row, the last process's, named by the
-chain (`bash › claude › bash › xargs`): `→` unfolds it and `←` on its first row folds it
-again. A process with a port or a tag always keeps its own row.
+chain less the shells and editors the view hides (`claude › xargs`, or `bash › claude › bash › xargs`
+with `--all`): `→` unfolds it and `←` on its first row folds it again. A process with a port or a tag always keeps its own row.
 Processes with no project go under `other`, which starts collapsed (its header still counts
 them; `→` opens it), and containers without a compose project under `containers`. The `/`
 filter searches every row, folded or hidden: a shell or editor that matches shows without `a`,

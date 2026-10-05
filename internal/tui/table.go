@@ -255,14 +255,27 @@ func (m *Model) nameCellWith(i int, kids map[model.RowKey]bool, short bool, widt
 	}
 	indent, tags := strings.Repeat("  ", r.Depth)+mark, tagText(r, short)
 	if r.Links != nil {
-		label = chainLabel(r.Links, label, width-ansi.StringWidth(indent+tags))
+		label = chainLabel(m.drawnLinks(r.Links), label, width-ansi.StringWidth(indent+tags))
 	}
 	return indent + label + tags
 }
 
-// chainLabel is a folded chain's label (DEV-157): the labels of its links, cleaned, and last,
-// its own row's label, joined by model.ChainSep. While it is wider than room, leading links
-// give way to `… › `; the last label always stays, so pad may still cut it.
+// drawnLinks are the links of a folded chain that its label names (DEV-160): those the view
+// shows (hiddenBy), and while a filter is set those that match it, so the match is seen.
+func (m *Model) drawnLinks(links []*model.Process) []*model.Process {
+	var out []*model.Process
+	for _, p := range links {
+		if l := (model.Row{Process: p}); !hiddenBy(l, m.view) || m.filter != "" && model.Match(l, m.filter) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// chainLabel is a folded chain's label (DEV-157): the labels of the links it is given (see
+// drawnLinks), cleaned, and last, its own row's label, joined by model.ChainSep. While it is
+// wider than room, leading links give way to `… › `; the last label always stays, so pad may
+// still cut it.
 func chainLabel(links []*model.Process, last string, room int) string {
 	labels := make([]string, 0, len(links)+1)
 	for _, p := range links {

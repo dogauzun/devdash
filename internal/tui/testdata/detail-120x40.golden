@@ -4,7 +4,7 @@ NAME                                          KIND      PORTS           PID   UP
     api  orphaned, cwd deleted                server    8080,8081       200   1d|           --port 5173
     go                                        test                      201  30s| cwd       /src/shop
 ▾ shop @ feat/cart (worktree) · 4 processes · 1 port                            | project   shop @ feat/cart (worktree)
-  ▾ zsh › vite (node)                         server    *5173           101   3h| root      /src/shop
+  ▾ vite (node)                               server    *5173           101   3h| root      /src/shop
       esbuild                                 other                     102   2h| main repo /src/shop-main
     claude                                    agent                     103  20m| listeners tcp6 [::]:5173
 ▾ shop (compose) · 2 containers · 2 ports                                       |           (every interface)
