@@ -268,7 +268,7 @@ func parse(args []string) (options, error) {
 	}
 	boolVar(&o.JSON, "json")
 	fs.Func("roots", "", func(s string) error {
-		for _, r := range strings.Split(s, ",") {
+		for r := range strings.SplitSeq(s, ",") {
 			if r == "" {
 				continue
 			}

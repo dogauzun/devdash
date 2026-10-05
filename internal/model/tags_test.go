@@ -30,11 +30,11 @@ func TestTag(t *testing.T) {
 		{"darwin live parent", "darwin", &Process{PID: 5, PPID: 1, UID: me, Name: "zsh"}, p(10, 5), 0},
 		{"parent not in the snapshot", "linux", nil, p(10, 5), 0},
 		{"linux systemd --user subreaper", "linux", &userManager, p(10, 900), TagOrphaned},
-		{"linux systemd --user of another uid", "linux", ptr(sd(900, 1, other, "/usr/lib/systemd/systemd", "--user")), p(10, 900), 0},
-		{"linux systemd without --user (system manager not pid 1)", "linux", ptr(sd(900, 0, me, "/sbin/init")), p(10, 900), 0},
-		{"linux systemd --user argv unknown", "linux", ptr(with(sd(900, 1, me), func(q *Process) { q.Unknown = FieldArgv })), p(10, 900), 0},
-		{"linux --user only as argv[0]", "linux", ptr(sd(900, 1, me, "--user")), p(10, 900), 0},
-		{"linux --user parent named otherwise", "linux", ptr(with(userManager, func(q *Process) { q.Name = "systemd-logind" })), p(10, 900), 0},
+		{"linux systemd --user of another uid", "linux", new(sd(900, 1, other, "/usr/lib/systemd/systemd", "--user")), p(10, 900), 0},
+		{"linux systemd without --user (system manager not pid 1)", "linux", new(sd(900, 0, me, "/sbin/init")), p(10, 900), 0},
+		{"linux systemd --user argv unknown", "linux", new(with(sd(900, 1, me), func(q *Process) { q.Unknown = FieldArgv })), p(10, 900), 0},
+		{"linux --user only as argv[0]", "linux", new(sd(900, 1, me, "--user")), p(10, 900), 0},
+		{"linux --user parent named otherwise", "linux", new(with(userManager, func(q *Process) { q.Name = "systemd-logind" })), p(10, 900), 0},
 		{"darwin ignores a systemd --user parent", "darwin", &userManager, p(10, 900), 0},
 		{"ppid 1 outside any project, live cwd", "linux", nil, with(p(10, 1), func(q *Process) { q.ProjectID = "" }), 0},
 		{"darwin ppid 1 outside any project, live cwd", "darwin", nil, with(p(10, 1), func(q *Process) { q.ProjectID = "" }), 0},
@@ -112,5 +112,3 @@ func TestBuildTags(t *testing.T) {
 		t.Errorf("darwin: node tags %v, want none", s.Processes[1].Tags.Names())
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

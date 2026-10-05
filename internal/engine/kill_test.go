@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"syscall"
@@ -214,9 +215,7 @@ func TestNewPlan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFake(tt.procs...)
-			for k, v := range tt.pgids {
-				f.pgids[k] = v
-			}
+			maps.Copy(f.pgids, tt.pgids)
 			if tt.ppids != nil {
 				f.ppids = tt.ppids
 			}
@@ -362,9 +361,7 @@ func TestKill(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				fam := family()
 				f := newFake(fam...)
-				for k, v := range tt.pgids {
-					f.pgids[k] = v
-				}
+				maps.Copy(f.pgids, tt.pgids)
 				p := plan(t, f, fam[0].Key(), tt.opt, fam...)
 				if tt.setup != nil {
 					tt.setup(f) // the OS changes between plan and kill
@@ -444,9 +441,7 @@ func TestKillRejectsBadPlans(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFake(tt.plan.Procs...)
 			f.pgids = map[int]int{T: T}
-			for k, v := range tt.pgids {
-				f.pgids[k] = v
-			}
+			maps.Copy(f.pgids, tt.pgids)
 			f.ppids = map[int]int{DDPP: GP, GP: 1} // the OS's view; the plan was never checked against a snapshot
 			if _, err := kill(tt.plan, time.Millisecond, f.sys()); err == nil || len(f.sent) != 0 {
 				t.Errorf("err %v, sent %v", err, f.sent)

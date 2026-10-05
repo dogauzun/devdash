@@ -170,8 +170,8 @@ func searchHidden(rows []model.Row, query string, view model.ViewOptions) []mode
 // with the links before it, and reports whether there was one. Links are never container
 // rows, so the row loses no container.
 func cutChain(r *model.Row, query string, view model.ViewOptions) bool {
-	for j := len(r.Links) - 1; j >= 0; j-- {
-		l := model.Row{Key: r.Links[j].Key(), Process: r.Links[j]}
+	for j, v := range slices.Backward(r.Links) {
+		l := model.Row{Key: v.Key(), Process: v}
 		if !hiddenBy(l, view) || model.Match(l, query) {
 			l.Depth, l.Links = r.Depth, r.Links[:j:j]
 			if j == 0 {

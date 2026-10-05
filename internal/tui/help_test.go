@@ -222,12 +222,12 @@ func TestHelpNarrow(t *testing.T) {
 	}
 	words := map[string]bool{}
 	for _, l := range seen {
-		for _, f := range strings.Fields(l) {
+		for f := range strings.FieldsSeq(l) {
 			words[f] = true
 		}
 	}
 	for _, k := range helpKeys {
-		for _, f := range strings.Fields(k[1]) {
+		for f := range strings.FieldsSeq(k[1]) {
 			if !words[f] {
 				t.Errorf("help never shows %q of the %q row", f, k[0])
 			}

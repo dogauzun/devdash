@@ -3,8 +3,11 @@ version: "2"
 linters:
   default: standard
   enable:
+    - gocognit
     - misspell
+    - modernize
     - unconvert
+    - unparam
   settings:
     errcheck:
       # Diagnostics to stdout/stderr: nothing useful to do on failure.
@@ -12,6 +15,16 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+    gocognit:
+      # A ratchet, not a target: just above the worst non-test function left,
+      # (*linuxCollector).listeners at 59. Lower it when that function is split.
+      min-complexity: 60
+  exclusions:
+    rules:
+      # Table-driven test functions exceed any useful threshold.
+      - path: _test\.go
+        linters:
+          - gocognit
 
 formatters:
   enable:

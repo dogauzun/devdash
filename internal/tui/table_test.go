@@ -117,7 +117,7 @@ func TestTableNarrow(t *testing.T) {
 			if got := m.tableView(w, h); lipglossHeight(got) > h {
 				t.Errorf("%dx%d: %d lines", w, h, lipglossHeight(got))
 			}
-			for _, l := range strings.Split(m.tableView(w, h), "\n") {
+			for l := range strings.SplitSeq(m.tableView(w, h), "\n") {
 				if ansi.StringWidth(l) > w {
 					t.Errorf("%dx%d: line %q wider than %d", w, h, ansi.Strip(l), w)
 				}
@@ -128,11 +128,11 @@ func TestTableNarrow(t *testing.T) {
 
 // cellIndex is the cell column at which sub starts in s, or -1.
 func cellIndex(s, sub string) int {
-	i := strings.Index(s, sub)
-	if i < 0 {
+	before, _, ok := strings.Cut(s, sub)
+	if !ok {
 		return -1
 	}
-	return ansi.StringWidth(s[:i])
+	return ansi.StringWidth(before)
 }
 
 func lipglossHeight(s string) int {
@@ -683,11 +683,11 @@ func TestTableTags(t *testing.T) {
 
 // sgrBefore returns the last SGR sequence before the first occurrence of s in the styled line l.
 func sgrBefore(l, s string) string {
-	i := strings.Index(l, s)
-	if i < 0 {
+	before, _, ok := strings.Cut(l, s)
+	if !ok {
 		return ""
 	}
-	j := strings.LastIndex(l[:i], "\x1b[")
+	j := strings.LastIndex(before, "\x1b[")
 	if j < 0 {
 		return ""
 	}

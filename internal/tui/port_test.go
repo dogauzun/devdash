@@ -90,10 +90,10 @@ func portLine(m *Model) string {
 	return strings.Split(screen(m), "\n")[1]
 }
 
-// withProcess adds a process with a listener on port to s.
-func withProcess(s model.Snapshot, pid int, project string, kind model.Kind, port uint16) model.Snapshot {
-	p := model.Process{PID: pid, PPID: 90, StartTime: at(time.Hour), UID: 501, User: "me", Name: "srv",
-		Argv: []string{"srv"}, Cwd: project, Kind: kind, ProjectID: project}
+// withProcess adds process 204 in project api with a listener on port to s.
+func withProcess(s model.Snapshot, kind model.Kind, port uint16) model.Snapshot {
+	p := model.Process{PID: 204, PPID: 90, StartTime: at(time.Hour), UID: 501, User: "me", Name: "srv",
+		Argv: []string{"srv"}, Cwd: apiID, Kind: kind, ProjectID: apiID}
 	if port != 0 {
 		p.Listeners = []model.Listener{lis("tcp4", "127.0.0.1", port)}
 	}
@@ -239,7 +239,7 @@ func TestPortSelectsHolder(t *testing.T) {
 	}
 
 	// Two holders: the first in display order (api's group comes first).
-	s2 := withProcess(fixture(), 204, apiID, model.KindServer, 5173)
+	s2 := withProcess(fixture(), model.KindServer, 5173)
 	m = newPortTest(t, 80, 24, s2, &fakeProbe{})
 	search(m, "5173")
 	if m.sel != keyOf(s2, 204) {
@@ -267,7 +267,7 @@ func TestPortRefreshKeepsSelection(t *testing.T) {
 // TestPortLine: every case of the spec's port line table.
 func TestPortLine(t *testing.T) {
 	errMFILE := errors.New("socket: too many open files")
-	at65535 := withProcess(fixture(), 204, apiID, model.KindServer, 65535)
+	at65535 := withProcess(fixture(), model.KindServer, 65535)
 	for _, c := range []struct {
 		name  string
 		s     model.Snapshot
@@ -277,9 +277,9 @@ func TestPortLine(t *testing.T) {
 		calls int // probe calls, -1 for any
 	}{
 		{"holder, next free", fixture(), &fakeProbe{}, "5173", "port 5173 · 1 holder · next free 5174", 1},
-		{"holders, next free past taken", withProcess(fixture(), 204, apiID, model.KindServer, 5173),
+		{"holders, next free past taken", withProcess(fixture(), model.KindServer, 5173),
 			(&fakeProbe{}).takeRange(5174, 5175), "5173", "port 5173 · 2 holders · next free 5176", 3},
-		{"holder, a snapshot port is skipped", withProcess(fixture(), 204, apiID, model.KindServer, 5174),
+		{"holder, a snapshot port is skipped", withProcess(fixture(), model.KindServer, 5174),
 			&fakeProbe{}, "5173", "port 5173 · 1 holder · next free 5175", 1},
 		{"holder, nothing free", fixture(), (&fakeProbe{}).takeRange(5174, 5273), "5173",
 			"port 5173 · 1 holder · no free port in 5174-5273", 100},
@@ -311,7 +311,7 @@ func TestPortLine(t *testing.T) {
 			if c.calls >= 0 && len(c.probe.calls) != c.calls {
 				t.Errorf("%d probe calls, want %d: %v", len(c.probe.calls), c.calls, c.probe.calls)
 			}
-			for _, part := range strings.Split(c.want, headerSep) { // the error part, its label included
+			for part := range strings.SplitSeq(c.want, headerSep) { // the error part, its label included
 				if c.probe.err != nil && strings.HasSuffix(part, c.probe.err.Error()) && !warned(t, m, "port "+c.query, part) {
 					t.Errorf("the error is not in the warning colour:\n%q", styled(t, m, colorprofile.ANSI))
 				}
@@ -345,7 +345,7 @@ func TestPortHoldersTCPOnly(t *testing.T) {
 	s := fixture()
 	s.Containers = append(s.Containers, model.Container{ID: "a1b2c3d4e5f6", Name: "statsd-1", Image: "statsd:1",
 		State: "running", Ports: []model.PortMapping{{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: 8125, ContainerPort: 8125, Proto: "udp"}}})
-	s = withProcess(s, 204, apiID, model.KindServer, 0)
+	s = withProcess(s, model.KindServer, 0)
 	s.Processes[len(s.Processes)-1].Listeners = []model.Listener{lis("udp4", "0.0.0.0", 8126)}
 	for q, want := range map[string]string{"8125": "port 8125 · free", "8126": "port 8126 · free"} {
 		fp := &fakeProbe{}
@@ -369,7 +369,7 @@ func TestPortHoldersTCPOnly(t *testing.T) {
 func TestPortHolders(t *testing.T) {
 	// An editor, hidden without a, listens on 9000: it holds the port, and the search shows
 	// and selects its row, so the count is the rows the search can select.
-	s := withProcess(fixture(), 204, apiID, model.KindEditor, 9000)
+	s := withProcess(fixture(), model.KindEditor, 9000)
 	m := newPortTest(t, 80, 24, s, &fakeProbe{})
 	search(m, "9000")
 	if got, want := portLine(m), "port 9000 · 1 holder · next free 9001"; got != want {
@@ -632,7 +632,7 @@ func TestPortProbeRuns(t *testing.T) {
 	m := newPortTest(t, 80, 24, fixture(), fp)
 	typeText(m, "517")
 	stale := press(m, "3") // the answer for this snapshot: 5174
-	newer := withProcess(fixture(), 204, apiID, model.KindServer, 5174)
+	newer := withProcess(fixture(), model.KindServer, 5174)
 	_, cmd := m.Update(updateMsg(engine.Update{Snapshot: newer, Interval: 2 * time.Second}))
 	runAll(m, cmd)
 	if got, want := portLine(m), "port 5173 · 1 holder · next free 5175"; got != want {

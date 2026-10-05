@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -449,7 +448,7 @@ func BenchmarkCollect(b *testing.B) {
 		procs = len(res.Processes)
 	}
 	for k, v := range samples {
-		sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+		slices.Sort(v)
 		b.ReportMetric(float64(v[len(v)/2])/1e6, k+"-p50-ms")
 	}
 	b.ReportMetric(float64(procs), "procs")
