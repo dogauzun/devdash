@@ -9,7 +9,7 @@ Docker containers to the processes that own them, and lets you kill any of it. I
 static Go binary for macOS and Linux, needs no root, and reads the OS directly instead of
 shelling out to `lsof`, `ss`, `netstat` or `ps`.
 
-![The devdash dashboard run from a repository, whose group comes first marked (here): four repositories grouped with their dev servers, watchers, a test runner and an agent, labelled by the tool an interpreter runs (nodemon (node), vite (node), http.server (python3)); typing 5173 selects vite (node) in the feat/cart worktree, whose detail pane reads shop @ feat/cart (worktree) · this repo, other worktree and next free 5175; typing 5174 finds the leftover dev server inside the collapsed other group, the port line says 1 holder, next free 5175, and the detail pane explains its orphaned and cwd deleted tags; killing it reports 5174 free, a tree kill of nodemon and its child reports 3000 free, then devdash port 5173 shows the holder's command, project and uptime with the next free port, and devdash free 5173 prints 5174](docs/demo.gif)
+![The devdash dashboard: four repositories grouped with their dev servers, watchers, a test runner and an agent; typing a port number selects its holder, the detail pane explains its tags, a kill frees the port, and devdash port and devdash free answer from the shell](docs/demo.gif)
 
 ## Install
 
@@ -39,206 +39,35 @@ run time through [purego](https://github.com/ebitengine/purego), so it needs no 
 
 ## Usage
 
-### The dashboard
+```sh
+devdash                     # the dashboard
+devdash port 5173           # who listens on TCP port 5173, and the next free port
+devdash free 3000           # the first free port from 3000 to 3099
+devdash kill 3000 --tree    # stop whatever listens on 3000, and its descendants
+devdash --json              # one snapshot as JSON
+```
+
+**The dashboard** is one screen, usable at 80 columns by 24 rows. Processes are grouped by
+project (`name @ branch (worktree)`) and form a tree, each with a kind: agent, test, watcher,
+editor, shell, server, container or other. Processes with no project go under `other`. Type a
+port number to select whatever holds it, `enter` for the detail pane, `x` to kill, `?` for the
+keys.
+
+**In scripts**, `port N` exits 0 when something listens and 1 only when the port is free, and
+`free N` prints a port you can bind:
 
 ```sh
-devdash
-```
-
-One screen: a header, a table grouped by project, and a footer with key hints and warnings.
-Each project header shows `name @ branch (worktree)`. Inside a group, processes form a tree by
-parent pid, and each has a kind: agent, test, watcher, editor, shell, server, container or
-other. Shells and editors are hidden unless `--all` is given or toggled in the dashboard.
-A chain of processes that each have one child is one row, the last process's, named by the
-chain less the shells and editors the view hides (`claude › xargs`, or `bash › claude › bash › xargs`
-with `--all`): `→` unfolds it and `←` on its first row folds it again. A process with a port or a tag always keeps its own row.
-Processes with no project go under `other`, which starts collapsed (its header still counts
-them; `→` opens it), and containers without a compose project under `containers`. The `/`
-filter searches every row, folded or hidden: a shell or editor that matches shows without `a`,
-and a container row with `d`. A detail pane shows the full argv, cwd, listeners, parent chain and start time.
-A process run by an interpreter is named by its tool, as in `vite (node)` or `pytest (python3)`,
-and below 90 columns, where the command column does not fit, its arguments follow the name in
-faint text. Typing a port number in the table, `5173` say, searches for it and selects the
-process or container holding it, even inside a collapsed group, so `x` then kills it; a line
-under the header says how many rows hold the port and which port is free next (the search
-`devdash free` runs), or that the port is free.
-It is meant to be usable at 80 columns by 24 rows. `?` lists the keys (see
-[Keybindings](#keybindings)) and `q` quits.
-
-| Exit code | Meaning |
-| --- | --- |
-| 0 | quit with `q`, `ctrl-c`, SIGINT or SIGTERM |
-| 2 | usage error, or stdout is not a terminal (piped, redirected, cron): use `--json`, `port N` or `free N` there |
-| 5 | devdash failed |
-
-### `devdash --json`
-
-Prints one snapshot as a JSON document on stdout. It samples twice, 200 ms apart, so
-`cpu_percent` is a real number. Trimmed output on Linux:
-
-```console
-$ devdash --json | head -12
-{
-  "schema_version": 1,
-  "taken_at": "2026-10-02T19:12:02.099069847Z",
-  "host": {
-    "os": "linux",
-    "arch": "amd64",
-    "hostname": "dev-box",
-    "uid": 0
-  },
-  "projects": [
-    {
-      "id": "/home/me/code/shop",
-```
-
-For scripts, for example every process that listens on a port:
-
-```sh
-devdash --json | jq -r '.processes[] | select(.listeners | length > 0) | "\(.pid)\t\(.name)\t\([.listeners[].port] | join(","))"'
-```
-
-| Exit code | Meaning |
-| --- | --- |
-| 0 | the snapshot was printed |
-| 2 | usage error |
-| 5 | devdash failed: no snapshot could be taken, or stdout could not be written |
-
-### `devdash port N`
-
-Who listens on TCP port N: one line per listener with pid, name, project (`-` for none) and
-bind address. A listener whose owner devdash cannot read is pid 0 with a hint. A published
-container port shows as the container: the pid of the process forwarding it (`-` when there
-is none or devdash cannot see it), the container's name and compose project, the address, its
-image and the forwarder.
-
-On a terminal, each process holding the port gets up to three more lines, indented: its full
-command (cut to the terminal's width); where it runs (project as `name @ branch`, the working
-directory when it is in no repository, or `-`), how long it has been up, and `this repo` or
-`this repo, other worktree` when it runs in the repository you ran devdash from or another
-worktree of it; and its tags, `orphaned` (its parent exited) or `cwd deleted` (its working
-directory is gone), when either applies. Tags state facts; they do not say a process is safe
-to kill. When the port is held, the answer ends with the port to use instead, found as
-`devdash free N+1` finds it (no line for N = 65535):
-
-```console
-$ devdash port 5173
-15669  python3  shop  0.0.0.0:5173
-       uvicorn app:main --reload --port 5173
-       shop @ feat/login (worktree), up 3h, this repo
-       orphaned, cwd deleted
-next free: 5174
-$ devdash port 5432
-20  shop-db-1  shop  0.0.0.0:5432  container (postgres:16) via docker-proxy
-next free: 5433
-$ devdash port 2024
-0  unknown  -  0.0.0.0:2024  owner unknown: run with sudo to see owners
-next free: 2025
-$ devdash port 4999
-free
-```
-
-Container lines and the unknown-owner line get no extra lines. When nothing from N+1 to N+100
-(at most 65535) is free, the last line is `next free: none in 5174-5273`; when the free-port
-check itself fails, the line is left out, the reason goes to stderr and the exit code stays.
-Piped or redirected, `port N` prints only the listener lines, byte for byte as v0.1.1 did, so
-scripts reading them keep working. For scripts that want everything above, `devdash port N
---json` prints the answer as one JSON object (holders, containers, `free` and `next_free`; see
-[docs/json-schema.md](docs/json-schema.md#port_answer)), with the same exit codes.
-
-| Exit code | Meaning |
-| --- | --- |
-| 0 | something listens on N |
-| 1 | the port is free |
-| 2 | usage error |
-| 5 | devdash failed, so it could not look |
-
-Exit 1 only ever means "free", so `devdash port 3000 || npm run dev` never starts a second
-server because devdash failed.
-
-### `devdash free N`
-
-Prints the first TCP port from N to N+99 (at most 65535) that nothing listens on, on any
-address, and that you can bind, so a dev server can start on another port:
-
-```sh
+devdash port 3000 || npm run dev
 PORT=$(devdash free 3000) npm run dev
 ```
 
-A port counts as taken when a listener or a container's published port holds it, or when a
-test bind fails, which also catches other users' listeners that devdash cannot see without
-root. The answer means free at the moment of the check, not reserved: another process can take
-the port before your server starts. On macOS a port in TIME_WAIT (just after a server exited
-with open connections) counts as taken.
+**`kill N`** prints the plan first (every pid with its name, project and ports), then asks for
+confirmation. It refuses pid 1, itself and its ancestors, and container-runtime processes, and
+a target outside every project asks a second time.
 
-| Exit code | Meaning |
-| --- | --- |
-| 0 | the port is printed |
-| 1 | nothing is free from N to N+99; nothing is printed |
-| 2 | usage error |
-| 5 | devdash failed, so it could not look; nothing is printed |
-
-### `devdash kill N`
-
-```sh
-devdash kill N [--tree] [--force] [--yes] [--timeout 3s]
-```
-
-Stops whatever listens on TCP port N. devdash prints the plan first (mode, signal, and every
-pid with its name, project and ports), asks for confirmation on the terminal, signals, waits,
-and reports what survived. Then it checks the port again and says whether it is free.
-
-- Default: `SIGTERM` to each owner of the port.
-- `--tree`: the owner and all its descendants, parent first, so a supervisor such as nodemon
-  or air cannot respawn a child. A process-group leader also gets one signal to its group.
-- `--force`: `SIGKILL` instead of `SIGTERM`, for whichever set was chosen.
-- `--yes`: do not ask. Without a terminal on stdin, kill needs `--yes`.
-- `--timeout d`: how long to wait for the signalled processes to exit (default 3s).
-
-A target outside every project asks a second time, because it is usually a system service.
-devdash refuses pid 1, itself and its ancestors (your shell and terminal), and
-container-runtime processes such as `dockerd`, `docker-proxy`, `com.docker.backend` and
-OrbStack's `OrbStack Helper`. A
-port published by a container is refused with a `docker stop <name>` hint. If any owner is
-refused, nothing is signalled. Each
-pid's start time is checked again right before `kill(2)`, so a reused pid is never signalled.
-
-| Exit code | Meaning |
-| --- | --- |
-| 0 | every signalled process exited, or nothing listens on N |
-| 2 | usage error, or no terminal to confirm on and no `--yes` |
-| 3 | permission denied, or the owner is unknown (another user's; try sudo) |
-| 4 | survivors remain (try `--force`) |
-| 5 | devdash failed before anything was signalled |
-| 6 | nothing signalled: a refused target, or the confirmation was declined |
-
-### `devdash version`
-
-Prints the version, the commit, and the commit's date (labelled `built`: the commit time, not
-the build time). Exits 0. What a binary knows depends on how it was built:
-
-- Release archives and the Homebrew cask (which installs the archive's binary) record all three:
-  `devdash v1.1.0 (commit dbadac7e5ba856d776e36251559b8abd03de2654, built 2026-10-04T10:31:26Z)`.
-- `go install github.com/dogauzun/devdash/cmd/devdash@latest` (or `@v1.1.0`) records the
-  version only, since a module from the proxy carries no git data:
-  `devdash v1.1.0 (commit none, built unknown)`.
-- `make build`, `go build` or `go install` inside a git checkout record the commit and its time,
-  with a Go pseudo-version as the version; uncommitted changes add `+dirty` to the version and
-  `-dirty` to the commit:
-  `devdash v1.1.1-0.20261005093007-6d4b5d0a89f2 (commit 6d4b5d0a89f28ee01e784aca358dd6cfd67125b7, built 2026-10-05T09:30:07Z)`.
-
-### Global flags
-
-Flags may come before or after the command. `-h` or `--help` prints the usage and exits 0.
-
-| Flag | Effect |
-| --- | --- |
-| `--roots paths` | only count git repositories under these directories; comma-separated and repeatable; a leading `~` is `$HOME` |
-| `--tick d` | dashboard refresh interval (default 2s, minimum 500ms) |
-| `--all` | show shells and editors in the dashboard (`--json` always lists every process) |
-| `--no-docker` | do not ask Docker for containers |
-| `--no-color` | no colour; also when `NO_COLOR` is set and not empty |
-| `--json` | print one snapshot as JSON |
+Every command's output, flags and exit codes are in [docs/usage.md](docs/usage.md); the
+`--json` schema is in [docs/json-schema.md](docs/json-schema.md). `devdash --help` prints a
+summary.
 
 ## Keybindings
 
@@ -265,11 +94,6 @@ The dashboard's keys; `?` shows the same table inside it.
 In the kill modal, `enter` or `y` confirms. A target outside every project asks once more and
 takes only `Y`. When processes survive, `f` force-kills them.
 
-## JSON output
-
-`--json` follows schema version 1, documented field by field in
-[docs/json-schema.md](docs/json-schema.md).
-
 ## Why another port tool
 
 Tools such as [portview](https://docs.rs/portview),
@@ -293,47 +117,19 @@ does not: portview can inspect remote hosts over SSH, and killport-tui runs on W
 
 ## Known limitations
 
-- **Other users' processes.** Without sudo, their rows are shown but argv, cwd, CPU and
-  memory may be unknown, and their listeners have no owner (pid 0, "owner unknown"). devdash
-  shows a warning instead of hiding them. On Linux, root in a container with default
-  capabilities (no `CAP_SYS_PTRACE`) is in the same position; `--cap-add SYS_PTRACE` fixes it
-  (see [DECISIONS.md](DECISIONS.md), DEV-13). When sudo would show more (and after a kill
-  denied for permission), the dashboard offers `S`: after you confirm with `y` it quits and
-  starts again as `sudo devdash` with the same flags; sudo asks for your password itself.
-  It is never offered as root, in such a container, or for Docker's socket permission.
-- **Linux `hidepid`.** With `/proc` mounted `hidepid=1` or `2` (`noaccess` or `invisible`),
-  other users' processes are invisible and their listeners stay without an owner. devdash
-  warns and names the mount option.
-- **macOS socket list.** Other users' listeners come from the kernel's TCP socket list, which
-  macOS withholds when an ancestor of devdash is ad-hoc signed (for example `go run`). An
-  empty list is treated as unknown, not as "no listeners", and a footer hint says so. Start
-  devdash directly from a shell, or use sudo. Your own listeners are always found. See the
-  Signing notes in [docs/SPEC.md](docs/SPEC.md#build-release-and-distribution) and [DECISIONS.md](DECISIONS.md) (DEV-10).
-- **Docker** is optional. devdash uses `DOCKER_HOST`, then the current docker context, then
-  the first socket it finds among Docker Desktop's, OrbStack's, Colima's, `/var/run/docker.sock`
-  and Podman's. With no socket there are no container rows and no warning, and the dashboard
-  looks again every 10 ticks, rounded up to whole 5 s steps (20 s by default), so Docker
-  started after devdash shows up within that time; `port`, `free`, `kill` and `--json` look
-  once. An unreachable or slow engine gives a warning and the last container list. Only plain
-  `unix://` and `tcp://` endpoints are supported, not TLS. With the userland proxy disabled
-  (`--userland-proxy=false`), Docker 28+ holds each published port in `dockerd`, which shows
-  as the container when devdash runs as root and as an unknown owner reconciled to the
-  container otherwise; a published port with no socket on the host at all (older engines,
-  iptables only) shows as a container with no process. With `--no-docker`, or while Docker is
-  not found, a published port shows as the process that forwards it (`docker-proxy` on Linux,
-  `com.docker.backend` on Docker Desktop for Mac, `OrbStack Helper` on OrbStack, another
-  forwarder on Colima or Podman), or with an unknown owner when root holds it. `port N` only
-  reports ports listening on the host, not unpublished ports inside a Docker network.
-- **Container processes on Linux.** Processes running inside containers are also host
-  processes on Linux, so devdash lists them in the `other` group as ordinary processes (with
-  host user names for the container's uids), not under their container. A container on
-  `--network host` publishes no port, so its listener belongs to a plain process: `port N`
-  shows that process, and `kill N` signals it instead of refusing with `docker stop <name>`,
-  which stops the container (or restarts it under a restart policy). macOS is unaffected,
-  because container processes run inside the VM.
+- **Other users' processes.** Without sudo their argv, cwd, CPU and memory may be unknown and
+  their listeners have no owner. devdash warns instead of hiding them, and `S` reruns it under
+  sudo. Root in a container without `CAP_SYS_PTRACE` is in the same position, and a Linux
+  `hidepid` mount hides those processes entirely.
+- **macOS.** Other users' listeners are withheld when an ancestor of devdash is ad-hoc signed
+  (for example `go run`). Start devdash directly from a shell, or use sudo.
+- **Docker** is optional. Only plain `unix://` and `tcp://` endpoints are supported, not TLS.
+- **Container processes on Linux** are listed as ordinary host processes under `other`, and a
+  `--network host` container's port belongs to a plain process, which `kill N` signals.
 - **UDP and unix sockets** are not shown yet (planned for v1.2).
-- **Windows** is not supported. Neither are remote hosts, a config file or a background
-  daemon: devdash runs only while its terminal is open.
+- **Windows** is not supported. Neither are remote hosts, a config file or a background daemon.
+
+The details and workarounds are in [docs/limitations.md](docs/limitations.md).
 
 ## Building from source
 
@@ -345,10 +141,7 @@ make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI
 `make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
 `go test -race ./...`.
 
-`make demo` re-records the GIF above from [demo.tape](demo.tape) with
-[vhs](https://github.com/charmbracelet/vhs). It runs on Linux only, as root, with vhs, ttyd,
-ffmpeg and Chromium installed. [scripts/demo.sh](scripts/demo.sh) sets up the repositories it
-shows.
+`make demo` re-records the GIF above from [demo.tape](demo.tape) (Linux only, as root).
 
 ## Contributing
 
