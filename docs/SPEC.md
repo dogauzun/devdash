@@ -202,7 +202,7 @@ After signalling, the engine polls every 100 ms for up to 3 s (`--timeout`), the
 
 **`kill N` on the CLI.** N is a TCP port. Every distinct owner of a listener on it gets its own plan; the plans are shown together and confirmed once, and if any owner is refused (including an unknown PID 0 owner), nothing is signalled. After the wait the port is checked again in a fresh snapshot: a forked child can still hold a socket credited only to its parent, so the CLI names the holder and suggests `--tree`; the exit code still describes only the processes that were signalled.
 
-**Open in browser.** `o` runs `open` on macOS or `xdg-open` on Linux with `http://localhost:<port>`, using the lowest port when the process has several. No HTTPS detection in v1; a wrong scheme costs the user one click.
+**Open in browser.** `o` runs `open` on macOS or `xdg-open` on Linux with `http://localhost:<port>`, using the lowest port when the process has several. No HTTPS detection in v1; a wrong scheme costs the user one click. Under sudo the opener runs as the invoking user, never as root: when devdash's effective uid is 0, `SUDO_UID` and `SUDO_GID` (decimal, uid not 0) give its uid and gid, with no supplementary groups, and its `HOME`, `USER` and `LOGNAME` come from that user's entry in the user database (on Linux also `XDG_RUNTIME_DIR=/run/user/<uid>` when sudo removed it). Root without a valid `SUDO_UID` and `SUDO_GID` (a root login, a container) or whose user cannot be looked up starts nothing, and the footer says `open failed: not available as root`.
 
 ## CLI and JSON schema
 

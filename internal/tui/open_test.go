@@ -2,8 +2,11 @@ package tui
 
 import (
 	"errors"
+	"os/user"
+	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -120,15 +123,83 @@ func TestOpenError(t *testing.T) {
 	}
 }
 
+func TestOpenRefusedAsRoot(t *testing.T) {
+	rec := &openRecorder{err: errOpenAsRoot}
+	m, _ := newTest(t, 80, 24, func(o *Options) { o.Open = rec.open })
+	s := fixture()
+	feed(m, s)
+	detailSelect(t, m, keyOf(s, 200))
+	m.Update(press(m, "o")())
+	if want := "open failed: not available as root"; m.status != want || line(m, want) == "" {
+		t.Errorf("status %q, want %q in the footer", m.status, want)
+	}
+}
+
+// TestOpenAs decides who runs the opener; nothing is started.
+func TestOpenAs(t *testing.T) {
+	users := map[string]*user.User{"501": {Uid: "501", Username: "me", HomeDir: "/Users/me"}}
+	lookup := func(uid string) (*user.User, error) {
+		if u, ok := users[uid]; ok {
+			return u, nil
+		}
+		return nil, user.UnknownUserIdError(0)
+	}
+	me := &syscall.Credential{Uid: 501, Gid: 20, Groups: []uint32{}}
+	for _, tc := range []struct {
+		name     string
+		euid     int
+		env      map[string]string
+		goos     string
+		wantCred *syscall.Credential
+		wantEnv  []string
+		wantErr  bool
+	}{
+		{name: "not root", euid: 501, env: map[string]string{"SUDO_UID": "0", "SUDO_GID": "0"}, goos: "darwin"},
+		{name: "not root, sudo -u", euid: 502, env: map[string]string{"SUDO_UID": "501", "SUDO_GID": "20"}, goos: "linux"},
+		{name: "sudo on macOS", euid: 0, env: map[string]string{"SUDO_UID": "501", "SUDO_GID": "20"}, goos: "darwin",
+			wantCred: me, wantEnv: []string{"HOME=/Users/me", "USER=me", "LOGNAME=me"}},
+		{name: "sudo on Linux", euid: 0, env: map[string]string{"SUDO_UID": "501", "SUDO_GID": "20"}, goos: "linux",
+			wantCred: me, wantEnv: []string{"HOME=/Users/me", "USER=me", "LOGNAME=me", "XDG_RUNTIME_DIR=/run/user/501"}},
+		{name: "sudo -E on Linux keeps XDG_RUNTIME_DIR", euid: 0, goos: "linux",
+			env:      map[string]string{"SUDO_UID": "501", "SUDO_GID": "20", "XDG_RUNTIME_DIR": "/run/user/501"},
+			wantCred: me, wantEnv: []string{"HOME=/Users/me", "USER=me", "LOGNAME=me"}},
+		{name: "root login", euid: 0, goos: "linux", wantErr: true},
+		{name: "SUDO_GID missing", euid: 0, env: map[string]string{"SUDO_UID": "501"}, goos: "linux", wantErr: true},
+		{name: "SUDO_UID root", euid: 0, env: map[string]string{"SUDO_UID": "0", "SUDO_GID": "0"}, goos: "darwin", wantErr: true},
+		{name: "non-numeric", euid: 0, env: map[string]string{"SUDO_UID": "me", "SUDO_GID": "20"}, goos: "darwin", wantErr: true},
+		{name: "signed", euid: 0, env: map[string]string{"SUDO_UID": "+501", "SUDO_GID": "20"}, goos: "darwin", wantErr: true},
+		{name: "negative gid", euid: 0, env: map[string]string{"SUDO_UID": "501", "SUDO_GID": "-1"}, goos: "darwin", wantErr: true},
+		{name: "uid overflows", euid: 0, env: map[string]string{"SUDO_UID": "4294967797", "SUDO_GID": "20"}, goos: "linux", wantErr: true},
+		{name: "uid is (uid_t)-1", euid: 0, env: map[string]string{"SUDO_UID": "4294967295", "SUDO_GID": "20"}, goos: "linux", wantErr: true},
+		{name: "unknown user", euid: 0, env: map[string]string{"SUDO_UID": "502", "SUDO_GID": "20"}, goos: "linux", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cred, env, err := openAs(tc.euid, func(k string) string { return tc.env[k] }, tc.goos, lookup)
+			if tc.wantErr {
+				if !errors.Is(err, errOpenAsRoot) || cred != nil || env != nil {
+					t.Fatalf("got %+v %q %v, want only errOpenAsRoot", cred, env, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(cred, tc.wantCred) || !slices.Equal(env, tc.wantEnv) {
+				t.Errorf("got %+v %q, want %+v %q", cred, env, tc.wantCred, tc.wantEnv)
+			}
+		})
+	}
+}
+
 // TestOpenWith runs harmless commands in place of open/xdg-open; no test launches a browser.
 func TestOpenWith(t *testing.T) {
-	if err := openWith("true", "http://localhost:1"); err != nil {
+	if err := openWith("true", "http://localhost:1", nil, nil); err != nil {
 		t.Errorf("true: %v", err)
 	}
-	if err := openWith("false", "http://localhost:1"); err == nil || !strings.Contains(err.Error(), "false: exit status 1") {
+	if err := openWith("false", "http://localhost:1", nil, nil); err == nil || !strings.Contains(err.Error(), "false: exit status 1") {
 		t.Errorf("false: %v, want the command and its exit status", err)
 	}
-	if err := openWith("devdash-no-such-command", "http://localhost:1"); err == nil {
+	if err := openWith("devdash-no-such-command", "http://localhost:1", nil, nil); err == nil {
 		t.Error("a missing command is not an error")
 	}
 }
