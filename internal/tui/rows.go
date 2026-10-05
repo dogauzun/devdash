@@ -81,7 +81,8 @@ func (m *Model) rebuild() {
 // label draws (DEV-193); the last process's descendants move down with it. A chain is unfolded
 // when m.unfolded holds any of its links; the key is moved to the first link drawn, the
 // row where ← looks for it, so the chain stays unfolded when `a` or a filter changes which
-// link comes first. A chain whose label names no link has nothing to unfold and loses its key.
+// link comes first. A chain whose label names no link is drawn folded and keeps its key, so it
+// is unfolded again once `a` or a filter draws a link (DEV-198); → does not unfold such a row.
 // left maps each link an unfolded chain leaves out to the chain's first row, for the selection.
 func (m *Model) unfold(rows []model.Row) (out []model.Row, left map[model.RowKey]model.RowKey) {
 	if len(m.unfolded) == 0 {
@@ -99,15 +100,13 @@ func (m *Model) unfold(rows []model.Row) (out []model.Row, left map[model.RowKey
 		for _, s := range stack {
 			r.Depth += s.by
 		}
-		unfolded := false
-		for _, l := range r.Links {
-			unfolded = unfolded || m.unfolded[l.Key()]
-			delete(m.unfolded, l.Key())
-		}
 		ls := m.drawnLinks(r.Links)
-		if !unfolded || len(ls) == 0 {
-			out = append(out, r)
+		if len(ls) == 0 || !slices.ContainsFunc(r.Links, func(l *model.Process) bool { return m.unfolded[l.Key()] }) {
+			out = append(out, r) // a one-name label keeps its key, for when a link is drawn again (DEV-198)
 			continue
+		}
+		for _, l := range r.Links {
+			delete(m.unfolded, l.Key())
 		}
 		m.unfolded[ls[0].Key()] = true
 		for _, l := range r.Links {
