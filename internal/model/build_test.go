@@ -280,6 +280,25 @@ func TestBuildCopiesAndFills(t *testing.T) {
 	}
 }
 
+func TestNeedsArgv(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		want bool
+	}{
+		{"fourteen-bytes", false}, // 14: never cut
+		{"fifteen-bytes-x", true}, // 15: Linux may have cut it
+		{"dockerd", true},         // a runtime name
+		{"docker-pro", true},      // a cut runtime name, a prefix of docker-proxy
+		{"pasta.avx2", true},      // a runtime re-exec'd under another name
+		{"systemd", true},
+		{"node", false},
+	} {
+		if got := NeedsArgv(tt.name); got != tt.want {
+			t.Errorf("NeedsArgv(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestBuildName(t *testing.T) {
 	tests := []struct {
 		name, comm string

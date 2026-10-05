@@ -528,7 +528,7 @@ func TestCollectFixtureLimitedArgv(t *testing.T) {
 	want := wantProcs(procs, denied)
 	read := 0
 	for i := range want {
-		if p := &want[i]; !owners[p.PID] && p.Cwd != project && len(p.Name) < 15 && !model.MayBeRuntime(p.Name) && p.Name != "systemd" {
+		if p := &want[i]; !owners[p.PID] && p.Cwd != project && !model.NeedsArgv(p.Name) {
 			p.Argv, p.Unknown = nil, p.Unknown|model.FieldArgv
 		} else {
 			read++
