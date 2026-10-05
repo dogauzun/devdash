@@ -456,6 +456,15 @@ func TestDetailHeader(t *testing.T) {
 	if strings.Contains(screen(m), "main repo") {
 		t.Error("main repo shown for a project that is not a worktree")
 	}
+	// Neither branch nor SHA (a reftable repository, an unreadable HEAD): no branch field, like
+	// the title (DEV-163).
+	s.Projects[1].ShortSHA = ""
+	feed(m, s)
+	detailSelect(t, m, model.RowKey{Header: model.GroupProject, Group: apiID})
+	hasLine(t, m, "api")
+	if strings.Contains(screen(m), "branch") {
+		t.Errorf("branch field shown for an unknown branch:\n%s", screen(m))
+	}
 	detailSelect(t, m, model.RowKey{Header: model.GroupCompose, Group: "shop"})
 	hasLine(t, m, "shop (compose)")
 	hasLine(t, m, "members   shop-db-1, shop-web-1")

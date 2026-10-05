@@ -442,11 +442,13 @@ func detailHeader(d *detailDoc, s model.Snapshot, r model.Row) {
 		}
 		d.title(detailProjectTitle(pr))
 		d.field("root", quote(pr.Root))
-		branch := quote(pr.Branch)
-		if pr.Branch == "" {
-			branch = "detached at " + quote(pr.ShortSHA)
+		// Neither branch nor SHA is an unknown branch (DEV-152): no field, as the title has no ref.
+		switch {
+		case pr.Branch != "":
+			d.field("branch", quote(pr.Branch))
+		case pr.ShortSHA != "":
+			d.field("branch", "detached at "+quote(pr.ShortSHA))
 		}
-		d.field("branch", branch)
 		if pr.Worktree && pr.MainRepo != "" {
 			d.field("main repo", quote(pr.MainRepo))
 		}
