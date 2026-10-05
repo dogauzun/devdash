@@ -108,8 +108,7 @@ func generate() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("go env GOROOT: %w", err)
 	}
-	// readNotices names the directory in its errors.
-	std, err := readNotices(strings.TrimSpace(string(out)))
+	std, err := stdNotices(strings.TrimSpace(string(out)))
 	if err != nil {
 		return nil, fmt.Errorf("standard library: %w", err)
 	}
@@ -173,12 +172,54 @@ func parseList(r io.Reader, mods map[string]module) error {
 	}
 }
 
+// stdNotices reads the standard library's notices from goroot. Homebrew's GOROOT is
+// <cellar>/go/<version>/libexec, with PATENTS there and LICENSE moved one level up (DEV-145):
+// a libexec with no license file takes the parent's, but only Go's own BSD license.
+func stdNotices(goroot string) ([]notice, error) {
+	notices, licensed, err := noticesIn(goroot)
+	if err != nil {
+		return nil, err
+	}
+	where := goroot
+	if !licensed && filepath.Base(goroot) == "libexec" {
+		parent, _, err := noticesIn(filepath.Dir(goroot))
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range parent {
+			if k := kind(n.Name); k != "NOTICE" && k != "PATENTS" && strings.HasPrefix(n.Text, "Copyright 2009 The Go Authors.\n") {
+				notices = append(notices, n)
+				licensed = true
+			}
+		}
+		sort.Slice(notices, func(i, j int) bool { return notices[i].Name < notices[j].Name })
+		where += ", nor the Go license in " + filepath.Dir(goroot)
+	}
+	if !licensed {
+		return nil, fmt.Errorf("no LICENSE, LICENCE or COPYING file in %s", where)
+	}
+	return notices, nil
+}
+
 // readNotices reads the license, NOTICE and PATENTS files at the root of dir, sorted by name.
 // A directory without a license file is an error, so a new module cannot ship without one.
 func readNotices(dir string) ([]notice, error) {
-	entries, err := os.ReadDir(dir)
+	notices, licensed, err := noticesIn(dir)
 	if err != nil {
 		return nil, err
+	}
+	if !licensed {
+		return nil, fmt.Errorf("no LICENSE, LICENCE or COPYING file in %s", dir)
+	}
+	return notices, nil
+}
+
+// noticesIn reads the license, NOTICE and PATENTS files at the root of dir, sorted by name, and
+// says whether one of them is a license file.
+func noticesIn(dir string) (notices []notice, licensed bool, err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false, err
 	}
 	var names []string
 	for _, e := range entries {
@@ -186,12 +227,10 @@ func readNotices(dir string) ([]notice, error) {
 			names = append(names, e.Name())
 		}
 	}
-	var notices []notice
-	licensed := false
 	for _, name := range noticeFiles(names) {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		text := strings.ReplaceAll(string(b), "\r\n", "\n")
 		if !strings.HasSuffix(text, "\n") {
@@ -202,10 +241,7 @@ func readNotices(dir string) ([]notice, error) {
 			licensed = true
 		}
 	}
-	if !licensed {
-		return nil, fmt.Errorf("no LICENSE, LICENCE or COPYING file in %s", dir)
-	}
-	return notices, nil
+	return notices, licensed, nil
 }
 
 // noticeFiles picks the license, NOTICE and PATENTS files from names, sorted.
