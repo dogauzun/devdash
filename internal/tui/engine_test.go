@@ -82,9 +82,10 @@ func TestRunReturnsOnCancel(t *testing.T) {
 }
 
 // runAsked runs the dashboard with S already confirmed by the first message; then, when sig is
-// set, sends sig to this process and lets Run end on it alone. It fails the test when Run
-// does not return within 5 s.
-func runAsked(t *testing.T, sig syscall.Signal) (sudo bool, err error) {
+// set, sends sig to this process, and with quit also sends the quit y sends, so the program
+// returns at once and the signal may reach Run's handler only after it. Without quit, Run ends
+// on the signal alone. It fails the test when Run does not return within 5 s.
+func runAsked(t *testing.T, sig syscall.Signal, quit bool) (sudo bool, err error) {
 	t.Helper()
 	if sig != 0 {
 		// Also delivered here, so a signal Run no longer catches does not end the test binary.
@@ -99,11 +100,13 @@ func runAsked(t *testing.T, sig syscall.Signal) (sudo bool, err error) {
 		}
 		first = false
 		tm.(*Model).sudo.asked = true
-		if sig == 0 {
-			return tea.QuitMsg{} // the quit y sends
+		if sig != 0 {
+			if err := syscall.Kill(os.Getpid(), sig); err != nil {
+				t.Error(err)
+			}
 		}
-		if err := syscall.Kill(os.Getpid(), sig); err != nil {
-			t.Error(err)
+		if sig == 0 || quit {
+			return tea.QuitMsg{} // the quit y sends
 		}
 		return msg
 	})
@@ -129,7 +132,7 @@ func runAsked(t *testing.T, sig syscall.Signal) (sudo bool, err error) {
 
 // TestRunSudo: the quit y sends, with no signal, reports the sudo request (DEV-144).
 func TestRunSudo(t *testing.T) {
-	if sudo, err := runAsked(t, 0); err != nil || !sudo {
+	if sudo, err := runAsked(t, 0, false); err != nil || !sudo {
 		t.Errorf("Run after y: sudo %v, %v; want true, nil", sudo, err)
 	}
 }
@@ -139,8 +142,20 @@ func TestRunSudo(t *testing.T) {
 // DEV-164, DEV-167).
 func TestRunReturnsOnSignal(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
-		if sudo, err := runAsked(t, sig); err != nil || sudo {
+		if sudo, err := runAsked(t, sig, false); err != nil || sudo {
 			t.Errorf("Run on %v: sudo %v, %v; want false, nil", sig, sudo, err)
+		}
+	}
+}
+
+// TestRunSignalWithQuit: a signal sent with y's quit still cancels the sudo request, though the
+// program returns before the signal has cancelled anything (DEV-177).
+func TestRunSignalWithQuit(t *testing.T) {
+	for range 20 {
+		for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+			if sudo, err := runAsked(t, sig, true); err != nil || sudo {
+				t.Fatalf("Run on %v with y's quit: sudo %v, %v; want false, nil", sig, sudo, err)
+			}
 		}
 	}
 }
