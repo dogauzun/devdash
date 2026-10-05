@@ -146,11 +146,10 @@ type detailFreeMsg struct {
 }
 
 // apply keeps the answer when it is the latest run's.
-func (msg detailFreeMsg) apply(m *Model) tea.Cmd {
+func (msg detailFreeMsg) apply(m *Model) {
 	if msg.seq == m.dfree.seq {
 		m.dfree.ans, m.dfree.have = msg.ans, true
 	}
-	return nil
 }
 
 // lowestPort is p's lowest TCP port: listeners of any proto but UDP, as holds and freeport.Find
@@ -200,7 +199,7 @@ func (m *Model) detailProbe() tea.Cmd {
 	f.key, f.from, f.taken = key, from, s.TakenAt
 	f.seq++
 	seq, probe := f.seq, m.o.Probe
-	return func() tea.Msg { return detailFreeMsg{seq: seq, ans: probePort(s, from, false, probe)} }
+	return func() tea.Msg { return detailFreeMsg{seq: seq, ans: nextFree(s, from, probe)} }
 }
 
 // detailNextFree writes p's next free field after its listeners: `…` until the answer for p

@@ -43,11 +43,10 @@ type portProbedMsg struct {
 }
 
 // apply keeps the answer when it is the latest run's, for the current port.
-func (msg portProbedMsg) apply(m *Model) tea.Cmd {
+func (msg portProbedMsg) apply(m *Model) {
 	if msg.seq == m.port.seq && m.port.n != 0 {
 		m.port.ans, m.port.have = msg.ans, true
 	}
-	return nil
 }
 
 // portQuery is the port number q stands for: digits only, no leading zero, 1 to 65535; 0 when q
@@ -98,21 +97,26 @@ func (m *Model) portProbe() tea.Cmd {
 	s, n, probe := m.upd.Snapshot, p.n, m.o.Probe
 	p.holders = len(model.Holders(s, n))
 	p.seq++
-	seq, self := p.seq, p.holders == 0
-	return func() tea.Msg { return portProbedMsg{seq: seq, ans: probePort(s, n, self, probe)} }
+	search, seq := nextFree, p.seq
+	if p.holders == 0 {
+		search = probeSelf
+	}
+	return func() tea.Msg { return portProbedMsg{seq: seq, ans: search(s, n, probe)} }
 }
 
-// probePort is the port line's search: with self (no row holds n), n itself is probed first and
-// a free n ends it; then, below 65535, freeport.Find from n+1, as `devdash free n+1` searches.
-func probePort(s model.Snapshot, n uint16, self bool, probe freeport.Prober) portAnswer {
-	a := portAnswer{self: self}
-	if self {
-		a.free, a.err = probe(n)
-		if a.free || a.err != nil {
-			return a
-		}
-		a.refused = true
+// probeSelf is the port line's search when no row holds n: n itself is probed first and a free
+// n ends it; then nextFree.
+func probeSelf(s model.Snapshot, n uint16, probe freeport.Prober) portAnswer {
+	if free, err := probe(n); free || err != nil {
+		return portAnswer{self: true, free: free, err: err}
 	}
+	a := nextFree(s, n, probe)
+	a.self, a.refused = true, true
+	return a
+}
+
+// nextFree searches, below 65535, from n+1 with freeport.Find, as `devdash free n+1` does.
+func nextFree(s model.Snapshot, n uint16, probe freeport.Prober) (a portAnswer) {
 	if n < 65535 {
 		a.next, a.found, a.err = freeport.Find(s, n+1, probe)
 	}
