@@ -135,8 +135,8 @@ func TestTool(t *testing.T) {
 		{argv: "python3 -m pytest -c pytest.ini", tool: "pytest", args: "-c pytest.ini"}, // after the tool, -c is its own
 		// The flags are each interpreter's own (DEV-138): -p is npx's --package and ruby's loop,
 		// -e is python's nothing, and python's -X and -W take the next argument as their value.
-		{argv: "npx -p nodemon nodemon server.js", tool: "nodemon", args: "nodemon server.js"},
-		{argv: "bunx -p vite vite", tool: "vite", args: "vite"},
+		{argv: "npx -p nodemon nodemon server.js", tool: "nodemon", args: "server.js"},
+		{argv: "bunx -p vite vite", tool: "vite"},
 		{argv: "npx -c tsc@-p@./tsconfig.json@--watch"},
 		{argv: "npx --call=tsc@--watch"},
 		{argv: "ruby -p script.rb", tool: "script.rb"},
@@ -171,6 +171,41 @@ func TestTool(t *testing.T) {
 		{argv: "fish -C set@x@1"},
 		{argv: "sh --rcfile rc x.sh", tool: "x.sh"},
 		{argv: "sh --init-file rc x.sh", tool: "x.sh"},
+		// npx's and bunx's -p and --package, ruby's -r, bun's -r, --preload and its aliases
+		// --require and --import, node's --env-file-if-exists, and fish's -f, --features, -D,
+		// --debug-stack-frames, --profile-startup and --debug-output take the next argument as
+		// their value; a fish short option taking a value takes the rest of its cluster as it,
+		// and -c there is inline code (DEV-176).
+		{argv: "npx -p @angular/cli ng serve", tool: "ng", args: "serve"},
+		{argv: "npx --package @angular/cli ng serve", tool: "ng", args: "serve"},
+		{argv: "npx --package=@angular/cli ng serve", tool: "ng", args: "serve"},
+		{argv: "bunx -p @angular/cli ng serve", tool: "ng", args: "serve"},
+		{argv: "bunx --package @angular/cli ng", tool: "ng"},
+		{argv: "npx -p @angular/cli"},
+		{argv: "ruby -r json app.rb", tool: "app.rb"},
+		{argv: "ruby -rjson app.rb", tool: "app.rb"},
+		{argv: "bun -r ./x.ts app.ts", tool: "app.ts"},
+		{argv: "bun --preload ./x.ts app.ts", tool: "app.ts"},
+		{argv: "bun --require ./x.ts app.ts", tool: "app.ts"},
+		{argv: "bun --import ./x.ts run app.ts", tool: "app.ts"},
+		{argv: "node --env-file-if-exists .env app.js", tool: "app.js"},
+		{argv: "nodejs --env-file-if-exists .env app.js", tool: "app.js"},
+		{argv: "fish -f feat script.fish", tool: "script.fish"},
+		{argv: "fish --features feat script.fish", tool: "script.fish"},
+		{argv: "fish -D 2 script.fish", tool: "script.fish"},
+		{argv: "fish --debug-stack-frames 2 script.fish", tool: "script.fish"},
+		{argv: "fish --profile-startup prof.txt script.fish", tool: "script.fish"},
+		{argv: "fish --debug-output log.txt script.fish", tool: "script.fish"},
+		{argv: "fish -o log.txt script.fish", tool: "script.fish"},
+		{argv: "fish -Cset@x@1 script.fish", tool: "script.fish"},
+		{argv: "fish -dproc script.fish", tool: "script.fish"},
+		{argv: "fish -fno-qmark script.fish", tool: "script.fish"},
+		{argv: "fish -iC set@x@1 script.fish", tool: "script.fish"},
+		{argv: "fish -n script.fish", tool: "script.fish"},
+		{argv: "fish -Cset@x@1"},
+		{argv: "fish -lc make@dev"},
+		{argv: "fish -Ccd@/x -c make@dev"},
+		{argv: "bash -Cs script.sh"}, // other shells keep reading c and s anywhere in a cluster
 		// python's -m takes its module attached too, a flag of its own for other interpreters;
 		// bun's run and x are subcommands, the tool follows them (DEV-153).
 		{argv: "python3 -mhttp.server --bind 127.0.0.1 6107", tool: "http.server", args: "--bind 127.0.0.1 6107"},
@@ -251,6 +286,8 @@ func TestToolMatchesClassify(t *testing.T) {
 		"node -r ./register.js app.js", "node --require ./register.js Jest.js", "node --require=x jest",
 		"node --import ./loader.mjs vitest.mjs", "node --env-file .env nodemon.js", "nodejs -r x jest",
 		"ruby -I lib /usr/local/bin/rspec", "node -r x",
+		"npx -p jest-cli jest", "npx --package @vitest/ui vitest", "bunx -p x Jest --ci", "ruby -r json /usr/local/bin/rspec",
+		"bun -r ./x.ts jest.ts", "bun --preload ./x.ts vitest", "bun --import x run jest", "node --env-file-if-exists .env nodemon.js",
 	} {
 		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
 		for i := range argv {
@@ -295,6 +332,10 @@ func TestOneStringArgv(t *testing.T) {
 		{"OrbStack Helper", "/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app/Contents/MacOS/OrbStack Helper", nil, KindOther, true},
 		{"com.docker.backe", "/Users/u/My Apps/Docker.app/Contents/MacOS/com.docker.backend", nil, KindOther, true},
 		{"Google Chrome He", "/Applications/Google Chrome.app/x/Google Chrome Helper (Renderer)", nil, KindOther, false},
+		// a kernel name a title rewrite filled (libuv's prctl) is matched whole, not after its
+		// last "/", which is an argument's (DEV-175)
+		{"npm exec ./vi", "npm exec ./vi", nil, KindOther, false},
+		{"tail /x/dockerd", "tail /x/dockerd", nil, KindOther, false},
 	}
 	for _, tt := range tests {
 		p := Process{PID: 42, Name: tt.name, Argv: []string{tt.argv}, Listeners: tt.listeners}

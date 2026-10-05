@@ -137,18 +137,28 @@ var inlineCodeFlags = map[string]bool{
 // (`python3 -X dev -c …`); -Wignore, with the value attached, is a plain flag. The shells' -o
 // and -O, also at the end of -eo, are read by toolArg (DEV-159). node's preloads and env file
 // (`node -r ./register.js app.js`), ruby's load path, fish's init command, profile and debug
-// categories, and bash's rc file, also as sh (dash refuses long flags) (DEV-170). Written with
-// = (--require=x), the value is part of the flag.
+// categories, and bash's rc file, also as sh (dash refuses long flags) (DEV-170). npx's and
+// bunx's package, ruby's library, bun's preloads (--require and --import are its aliases of
+// --preload), node's optional env file, and fish's features, stack depth, startup profile and
+// debug log (DEV-176). Written with = (--require=x), the value is part of the flag.
 var valueFlags = map[string]bool{
 	"python -X": true, "python -W": true,
-	"node -r": true, "node --require": true, "node --import": true, "node --env-file": true,
-	"nodejs -r": true, "nodejs --require": true, "nodejs --import": true, "nodejs --env-file": true,
-	"ruby -I":       true,
+	"node -r": true, "node --require": true, "node --import": true, "node --env-file": true, "node --env-file-if-exists": true,
+	"nodejs -r": true, "nodejs --require": true, "nodejs --import": true, "nodejs --env-file": true, "nodejs --env-file-if-exists": true,
+	"bun -r": true, "bun --preload": true, "bun --require": true, "bun --import": true,
+	"npx -p": true, "npx --package": true, "bunx -p": true, "bunx --package": true,
+	"ruby -I": true, "ruby -r": true,
 	"bash --rcfile": true, "bash --init-file": true,
 	"sh --rcfile": true, "sh --init-file": true,
 	"fish -C": true, "fish --init-command": true, "fish -p": true, "fish --profile": true,
-	"fish -d": true, "fish --debug": true,
+	"fish -d": true, "fish --debug": true, "fish -f": true, "fish --features": true,
+	"fish -D": true, "fish --debug-stack-frames": true, "fish --profile-startup": true, "fish --debug-output": true,
 }
+
+// fishValueOpts: fish's short options that take a value (its getopt string "hPilNnvc:C:p:d:f:D:o:"),
+// which takes the rest of a cluster as the value (`-Cset x`, `-dproc`) or, at its end, the next
+// argument; -c is inline code (DEV-176).
+const fishValueOpts = "cCpdfDo"
 
 // subcommands: an interpreter's first non-flag arguments that name no tool but run the next
 // one: `bun run dev`, `bun x vite` (DEV-153).
