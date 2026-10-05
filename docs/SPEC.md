@@ -96,7 +96,7 @@ type Project struct {
     ID       string  // repository root path, also the group key
     Root     string
     Name     string  // basename of Root, or the repository's name for linked worktrees
-    Branch   string  // "" when detached; then ShortSHA is set
+    Branch   string  // "" when detached (then ShortSHA is set) or unknown
     ShortSHA string
     Worktree bool
     MainRepo string  // main work tree, for linked worktrees only; "" when none is recorded
@@ -150,7 +150,7 @@ A process belongs to the nearest git repository above its working directory; whe
 6. Still nothing: take the first absolute path in argv that lies inside a project already found in this snapshot, and use that project. Paths that are not inside a known project are not walked, to avoid stat calls on arbitrary strings.
 7. Otherwise the process goes under the `other` group, which is sorted last.
 
-Branch comes from the repository's `HEAD` (`ref: refs/heads/<branch>`, or a 7-character SHA when detached), read from `.git/HEAD` for a main repository and from `<gitdir>/HEAD` for a worktree. Nested repositories and submodules resolve to the nearest `.git`, which is what a developer working inside the submodule expects.
+Branch comes from the repository's `HEAD` (`ref: refs/heads/<branch>`, or a 7-character SHA when detached), read from `.git/HEAD` for a main repository and from `<gitdir>/HEAD` for a worktree. A repository in git's reftable format keeps HEAD in its tables and writes the placeholder `ref: refs/heads/.invalid` to the file; devdash does not read reftables, so the branch of such a repository and its worktrees is unknown: empty, with no SHA, and the header reads just the name. Nested repositories and submodules resolve to the nearest `.git`, which is what a developer working inside the submodule expects.
 
 Resolution results are cached per directory path with the mtime of the `.git` entry and of `HEAD`; a hit costs one `stat`, a miss costs the walk, and the cache is capped at 4096 entries. Every filesystem read uses `os.Lstat` and refuses to follow a symlink out of the walked path, so a process running in a symlinked directory still resolves to the real repository.
 
