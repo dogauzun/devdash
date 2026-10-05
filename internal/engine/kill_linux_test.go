@@ -4,7 +4,6 @@ package engine
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,43 +15,6 @@ import (
 
 	"github.com/dogauzun/devdash/internal/model"
 )
-
-// stat builds a /proc/[pid]/stat line with the given state, ppid, num_threads (field 20) and
-// starttime (field 22); the comm holds a space and a ')', as the parser must allow.
-func stat(state string, ppid, threads int, start uint64) []byte {
-	return fmt.Appendf(nil, "4242 (a b) c) %s %d 4242 4242 0 -1 4194560 100 0 0 0 7 3 0 0 20 0 %d 0 %d 1000 10\n",
-		state, ppid, threads, start)
-}
-
-// TestParseStat: a zombie counts as gone only once its thread group is empty. The leader of a
-// multi-threaded process shows state Z as soon as its own thread has exited, while another
-// thread may still be closing the process's files, sockets included (DEV-83).
-func TestParseStat(t *testing.T) {
-	tests := []struct {
-		name  string
-		b     []byte
-		ticks uint64
-		ppid  int
-		err   error
-	}{
-		{"running", stat("S", 1, 1, 5000), 5000, 1, nil},
-		{"running, several threads", stat("R", 7, 6, 5000), 5000, 7, nil},
-		{"zombie, thread group empty", stat("Z", 7, 1, 5000), 0, 0, errGone},
-		{"zombie leader, other threads still exiting", stat("Z", 7, 3, 5000), 5000, 7, nil},
-		{"dead", stat("X", 7, 3, 5000), 0, 0, errGone},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ticks, ppid, err := parseStat(tt.b)
-			if ticks != tt.ticks || ppid != tt.ppid || !errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
-				t.Errorf("parseStat = %d, %d, %v; want %d, %d, %v", ticks, ppid, err, tt.ticks, tt.ppid, tt.err)
-			}
-		})
-	}
-	if _, _, err := parseStat([]byte("4242 (x) S 1 2")); err == nil || errors.Is(err, errGone) {
-		t.Errorf("short stat: err %v, want malformed", err)
-	}
-}
 
 // TestKillLiveListenerSocketClosed: when Kill reports a SIGTERMed Go listener (multi-threaded,
 // as every Go program is) exited, its listening socket is gone from a fresh snapshot, so

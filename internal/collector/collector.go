@@ -5,11 +5,16 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 
 	"github.com/dogauzun/devdash/internal/model"
 )
+
+// ErrGone is ProcStat's error for a pid that has exited: it does not exist, or it is a zombie
+// (on Linux, once every thread has exited, so its files are closed).
+var ErrGone = errors.New("no such process")
 
 // The raw types are model's, so a Result goes into model.Build without conversion.
 type (

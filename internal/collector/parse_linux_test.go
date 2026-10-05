@@ -3,6 +3,7 @@
 package collector
 
 import (
+	"fmt"
 	"net/netip"
 	"slices"
 	"testing"
@@ -18,17 +19,17 @@ func TestParseStat(t *testing.T) {
 		{
 			name: "plain",
 			in:   "1234 (node) S 1 1234 1234 0 -1 4194560 100 0 0 0 7 3 0 0 20 0 1 0 5000 1000000 200 18446744073709551615\n",
-			want: procStat{name: "node", state: 'S', ppid: 1, flags: 4194560, utime: 7, stime: 3, starttime: 5000},
+			want: procStat{name: "node", state: 'S', ppid: 1, flags: 4194560, utime: 7, stime: 3, threads: 1, starttime: 5000},
 		},
 		{
 			name: "spaces and parens in comm",
 			in:   "77 (a b) (c) R 42 77 77 0 -1 4194304 0 0 0 0 11 22 0 0 20 0 1 0 333 0 0",
-			want: procStat{name: "a b) (c", state: 'R', ppid: 42, flags: 4194304, utime: 11, stime: 22, starttime: 333},
+			want: procStat{name: "a b) (c", state: 'R', ppid: 42, flags: 4194304, utime: 11, stime: 22, threads: 1, starttime: 333},
 		},
 		{
 			name: "kernel thread",
 			in:   "2 (kthreadd) S 0 0 0 0 -1 2129984 0 0 0 0 0 0 0 0 20 0 1 0 0 0 0",
-			want: procStat{name: "kthreadd", state: 'S', ppid: 0, flags: 2129984},
+			want: procStat{name: "kthreadd", state: 'S', ppid: 0, flags: 2129984, threads: 1},
 		},
 		{name: "truncated", in: "1 (x) S 0 1 1", err: true},
 		{name: "no parens", in: "1 x S 0 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 0", err: true},
@@ -50,6 +51,43 @@ func TestParseStat(t *testing.T) {
 	}
 	if st, _ := parseStat([]byte(tests[0].in)); st.flags&pfKthread != 0 {
 		t.Error("user process flags carry PF_KTHREAD")
+	}
+}
+
+// stat builds a /proc/[pid]/stat line with the given state, ppid and num_threads (field 20), and
+// starttime (field 22) 5000; the comm holds a space and a ')', as the parser must allow.
+func stat(state string, ppid, threads int) []byte {
+	return fmt.Appendf(nil, "4242 (a b) c) %s %d 4242 4242 0 -1 4194560 100 0 0 0 7 3 0 0 20 0 %d 0 5000 1000 10\n",
+		state, ppid, threads)
+}
+
+// TestProcStatGone: for kill, a zombie counts as gone only once its thread group is empty. The
+// leader of a multi-threaded process shows state Z as soon as its own thread has exited, while
+// another thread may still be closing the process's files, sockets included (DEV-83).
+func TestProcStatGone(t *testing.T) {
+	tests := []struct {
+		name string
+		b    []byte
+		ppid int
+		gone bool
+	}{
+		{"running", stat("S", 1, 1), 1, false},
+		{"running, several threads", stat("R", 7, 6), 7, false},
+		{"zombie, thread group empty", stat("Z", 7, 1), 7, true},
+		{"zombie leader, other threads still exiting", stat("Z", 7, 3), 7, false},
+		{"dead", stat("X", 7, 3), 7, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := parseStat(tt.b)
+			if err != nil || s.ppid != tt.ppid || s.starttime != 5000 || s.gone() != tt.gone {
+				t.Errorf("parseStat = %+v, %v, gone %v; want ppid %d, starttime 5000, gone %v",
+					s, err, s.gone(), tt.ppid, tt.gone)
+			}
+		})
+	}
+	if _, err := parseStat([]byte("4242 (x) S 1 2")); err == nil {
+		t.Error("short stat: no error, want malformed")
 	}
 }
 
