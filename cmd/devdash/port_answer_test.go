@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
@@ -162,6 +164,31 @@ func TestWriteAnswer(t *testing.T) {
 				"       serve 日本…\n" +
 				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
 				"next free: 5174\n"},
+		{"an absolute argv[0] by its basename (DEV-146)", with(func(s *model.Snapshot) {
+			proc(s).Name, proc(s).Tags = "Python", 0
+			proc(s).Argv = []string{"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+				"-m", "http.server", "--bind", "127.0.0.1", "5173"}
+		}), 5173, 80,
+			"15669  Python  shop  0.0.0.0:5173\n" +
+				"       Python -m http.server --bind 127.0.0.1 5173\n" +
+				"       shop @ feat/login (worktree), up 3h, this repo, other worktree\n" +
+				"next free: 5174\n"},
+		{"a long cwd keeps its end, the uptime and the marker on the line (DEV-146)", with(func(s *model.Snapshot) {
+			proc(s).ProjectID, proc(s).Tags = "", model.TagCwdDeleted
+			proc(s).Cwd = "/private/tmp/claude-501/scratchpad/a4a5b6b7-73ad-4566-9633-84c0719ffa45/fx/shop-search"
+		}), 5173, 40,
+			"15669  python3  -  0.0.0.0:5173\n" +
+				"       uvicorn app:main --reload --port…\n" +
+				"       …c0719ffa45/fx/shop-search, up 3h\n" +
+				"       cwd deleted\n" +
+				"next free: 5174\n"},
+		{"a cwd that fits exactly is not cut", with(func(s *model.Snapshot) {
+			proc(s).ProjectID, proc(s).Tags, proc(s).Cwd = "", 0, "/wt/shop-login"
+		}), 5173, 7 + 21, // "/wt/shop-login, up 3h" is 21 cells
+			"15669  python3  -  0.0.0.0:5173\n" +
+				"       uvicorn app:main --r…\n" +
+				"       /wt/shop-login, up 3h\n" +
+				"next free: 5174\n"},
 		{"width unknown: not cut", answerFixture(), 5173, 0,
 			"15669  python3  shop  0.0.0.0:5173\n" +
 				"       uvicorn app:main --reload --port 5173\n" +
@@ -215,6 +242,20 @@ func TestWriteAnswer(t *testing.T) {
 // TestWriteAnswerNextFree: the next free port is the search `devdash free N+1` makes, with the
 // snapshot's holders skipped; none in range names the range; a probe that fails leaves the line
 // out, says why on stderr and keeps exit 0 (DEV-114); a free port is answered without a search.
+// TestHolderLinesWideCwd: a cwd cut on the left fits the terminal even when the cut lands
+// inside a two-cell character (DEV-146).
+func TestHolderLinesWideCwd(t *testing.T) {
+	p := answerFixture().Processes[0]
+	p.ProjectID, p.Cwd = "", "/home/u/日本語のディレクトリ/プロジェクト"
+	for width := 15; width <= 60; width++ { // from 15 the where line has a cell for "…"
+		lines := holderLines(p, nil, nil, answerFixture().TakenAt, width)
+		where := lines[1]
+		if w := len(detailIndent) + ansi.StringWidth(where); w > width || !strings.HasSuffix(where, ", up 3h") {
+			t.Errorf("width %d: where line %q is %d cells", width, where, w)
+		}
+	}
+}
+
 func TestWriteAnswerNextFree(t *testing.T) {
 	boom := errors.New("probing port 5175: bind: operation not permitted")
 	base := answerFixture()

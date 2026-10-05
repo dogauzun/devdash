@@ -54,9 +54,23 @@ func TestClassify(t *testing.T) {
 		{argv: "-zsh", want: KindShell},
 		{argv: "/bin/bash -c make dev", want: KindShell},
 		{argv: "zsh", listeners: listen, want: KindShell}, // a shell that listens is a shell
+		// A shell running a script keeps its kind: the script is its label only (DEV-159).
+		{argv: "/bin/bash ./run55.sh 4", want: KindShell},
+		{argv: "bash ./server.sh", listeners: listen, want: KindShell},
+		{argv: "sh node_modules/.bin/jest", want: KindShell},
+		{argv: "bash --rcfile rc claude", want: KindShell},
+		{argv: "zsh -o pipefail nodemon.zsh", want: KindShell},
+		{argv: "fish vitest", want: KindShell},
 		// server and other
 		{argv: "node server.js", listeners: listen, want: KindServer},
 		{argv: "python3 -m http.server", listeners: listen, want: KindServer},
+		// -mMODULE is -m MODULE; bun's run and x name no tool (DEV-153).
+		{argv: "python3 -mpytest", want: KindTest},
+		{argv: "python3 -mhttp.server 8000", listeners: listen, want: KindServer},
+		{argv: "bun run vitest", want: KindTest},
+		{argv: "bun --watch run nodemon", want: KindWatcher},
+		{argv: "bun x jest", want: KindTest},
+		{argv: "bun run dev", listeners: listen, want: KindServer},
 		{argv: "./bin/api", listeners: listen, want: KindServer},
 		{argv: "git status", want: KindOther},
 		{argv: "node", want: KindOther},
@@ -125,6 +139,54 @@ func TestTool(t *testing.T) {
 		{argv: "python3 -X dev app.py", tool: "app.py"},
 		{argv: "python3 -Wignore app.py", tool: "app.py"},
 		{argv: "python3 -m"},
+		// python's -m takes its module attached too, a flag of its own for other interpreters;
+		// bun's run and x are subcommands, the tool follows them (DEV-153).
+		{argv: "python3 -mhttp.server --bind 127.0.0.1 6107", tool: "http.server", args: "--bind 127.0.0.1 6107"},
+		{argv: "python3 -mpytest", tool: "pytest"},
+		{argv: "python3 -B -mpytest -x", tool: "pytest", args: "-x"},
+		{argv: "node -mx app.js", tool: "app.js"},
+		{argv: "bun run dev", tool: "dev"},
+		{argv: "bun --watch run server.ts", tool: "server.ts"},
+		{argv: "bun x vite", tool: "vite"},
+		{argv: "bun run vitest --watch", tool: "vitest", args: "--watch"},
+		{argv: "bun run --hot ./src/index.ts", tool: "index.ts"},
+		{argv: "bun run run", tool: "run"},
+		{argv: "bun run"},
+		{argv: "bun x"},
+		{argv: "bunx run", tool: "run"},
+		{argv: "node run dev", tool: "run", args: "dev"},
+		// A shell running a script file names it (DEV-159); inline code (-c, also in -lc or -ec),
+		// standard input (-s) and a login or interactive shell name none. -o, -O, +o, +O,
+		// --rcfile and --init-file take the next argument as their value.
+		{argv: "/bin/bash ./run55.sh 4", tool: "run55.sh", args: "4"},
+		{argv: "-bash ./guard.sh", tool: "guard.sh"},
+		{argv: "sh scripts/dev.sh", tool: "dev.sh"},
+		{argv: "/bin/zsh -x build.zsh", tool: "build.zsh"},
+		{argv: "dash x.sh", tool: "x.sh"},
+		{argv: "ksh x.ksh", tool: "x.ksh"},
+		{argv: "fish x.fish", tool: "x.fish"},
+		{argv: "bash -o pipefail script.sh", tool: "script.sh"},
+		{argv: "bash -eo pipefail script.sh", tool: "script.sh"},
+		{argv: "bash +o posix script.sh", tool: "script.sh"},
+		{argv: "bash -O extglob +O nullglob script.sh", tool: "script.sh"},
+		{argv: "bash +x script.sh", tool: "script.sh"},
+		{argv: "bash --rcfile rc script.sh", tool: "script.sh"},
+		{argv: "bash --init-file rc script.sh", tool: "script.sh"},
+		{argv: "bash --norc -- script.sh", tool: "script.sh"},
+		{argv: "bash -m ./script.sh", tool: "script.sh"}, // a shell's -m is job control
+		{argv: "sh -c make@dev"},
+		{argv: "bash -lc make@dev"},
+		{argv: "sh -ec make@dev"},
+		{argv: "zsh -o pipefail -c make@dev"},
+		{argv: "fish -c make@dev"},
+		{argv: "fish --command=make@dev"},
+		{argv: "sh -s stable"},
+		{argv: "-zsh"},
+		{argv: "bash"},
+		{argv: "bash -i"},
+		{argv: "zsh -l"},
+		{argv: "nu script.nu"},
+		{argv: "bash5 script.sh"},
 		{argv: "/usr/sbin/sshd -D"},
 		{argv: "vite --port 5173"},
 		{argv: ""},
@@ -143,7 +205,8 @@ func TestTool(t *testing.T) {
 }
 
 // TestToolMatchesClassify: Classify matches on the argument Tool names, lower-cased and
-// without a script extension, so the two never pick different arguments.
+// without a script extension, so the two never pick different arguments. A shell's script is
+// a label only (DEV-159): TestClassify's shell cases show that Classify does not unwrap it.
 func TestToolMatchesClassify(t *testing.T) {
 	for _, argv := range []string{
 		"node /app/node_modules/.bin/Jest --ci", "node --max-old-space-size=4096 /app/node_modules/jest/bin/jest.js",
@@ -152,6 +215,7 @@ func TestToolMatchesClassify(t *testing.T) {
 		"node", "node --inspect", "python3 -m", "/usr/sbin/sshd -D", "-zsh",
 		"python3 -c import@pytest", "node -e require('jest')", "node --print=x jest",
 		"npx -p nodemon nodemon server.js", "python3 -X dev -m pytest", "ruby -p spec.rb",
+		"python3 -mPyTest", "bun run Vitest", "bun --watch x jest", "bun run",
 	} {
 		argv := strings.Fields(strings.ReplaceAll(argv, "@", "\x00"))
 		for i := range argv {

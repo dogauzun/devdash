@@ -100,6 +100,7 @@ func TestTableWidths(t *testing.T) {
 			{"MEM", vite, "179M"},
 			{"USER", line(m, "*22"), "root"},
 			{"COMMAND", vite, "node node_"},
+			{"COMMAND", line(m, "8080"), "api -addr"}, // an absolute argv[0] by its basename (DEV-146)
 		}
 		for _, ch := range checks {
 			if strings.Contains(ch.row, ch.val) != has(ch.col) {
@@ -176,7 +177,7 @@ func TestTableCells(t *testing.T) {
 		{"go test", []string{"    go ", " test ", " 201 ", " 30s "}},
 		{"*5432", []string{"    shop-db-1 (postgres:16) ", " container ", " 300 ", " 4h ", " – ", " root "}},
 		{"*8000", []string{"    shop-web-1 (nginx:1.27) ", " container "}},
-		{"*22", []string{"    sshd ", " server ", " 1 ", " 3d ", " root ", " /usr/sbin/sshd -D"}},
+		{"*22", []string{"    sshd ", " server ", " 1 ", " 3d ", " root ", " sshd -D"}},
 		{"*631", []string{"    unknown ", " - ", " – "}},
 	}
 	for _, c := range cases {
@@ -640,7 +641,7 @@ func TestTableTags(t *testing.T) {
 	}
 	selectKey(t, m, keyOf(s, 200))
 	l = rawLine(m, "8080")
-	for _, part := range []string{"api", "orphaned", "server", "bin/api"} {
+	for _, part := range []string{"api", "orphaned", "server", "-addr"} {
 		if sgr := sgrBefore(l, part); !strings.Contains(sgr, "7") {
 			t.Errorf("selected row: %q drawn with %q, not in reverse video: %q", part, sgr, l)
 		}
