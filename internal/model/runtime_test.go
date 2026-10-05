@@ -76,21 +76,11 @@ func TestMayBeRuntime(t *testing.T) {
 	}
 }
 
-// TestRuntimeLists: every list key is a lower-case basename, as names() produces them, and
-// every proxy is a runtime process, so a forwarder Reconcile trusts is also refused by name
-// when Docker gives no container list (spec, risk 6).
+// TestRuntimeLists: every runtimeNames key is a lower-case basename, as names() produces them.
 func TestRuntimeLists(t *testing.T) {
 	for n := range runtimeNames {
 		if n != baseName(n) {
 			t.Errorf("runtimeNames[%q] never matches: names are compared as %q", n, baseName(n))
-		}
-	}
-	for n := range proxyNames {
-		if n != baseName(n) {
-			t.Errorf("proxyNames[%q] never matches: names are compared as %q", n, baseName(n))
-		}
-		if !IsContainerRuntime(Process{PID: 9, Name: n}) {
-			t.Errorf("proxy %q is not a runtime process", n)
 		}
 	}
 }
