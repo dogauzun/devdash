@@ -44,8 +44,8 @@ func TestProcessCommand(t *testing.T) {
 	}
 }
 
-// TestProcessLabel: a shell's script is labelled after the shell on both systems, though Linux
-// names the process of a #! script after the script (DEV-159).
+// TestProcessLabel: a script is labelled after its shell or interpreter on both systems, though
+// Linux names the process of a #! script after the script (DEV-159, DEV-169).
 func TestProcessLabel(t *testing.T) {
 	for _, tt := range []struct {
 		name, want string
@@ -56,6 +56,12 @@ func TestProcessLabel(t *testing.T) {
 		{"bash", "link.sh (bash)", []string{"/bin/bash", "./link.sh", "4"}},    // macOS
 		{"link.sh", "link.sh (bash)", []string{"/bin/bash", "./link.sh", "4"}}, // Linux
 		{"a-very-long-scr", "a-very-long-script.sh (sh)", []string{"/bin/sh", "./a-very-long-script.sh"}},
+		{"bash", "guard.sh (sh)", []string{"/bin/sh", "./guard.sh"}}, // macOS: /bin/sh runs bash
+		// Any interpreter of a #! script on Linux (DEV-169); macOS and `#!/usr/bin/env python3` keep the name.
+		{"manage.py", "manage.py (python3)", []string{"/usr/bin/python3", "./manage.py", "runserver"}},
+		{"a_very_long_scr", "a_very_long_script_name.py (python3)", []string{"/usr/bin/python3", "./a_very_long_script_name.py"}},
+		{"Python", "manage.py (Python)", []string{"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python", "./manage.py"}},
+		{"python3", "a_very_long_script_name.py (python3)", []string{"python3", "./a_very_long_script_name.py"}},
 		{"bash", "bash", []string{"bash", "-c", "make"}},
 		{"zsh", "zsh", nil},
 	} {
