@@ -75,72 +75,88 @@ func baseName(s string) string {
 
 // Tool returns the tool an interpreter process runs, for the TUI's `<tool> (<name>)` label
 // (spec "Release 1.1", tool labels): when the basename of argv[0] is an interpreter (see
-// interpreters; trailing version digits ignored), the module after -m as written, else the
-// basename of the first argument that is not a flag, case and extension kept (`vite` for
-// node_modules/.bin/vite, `server.js`, `manage.py`). args are the arguments after it, a
-// subslice of p.Argv. ok is false when argv[0] is not an interpreter or names no tool. It is
-// the argument Classify unwraps: both use toolArg.
+// interpreters; trailing version digits ignored) or a shell of scriptShells, the module after
+// -m as written, else the basename of the first argument that is not a flag, case and
+// extension kept (`vite` for node_modules/.bin/vite, `server.js`, `manage.py`, `run55.sh`).
+// args are the arguments after it, a subslice of p.Argv. ok is false when argv[0] is neither
+// or names no tool. It is the argument Classify unwraps, a shell's script aside: both use
+// toolArg.
 func Tool(p Process) (tool string, args []string, ok bool) {
 	if len(p.Argv) == 0 {
 		return "", nil, false
 	}
 	rest := p.Argv[1:]
-	i, module := toolArg(baseName(p.Argv[0]), rest)
+	i, tool, module := toolArg(baseName(p.Argv[0]), rest)
 	if i < 0 {
 		return "", nil, false
 	}
-	tool = rest[i]
 	if !module {
 		tool = path.Base(tool)
 	}
 	return tool, rest[i+1:], true
 }
 
-// toolArg returns the index in args of the tool interpreter name runs, and whether it is a
-// module (the argument after -m) rather than a script; -1 when name is not an interpreter (its
-// trailing version digits ignored) or args name no tool. The tool is the module after -m, else
-// the first argument that is not a flag. A flag of inlineCodeFlags before it means the
+// toolArg returns the index in args of the tool interpreter or shell name runs, the tool as
+// written there, and whether it is a module (after -m) rather than a script; -1 when name is
+// neither (an interpreter's trailing version digits ignored) or args name no tool. The tool is
+// the module after -m (python's also attached, -mpytest: DEV-153), else the first argument
+// that is not a flag or one of subcommands. A flag of inlineCodeFlags before it means the
 // interpreter runs inline code, which names no tool (DEV-137); a flag of valueFlags skips its
 // value too (DEV-138). Other flags taking a separate value are not known, so `node -r x app.js`
-// yields x; good enough to find jest or pytest.
-func toolArg(name string, args []string) (i int, module bool) {
+// yields x; good enough to find jest or pytest. A shell's flags start with - or +; a cluster
+// of short ones holding c (inline code) or s (standard input) names no tool, and one ending in
+// o or O takes the next argument as its value (`-eo pipefail`) (DEV-159).
+func toolArg(name string, args []string) (i int, tool string, module bool) {
+	shell := scriptShells[name]
 	name = strings.TrimRight(name, "0123456789.")
-	if !interpreters[name] {
-		return -1, false
+	if !interpreters[name] && !shell {
+		return -1, "", false
 	}
-	skip := false
+	skip, sub := false, false
 	for i, a := range args {
 		flag, _, _ := strings.Cut(a, "=")
 		switch {
 		case skip:
 			skip = false
 			continue
+		case shell && len(a) > 1 && (a[0] == '-' || a[0] == '+') && a[1] != '-':
+			if strings.ContainsAny(a, "cs") {
+				return -1, "", false
+			}
+			skip = strings.HasSuffix(a, "o") || strings.HasSuffix(a, "O")
+			continue
 		case a == "-m" && i+1 < len(args):
-			return i + 1, true
+			return i + 1, args[i+1], true
+		case name == "python" && len(a) > 2 && strings.HasPrefix(a, "-m"):
+			return i, a[2:], true
 		case inlineCodeFlags[name+" "+flag]:
-			return -1, false
+			return -1, "", false
 		case valueFlags[name+" "+a]:
 			skip = true
+			continue
+		case !sub && subcommands[name+" "+a]:
+			sub = true
 			continue
 		case strings.HasPrefix(a, "-"):
 			continue
 		}
-		return i, false
+		return i, a, false
 	}
-	return -1, false
+	return -1, "", false
 }
 
 // unwrap returns the tool an interpreter runs (toolArg) as Classify matches it: a module
-// lower-cased, a script by its lower-case basename without a script extension.
+// lower-cased, a script by its lower-case basename without a script extension. A shell's
+// script is not unwrapped, so the shell keeps its kind (DEV-159).
 func (c command) unwrap() (command, bool) {
-	i, module := toolArg(c.name, c.args)
+	i, tool, module := toolArg(c.name, c.args)
 	switch {
-	case i < 0:
+	case i < 0 || scriptShells[c.name]:
 		return command{}, false
 	case module:
-		return command{strings.ToLower(c.args[i]), c.args[i+1:]}, true
+		return command{strings.ToLower(tool), c.args[i+1:]}, true
 	}
-	name := baseName(c.args[i])
+	name := baseName(tool)
 	if ext := path.Ext(name); scriptExts[ext] {
 		name = strings.TrimSuffix(name, ext)
 	}

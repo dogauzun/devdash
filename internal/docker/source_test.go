@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dogauzun/devdash/internal/model"
@@ -678,10 +679,61 @@ func TestFetchBadJSONIsUnreachable(t *testing.T) {
 	}
 }
 
-func TestFetchSlowKeepsPreviousList(t *testing.T) {
-	e := newEngine(t, dockerBody)
+// pipeListener is the server side of an engine reached over net.Pipe connections made by
+// dial instead of a socket, so that it can run in a synctest bubble: there a request's
+// timeout runs on the bubble's clock, which moves only while the client and the engine are
+// both waiting, so a prompt answer never times out and a held one always does. A socket
+// would not do: a goroutine waiting on one does not let the bubble's clock move.
+type pipeListener struct {
+	conns chan net.Conn
+	done  chan struct{}
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+
+// Close is called once: http.Server wraps its listeners to close them only once.
+func (l *pipeListener) Close() error   { close(l.done); return nil }
+func (l *pipeListener) Addr() net.Addr { return &net.UnixAddr{Name: "pipe", Net: "unix"} }
+
+func (l *pipeListener) dial(ctx context.Context, _, _ string) (net.Conn, error) {
+	c, srv := net.Pipe()
+	select {
+	case l.conns <- srv:
+		return c, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// newPipeSource is an engine serving body and a Source on a fake clock that reaches it over
+// net.Pipe, for a test in a synctest bubble.
+func newPipeSource(t *testing.T, body string) (*engine, *Source, *clock) {
+	t.Helper()
+	ln := &pipeListener{conns: make(chan net.Conn), done: make(chan struct{})}
+	e := &engine{body: body, version: "1.41", ep: Endpoint{Network: "unix", Address: "/pipe/d.sock", Source: "default"}}
+	srv := &http.Server{Handler: http.HandlerFunc(e.serve)}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
 	s, clk := newSource(e.ep)
-	s.timeout = 50 * time.Millisecond
+	s.c.hc.Transport.(*http.Transport).DialContext = ln.dial
+	return e, s, clk
+}
+
+// TestFetchSlowKeepsPreviousList runs in a bubble: with the 500 ms request timeout on real
+// time, a prompt ping on a loaded CI runner could miss it (DEV-162).
+func TestFetchSlowKeepsPreviousList(t *testing.T) {
+	synctest.Test(t, testFetchSlowKeepsPreviousList)
+}
+
+func testFetchSlowKeepsPreviousList(t *testing.T) {
+	e, s, clk := newPipeSource(t, dockerBody)
 	if _, w := fetch(t, s); w != nil {
 		t.Fatalf("warning = %+v", w)
 	}
@@ -693,8 +745,8 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 	e.set(func(e *engine) { e.delay = 5 * time.Second; e.body = podmanBody })
 	start := time.Now()
 	got, w := fetch(t, s)
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("slow call took %v, want about the 50ms timeout", d)
+	if d := time.Since(start); d != requestTimeout {
+		t.Fatalf("slow call took %v, want the %v timeout", d, requestTimeout)
 	}
 	if !reflect.DeepEqual(got, wantDocker) || !reflect.DeepEqual(w, unreachable(e.ep)) {
 		t.Fatalf("slow call = %+v, %+v; want previous list and warning", got, w)
@@ -726,19 +778,20 @@ func TestFetchSlowKeepsPreviousList(t *testing.T) {
 }
 
 // TestFetchSlowFirstList: a one-shot CLI call whose first list is slow says so, rather
-// than looking like no Docker.
+// than looking like no Docker. In a bubble, like TestFetchSlowKeepsPreviousList: on real
+// time its ping could miss the timeout too.
 func TestFetchSlowFirstList(t *testing.T) {
-	e := newEngine(t, dockerBody)
-	s := NewSource(e.ep, testTick, beat)
-	s.timeout = 50 * time.Millisecond
-	e.set(func(e *engine) { e.delay = 5 * time.Second })
-	got, w := fetch(t, s)
-	if got != nil || !reflect.DeepEqual(w, unreachable(e.ep)) {
-		t.Fatalf("Fetch = %+v, %+v; want nil list and warning", got, w)
-	}
-	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
-		t.Fatalf("requests = %q, want ping then list", r)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		e, s, _ := newPipeSource(t, dockerBody)
+		e.set(func(e *engine) { e.delay = 5 * time.Second })
+		got, w := fetch(t, s)
+		if got != nil || !reflect.DeepEqual(w, unreachable(e.ep)) {
+			t.Fatalf("Fetch = %+v, %+v; want nil list and warning", got, w)
+		}
+		if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+			t.Fatalf("requests = %q, want ping then list", r)
+		}
+	})
 }
 
 func TestFetchCanceledContext(t *testing.T) {

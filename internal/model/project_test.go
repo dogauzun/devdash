@@ -547,6 +547,34 @@ func TestResolveBranchSwitchGit(t *testing.T) {
 	}
 }
 
+// A reftable repository keeps HEAD in its tables and writes the placeholder
+// `ref: refs/heads/.invalid` to the HEAD file, for its linked worktrees too: the branch is
+// unknown, not ".invalid" (DEV-152).
+func TestResolveReftableGit(t *testing.T) {
+	needGit(t)
+	base := tmp(t)
+	rt, wt := filepath.Join(base, "rt"), filepath.Join(base, "rt-wt")
+	if _, err := git(base, "init", "-q", "--ref-format=reftable", "-b", "main", rt); err != nil {
+		t.Skipf("git without reftable (2.45 or newer): %v", err)
+	}
+	for _, step := range [][]string{
+		{"commit", "-q", "--allow-empty", "-m", "c"},
+		{"checkout", "-q", "-b", "feat/x"},
+		{"worktree", "add", "-q", "-b", "wt", wt},
+	} {
+		if _, err := git(rt, step...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := NewResolver("", nil)
+	for _, tc := range []struct{ cwd, label string }{{rt, "rt"}, {wt, "rt (worktree)"}} {
+		_, p := resolveOne(r, inDir(10, tc.cwd))
+		if len(p) != 1 || p[0].Branch != "" || p[0].ShortSHA != "" || p[0].Label() != tc.label {
+			t.Errorf("%s: %+v, want label %q with no branch and no SHA", tc.cwd, p, tc.label)
+		}
+	}
+}
+
 func TestResolveCacheCap(t *testing.T) {
 	base := tmp(t)
 	shop := mkrepo(t, base, "shop", "main")
