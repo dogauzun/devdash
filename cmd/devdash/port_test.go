@@ -40,13 +40,16 @@ func TestWritePort(t *testing.T) {
 			"10  node  -  127.0.0.1:5173\n10  node  -  [::1]:5173\n", true},
 		{"scoped IPv6 address keeps its zone", []model.RawListener{l("tcp6", netip.MustParseAddr("fe80::1%lo0"), 8081, 10)}, 8081,
 			"10  node  -  [fe80::1%lo0]:8081\n", true},
+		{"a #! script keeps its process name, not its label (DEV-169)", []model.RawListener{l("tcp4", lo4, 8000, 12)}, 8000,
+			"12  manage.py  -  127.0.0.1:8000\n", true},
 		{"two owners, aligned", []model.RawListener{l("tcp4", lo4, 9000, 11), l("tcp6", any6, 9000, 0), l("tcp4", lo4, 9001, 10)}, 9000,
 			"11  postgres  -  127.0.0.1:9000\n" +
 				"0   unknown   -  [::]:9000  owner unknown: run with sudo to see owners\n", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(11, "postgres")}, Listeners: tt.listeners}
+			raw := model.Raw{Processes: []model.Process{proc(10, "node"), proc(11, "postgres"),
+				{PID: 12, PPID: 1, Name: "manage.py", Argv: []string{"/usr/bin/python3", "./manage.py", "runserver"}, StartTime: time.Unix(1, 0)}}, Listeners: tt.listeners}
 			s := model.Build(raw, model.Snapshot{}, nil, model.NewResolver("", nil))
 			var b bytes.Buffer
 			if found, err := writePort(&b, s, tt.port); err != nil || found != tt.found || b.String() != tt.want {
