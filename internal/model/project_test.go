@@ -129,7 +129,7 @@ func inDir(pid int, cwd string) Process {
 }
 
 func project(root, branch string) Project {
-	return Project{ID: root, Root: root, Name: filepath.Base(root), Branch: branch}
+	return Project{ID: root, Root: root, Name: filepath.Base(root), Branch: branch, CommonDir: filepath.Join(root, ".git")}
 }
 
 func resolveOne(r *Resolver, p Process) (string, []Project) {
@@ -152,8 +152,8 @@ func TestResolveGit(t *testing.T) {
 		{"main repo subdirectory", filepath.Join(shop, "sub/deep"), project(shop, "main")},
 		{"nested repo", lib, project(lib, "dev")},
 		{"nested repo parent", filepath.Join(shop, "vendor"), project(shop, "main")},
-		{"linked worktree", wt, Project{ID: wt, Root: wt, Name: "shop", Branch: "feat/cart", Worktree: true, MainRepo: shop}},
-		{"detached HEAD", det, Project{ID: det, Root: det, Name: "detached", ShortSHA: detachedSHA[:7]}},
+		{"linked worktree", wt, Project{ID: wt, Root: wt, Name: "shop", Branch: "feat/cart", Worktree: true, MainRepo: shop, CommonDir: filepath.Join(shop, ".git")}},
+		{"detached HEAD", det, Project{ID: det, Root: det, Name: "detached", ShortSHA: detachedSHA[:7], CommonDir: filepath.Join(det, ".git")}},
 		{"outside any repo", base, Project{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,6 +167,84 @@ func TestResolveGit(t *testing.T) {
 			}
 			if !slices.Equal(projects, want) {
 				t.Errorf("projects %+v, want %+v", projects, want)
+			}
+		})
+	}
+}
+
+// TestResolveWorktreeLayoutsGit: a linked worktree is named after its repository, never after
+// its git directory, MainRepo is the main work tree or "" when git's files name none, and a
+// worktree is "this repo, other worktree" from any other worktree of the repository (DEV-151).
+func TestResolveWorktreeLayoutsGit(t *testing.T) {
+	needGit(t)
+	base := tmp(t)
+	run := func(dir string, args ...string) {
+		t.Helper()
+		if _, err := git(dir, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed, web, super := mkdir(t, base, "seed"), mkdir(t, base, "web"), mkdir(t, base, "super")
+	mkdir(t, base, "gitdirs")
+	shop2, apiGit, sub := filepath.Join(base, "shop2"), filepath.Join(base, "api.git"), filepath.Join(super, "sub")
+	run(seed, "init", "-q", "-b", "main")
+	run(seed, "commit", "-q", "--allow-empty", "-m", "init")
+	// A: a bare clone in shop2/.bare, named by the file shop2/.git, with worktrees inside shop2.
+	run(base, "clone", "-q", "--bare", seed, filepath.Join(shop2, ".bare"))
+	mkfile(t, shop2, ".git", "gitdir: ./.bare\n")
+	run(shop2, "worktree", "add", "-q", "main-wt", "main")
+	run(shop2, "worktree", "add", "-q", "-b", "feat2", "feat-wt")
+	// B: a separate git dir, with a worktree.
+	run(web, "init", "-q", "-b", "main", "--separate-git-dir", filepath.Join(base, "gitdirs/web.git"))
+	run(web, "commit", "-q", "--allow-empty", "-m", "init")
+	run(web, "worktree", "add", "-q", "-b", "wt", filepath.Join(base, "web-wt"))
+	// C: a plain bare clone, with two worktrees.
+	run(base, "clone", "-q", "--bare", seed, apiGit)
+	run(apiGit, "worktree", "add", "-q", filepath.Join(base, "api-main"), "main")
+	run(apiGit, "worktree", "add", "-q", "-b", "topic", filepath.Join(base, "api-topic"))
+	// D: a worktree added from inside a submodule.
+	run(super, "init", "-q", "-b", "main")
+	run(super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", seed, "sub")
+	run(sub, "worktree", "add", "-q", "-b", "subwt", filepath.Join(base, "sub-wt"))
+
+	wt := func(dir, name, branch, main string) Project {
+		return Project{ID: dir, Root: dir, Name: name, Branch: branch, Worktree: true, MainRepo: main}
+	}
+	featWT, mainWT := filepath.Join(shop2, "feat-wt"), filepath.Join(shop2, "main-wt")
+	for _, tc := range []struct {
+		name, cwd, here string
+		want            Project
+		loc             string
+	}{
+		{"A: bare in .bare, from a sibling", featWT, mainWT, wt(featWT, "shop2", "feat2", ""), "this repo, other worktree"},
+		{"A: bare in .bare, from the .git file's directory", featWT, shop2, wt(featWT, "shop2", "feat2", ""), "this repo, other worktree"},
+		{"B: separate git dir, from the main work tree", filepath.Join(base, "web-wt"), web, wt(filepath.Join(base, "web-wt"), "web", "wt", ""), "this repo, other worktree"},
+		{"C: plain bare clone, from a sibling", filepath.Join(base, "api-topic"), filepath.Join(base, "api-main"), wt(filepath.Join(base, "api-topic"), "api", "topic", ""), "this repo, other worktree"},
+		{"D: submodule, from the submodule", filepath.Join(base, "sub-wt"), sub, wt(filepath.Join(base, "sub-wt"), "sub", "subwt", sub), "this repo, other worktree"},
+		{"two bare repositories", featWT, filepath.Join(base, "api-main"), wt(featWT, "shop2", "feat2", ""), ""},
+		{"submodule and its superproject", filepath.Join(base, "sub-wt"), super, wt(filepath.Join(base, "sub-wt"), "sub", "subwt", sub), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewResolver("", nil)
+			r.SetHere(tc.here)
+			var pr, here *Project
+			for _, p := range r.Resolve([]Process{inDir(10, tc.cwd), inDir(11, tc.here)}) {
+				if p.ID == tc.cwd {
+					pr = &p
+				}
+				if p.Here {
+					here = &p
+				}
+			}
+			if pr == nil || here == nil {
+				t.Fatalf("project %+v, Here %+v", pr, here)
+			}
+			got := Project{ID: pr.ID, Root: pr.Root, Name: pr.Name, Branch: pr.Branch, Worktree: pr.Worktree, MainRepo: pr.MainRepo}
+			if got != tc.want {
+				t.Errorf("project %+v, want %+v", got, tc.want)
+			}
+			if loc := Location(pr, here); loc != tc.loc {
+				t.Errorf("Location from %s = %q, want %q", tc.here, loc, tc.loc)
 			}
 		})
 	}
@@ -188,6 +266,7 @@ func TestResolveLayouts(t *testing.T) {
 	// Worktree with a relative gitdir (git worktree.useRelativePaths).
 	mainRepo := mkrepo(t, base, "rel/main", "main")
 	mkfile(t, mainRepo, ".git/worktrees/w/HEAD", "ref: refs/heads/topic\n")
+	mkfile(t, mainRepo, ".git/worktrees/w/commondir", "../..\n")
 	mkfile(t, base, "rel/w/.git", "gitdir: ../main/.git/worktrees/w\n")
 	relWT := filepath.Join(base, "rel/w")
 
@@ -238,13 +317,13 @@ func TestResolveLayouts(t *testing.T) {
 		{"below home, no repo", filepath.Join(home, "notes"), nil, Project{}},
 		{"repo below home found", filepath.Join(code, "src"), nil, project(code, "main")},
 		{"outside home", outside, nil, project(outside, "main")},
-		{"submodule is its own project", sub, nil, project(sub, "x")},
-		{"relative worktree gitdir", relWT, nil, Project{ID: relWT, Root: relWT, Name: "main", Branch: "topic", Worktree: true, MainRepo: mainRepo}},
+		{"submodule is its own project", sub, nil, Project{ID: sub, Root: sub, Name: "sub", Branch: "x", CommonDir: filepath.Join(super, ".git/modules/sub")}},
+		{"relative worktree gitdir", relWT, nil, Project{ID: relWT, Root: relWT, Name: "main", Branch: "topic", Worktree: true, MainRepo: mainRepo, CommonDir: filepath.Join(mainRepo, ".git")}},
 		{".git file without gitdir", filepath.Join(bogus, "in"), nil, project(bogus, "main")},
 		{"symlinked .git refused", filepath.Join(enc, "fake"), nil, project(enc, "main")},
 		{"symlinked parent", resolved, nil, project(realRepo, "main")},
 		{"unreadable directory", filepath.Join(locked, "a/b"), nil, project(locked, "main")},
-		{"detached", det, nil, Project{ID: det, Root: det, Name: "det", ShortSHA: "0123456"}},
+		{"detached", det, nil, Project{ID: det, Root: det, Name: "det", ShortSHA: "0123456", CommonDir: filepath.Join(det, ".git")}},
 		{"cwd no longer exists", filepath.Join(gone, "removed/dir"), nil, project(gone, "main")},
 		{"cwd no longer exists, no repo", filepath.Join(base, "nothing/here"), nil, Project{}},
 		{"roots: inside", filepath.Join(code, "src"), []string{filepath.Join(home, "code")}, project(code, "main")},

@@ -95,12 +95,13 @@ type Listener struct {
 type Project struct {
     ID       string  // repository root path, also the group key
     Root     string
-    Name     string  // basename of Root, or of MainRepo for linked worktrees
+    Name     string  // basename of Root, or the repository's name for linked worktrees
     Branch   string  // "" when detached; then ShortSHA is set
     ShortSHA string
     Worktree bool
-    MainRepo string  // for linked worktrees only
+    MainRepo string  // main work tree, for linked worktrees only; "" when none is recorded
     Here     bool    // Release 1.0: the project of the directory devdash was run from
+    CommonDir string // git common directory, the same for every worktree of one repository
 }
 
 type Container struct {
@@ -142,9 +143,9 @@ Why not gopsutil for sockets: its darwin and FreeBSD connection lookups shell ou
 A process belongs to the nearest git repository above its working directory; when that is unknown, the parent chain and argv are tried before giving up. The whole procedure is a pure function of the snapshot plus a small cache, so it is unit-tested with temporary repositories.
 
 1. Take the process cwd. If it is unreadable, go to step 5.
-2. Walk up from cwd until a directory contains a `.git` entry. A `.git` directory is a main repository. A `.git` file is a linked worktree: read its `gitdir:` line, and the main repository is the directory two levels above the `worktrees/<name>` path it points to.
+2. Walk up from cwd until a directory contains a `.git` entry. A `.git` directory is a main repository. A `.git` file is a linked worktree when the git directory its `gitdir:` line names holds a `commondir` file, which names the repository's common directory (otherwise it is a submodule or a separate git dir, its own project). The main repository's work tree is the common directory's `core.worktree` when set (a submodule's), else the directory above a non-bare common directory called `.git`, else none: a bare repository has none, and git records none for a `--separate-git-dir`.
 3. Stop at the filesystem root or at `$HOME`; a repository rooted at `$HOME` (dotfiles) does not count as a project, so the walk continues past it as if no `.git` were there.
-4. The repository root is the project ID. Its name is the basename of the root, or of the main repository for a worktree, shown as `shop @ feat/cart (worktree)`.
+4. The repository root is the project ID. Its name is the basename of the root, or of the main repository's work tree for a worktree, shown as `shop @ feat/cart (worktree)`; when there is no work tree, the basename of the common directory less a trailing `.git` (`api.git` gives `api`), or of its parent when that leaves a dot-directory or nothing (`shop/.bare` gives `shop`).
 5. If no project was found, repeat steps 2 to 4 for the cwd of the parent, grandparent and great-grandparent (a daemon that changed directory after being started from a shell inside the repository).
 6. Still nothing: take the first absolute path in argv that lies inside a project already found in this snapshot, and use that project. Paths that are not inside a known project are not walked, to avoid stat calls on arbitrary strings.
 7. Otherwise the process goes under the `other` group, which is sorted last.
@@ -358,7 +359,7 @@ Release 1.0 is done when these four goals hold on both operating systems without
 
 Non-goals for Release 1.0: an idle tag (a dev server without traffic is idle and fine), killing a whole project at once, a separate "left running" view, jumping to the terminal a process runs in, and reserving a port. UDP and unix-domain sockets stay planned for a later release (v1.2, see Release 1.1).
 
-**Here.** At startup devdash resolves its own working directory with steps 1 to 4 of project resolution. The project found, if any, has `Here` set in every snapshot; when devdash runs outside any repository, no project has it. A process is in `this repo` when its project is the `Here` project, and in `this repo, other worktree` when the two projects differ but share a main repository (the `MainRepo` of a linked worktree, or the `Root` of a main repository).
+**Here.** At startup devdash resolves its own working directory with steps 1 to 4 of project resolution. The project found, if any, has `Here` set in every snapshot; when devdash runs outside any repository, no project has it. A process is in `this repo` when its project is the `Here` project, and in `this repo, other worktree` when the two projects differ but share a repository: the same git common directory (`CommonDir`), which also covers the worktrees of a bare repository.
 
 **Tags.** A tag is computed per snapshot. `orphaned` uses data the collector already reads; `cwd deleted` needs one new read that the collector records per process: an `lstat` of the cwd for every process whose cwd is known on macOS, and on Linux a `stat` of `/proc/<pid>/cwd` only for a process whose cwd link carried the ` (deleted)` suffix. Rows with PID 0 and container rows never carry tags.
 

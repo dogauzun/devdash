@@ -102,6 +102,7 @@ func engineModel(t *testing.T, w, h int) *Model {
 	shopMain, shop, api := filepath.Join(dir, "shop"), filepath.Join(dir, "shop-cart"), filepath.Join(dir, "api")
 	write(filepath.Join(shopMain, ".git", "HEAD"), "ref: refs/heads/main\n")
 	write(filepath.Join(shopMain, ".git", "worktrees", "cart", "HEAD"), "ref: refs/heads/feat/cart\n")
+	write(filepath.Join(shopMain, ".git", "worktrees", "cart", "commondir"), "../..\n")
 	write(filepath.Join(shop, ".git"), "gitdir: "+filepath.Join(shopMain, ".git", "worktrees", "cart")+"\n")
 	write(filepath.Join(shop, "web", "index.html"), "")
 	write(filepath.Join(api, ".git", "HEAD"), "ref: refs/heads/main\n")

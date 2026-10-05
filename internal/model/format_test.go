@@ -60,6 +60,8 @@ func TestLocation(t *testing.T) {
 	wt := &Project{ID: "b", Root: "/code/shop-login", Worktree: true, MainRepo: "/code/shop"}
 	wt2 := &Project{ID: "c", Root: "/code/shop-pay", Worktree: true, MainRepo: "/code/shop"}
 	other := &Project{ID: "d", Root: "/code/blog"}
+	bare := &Project{ID: "e", Root: "/code/api-main", Worktree: true, CommonDir: "/code/api.git"}
+	bare2 := &Project{ID: "f", Root: "/code/api-topic", Worktree: true, CommonDir: "/code/api.git"}
 	for _, tt := range []struct {
 		name     string
 		pr, here *Project
@@ -70,6 +72,8 @@ func TestLocation(t *testing.T) {
 		{"main repository of here", main, wt, "this repo, other worktree"},
 		{"sibling worktree", wt2, wt, "this repo, other worktree"},
 		{"here is a worktree", wt, wt, "this repo"},
+		{"sibling worktree of a bare repository", bare2, bare, "this repo, other worktree"},
+		{"other bare repository", bare2, &Project{ID: "g", Root: "/code/web-wt", Worktree: true, CommonDir: "/code/web.git"}, ""},
 		{"other repository", other, main, ""},
 		{"no project", nil, main, ""},
 		{"no here", wt, nil, ""},
