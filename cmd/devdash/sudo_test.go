@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -28,12 +29,13 @@ type execCall struct {
 	engineStopped bool
 }
 
-// stubSudo makes sudo available at path ("" for not), the dashboard return asked and err, and
-// execve record its calls and return execErr.
+// stubSudo makes sudo available at path ("" for not), stdout a terminal, the dashboard return
+// asked and err, and execve record its calls and return execErr.
 func stubSudo(t *testing.T, path string, asked bool, err, execErr error) (*tui.Options, *[]execCall) {
 	t.Helper()
-	savedLook, savedDash, savedExec := lookSudo, dashboard, execve
-	t.Cleanup(func() { lookSudo, dashboard, execve = savedLook, savedDash, savedExec })
+	savedLook, savedDash, savedExec, savedTTY := lookSudo, dashboard, execve, stdoutTerminal
+	t.Cleanup(func() { lookSudo, dashboard, execve, stdoutTerminal = savedLook, savedDash, savedExec, savedTTY })
+	stdoutTerminal = func(io.Writer) bool { return true }
 	var got tui.Options
 	var updates <-chan engine.Update
 	calls := new([]execCall)
@@ -126,5 +128,28 @@ func TestRunTUINoSudo(t *testing.T) {
 		if o.Sudo != (tc.path != "") {
 			t.Errorf("%s: Options.Sudo %v", tc.name, o.Sudo)
 		}
+	}
+}
+
+// TestRunTUINoTerminal: with stdout not a terminal (piped, redirected, no terminal at all) the
+// dashboard does not start, so neither does the engine or sudo: one line on stderr, exit 2 (DEV-148).
+func TestRunTUINoTerminal(t *testing.T) {
+	_, calls := stubSudo(t, "/usr/bin/sudo", true, nil, nil)
+	started := false
+	dashboard = func(context.Context, tui.Options, ...tea.ProgramOption) (bool, error) {
+		started = true
+		return true, nil
+	}
+	stdoutTerminal = func(io.Writer) bool { return false }
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--no-docker"}, &stdout, &stderr, fake()); code != 2 {
+		t.Errorf("exit %d, want 2", code)
+	}
+	want := "devdash: the dashboard needs a terminal; use --json, port N or free N in scripts\n"
+	if stderr.String() != want || stdout.Len() != 0 {
+		t.Errorf("stdout %q, stderr %q; want stderr %q", stdout.String(), stderr.String(), want)
+	}
+	if started || len(*calls) != 0 {
+		t.Errorf("dashboard started %v, %d execve calls", started, len(*calls))
 	}
 }

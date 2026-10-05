@@ -404,6 +404,54 @@ func TestPortHolders(t *testing.T) {
 	}
 }
 
+// TestPortHoldersForwarder: a forwarder that keeps its own row (several containers' ports, or
+// one next to a port of its own) does not hold a container's published port; the container
+// row does, once, and the search selects it, as model.Holders counts (DEV-154).
+func TestPortHoldersForwarder(t *testing.T) {
+	published := func(id, name string, port uint16) model.Container {
+		return model.Container{ID: id, Name: name, Image: "nginx", State: "running",
+			Ports: []model.PortMapping{{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: port, ContainerPort: 80, Proto: "tcp"}}}
+	}
+	forwarder := func(name string, ports ...uint16) model.Process {
+		p := model.Process{PID: 400, PPID: 1, StartTime: at(time.Hour), UID: 501, Name: name, Argv: []string{name}}
+		for _, port := range ports {
+			p.Listeners = append(p.Listeners, lis("tcp6", "::", port))
+		}
+		return p
+	}
+	backend := fixture() // Docker Desktop with two containers publishing ports
+	backend.Containers = append(backend.Containers, published("aaa", "db", 6000), published("bbb", "cache", 6001))
+	backend.Processes = model.Reconcile(append(backend.Processes, forwarder("com.docker.backend", 6000, 6001)), backend.Containers)
+	orb := fixture() // OrbStack: one container, next to the helper's own 32222
+	orb.Containers = append(orb.Containers, published("aaa", "web", 6000))
+	orb.Processes = model.Reconcile(append(orb.Processes, forwarder("OrbStack Helper", 6000, 32222)), orb.Containers)
+
+	for _, c := range []struct {
+		name string
+		s    model.Snapshot
+		q    string
+		want string
+		sel  model.RowKey
+	}{
+		{"backend", backend, "6000", "port 6000 · 1 holder · next free 6002", model.RowKey{ContainerID: "aaa"}},
+		{"orbstack", orb, "6000", "port 6000 · 1 holder · next free 6001", model.RowKey{ContainerID: "aaa"}},
+		{"orbstack own port", orb, "32222", "port 32222 · 1 holder · next free 32223", orb.Processes[len(orb.Processes)-1].Key()},
+		{"forwarder drawn as the container", fixture(), "5432", "port 5432 · 1 holder · next free 5433", keyOf(fixture(), 300)},
+	} {
+		m := newPortTest(t, 120, 40, c.s, &fakeProbe{})
+		search(m, c.q)
+		if got := portLine(m); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+		if m.sel != c.sel {
+			t.Errorf("%s: selected %+v, want %+v", c.name, m.sel, c.sel)
+		}
+		if hs := model.Holders(c.s, portQuery(c.q)); len(hs) != 1 {
+			t.Errorf("%s: model.Holders %+v, want one", c.name, hs)
+		}
+	}
+}
+
 // TestPortLineShown: the line is shown while the query, typed or applied, is a port number,
 // under the header, cut at the screen edge; the body is one line shorter.
 func TestPortLineShown(t *testing.T) {
