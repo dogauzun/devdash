@@ -154,6 +154,25 @@ func TestCount(t *testing.T) {
 	}
 }
 
+func TestContainerName(t *testing.T) {
+	s := Snapshot{Containers: []Container{{ID: "c0ffee", Name: "shop-db-1"}, {ID: "beef"}}}
+	for id, want := range map[string]string{"c0ffee": "shop-db-1", "beef": "beef", "gone": "gone"} {
+		if got := s.ContainerName(id); got != want {
+			t.Errorf("ContainerName(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestHere(t *testing.T) {
+	if got := (Snapshot{Projects: []Project{{ID: "a"}}}).Here(); got != nil {
+		t.Errorf("Here() with no Here project = %+v, want nil", got)
+	}
+	s := Snapshot{Projects: []Project{{ID: "a"}, {ID: "b", Here: true}}}
+	if got := s.Here(); got != &s.Projects[1] {
+		t.Errorf("Here() = %+v, want a pointer to project b", got)
+	}
+}
+
 func TestPortList(t *testing.T) {
 	l := func(proto string, port uint16) Listener { return Listener{Proto: proto, Port: port} }
 	for _, tt := range []struct {

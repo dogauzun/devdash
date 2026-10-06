@@ -177,13 +177,10 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 		return write(stdout, stderr, b.String(), 1)
 	}
 	projects := map[string]*model.Project{}
-	var here *model.Project
 	for i := range s.Projects {
 		projects[s.Projects[i].ID] = &s.Projects[i]
-		if s.Projects[i].Here {
-			here = &s.Projects[i]
-		}
 	}
+	here := s.Here()
 
 	// writePort writes one line per listener on port, process by process in snapshot order, then
 	// the lines of containers with no socket on it; so each process's lines are the next n.
@@ -212,17 +209,13 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 		out.WriteString(l)
 	}
 
-	var nextErr error
-	if port < 65535 {
-		next, ok, err := freeport.Find(s, port+1, probe)
-		switch {
-		case err != nil:
-			nextErr = err
-		case ok:
-			fmt.Fprintf(&out, "next free: %d\n", next)
-		default:
-			fmt.Fprintf(&out, "next free: none in %d-%d\n", port+1, freeport.Last(port+1))
-		}
+	next, ok, nextErr := freeport.Next(s, port, probe)
+	switch {
+	case nextErr != nil: // said on stderr below
+	case ok:
+		fmt.Fprintf(&out, "next free: %d\n", next)
+	case port < 65535: // no search for 65535, so no line
+		fmt.Fprintf(&out, "next free: none in %d-%d\n", port+1, freeport.Last(port+1))
 	}
 	code := write(stdout, stderr, out.String(), 0)
 	if nextErr != nil {

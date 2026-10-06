@@ -50,6 +50,15 @@ func Find(s model.Snapshot, from uint16, probe Prober) (port uint16, ok bool, er
 	return 0, false, nil
 }
 
+// Next is the next free port after n that `port N` and the dashboard show: the search `devdash
+// free n+1` makes (Find from n+1), and none, with no search, for n = 65535.
+func Next(s model.Snapshot, n uint16, probe Prober) (port uint16, ok bool, err error) {
+	if n == 65535 {
+		return 0, false, nil
+	}
+	return Find(s, n+1, probe)
+}
+
 // Probe is the real Prober. It binds a TCP socket to 0.0.0.0:port, then an IPV6_V6ONLY one to
 // [::]:port, and closes both: the bind fails beside any listener on the port, whatever user
 // owns it and whatever address it is on, so it catches the listeners of other users that a

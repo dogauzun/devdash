@@ -120,7 +120,7 @@ func NewPlan(s model.Snapshot, key model.RowKey, o KillOptions) (Plan, error) {
 
 func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, error) {
 	if key.ContainerID != "" {
-		name := containerName(s, key.ContainerID)
+		name := s.ContainerName(key.ContainerID)
 		return Plan{}, refuse("container %s: use docker stop %s", name, name)
 	}
 	if key.Header != model.GroupNone {
@@ -156,16 +156,6 @@ func newPlan(s model.Snapshot, key model.RowKey, o KillOptions, sy osys) (Plan, 
 		}
 	}
 	return plan, nil
-}
-
-// containerName is the name of container id in s, or id when Docker gave it no name.
-func containerName(s model.Snapshot, id string) string {
-	for _, c := range s.Containers {
-		if c.ID == id && c.Name != "" {
-			return c.Name
-		}
-	}
-	return id
 }
 
 // index finds the process with row key key in s (nil when there is none) and indexes the real
@@ -260,7 +250,7 @@ func refusal(s model.Snapshot, p model.Process, refused map[int]string) error {
 	whole := p.ContainerID != "" && !slices.ContainsFunc(p.Listeners, func(l model.Listener) bool { return l.ContainerID == "" })
 	switch {
 	case whole:
-		return refuseContainer(p, containerName(s, p.ContainerID))
+		return refuseContainer(p, s.ContainerName(p.ContainerID))
 	case model.IsContainerRuntime(p):
 		return refuse("pid %d (%s) is part of the container runtime, not your service: %s", p.PID, p.Name, runtimeHint(p))
 	case p.PID == 0:
@@ -270,7 +260,7 @@ func refusal(s model.Snapshot, p model.Process, refused map[int]string) error {
 	case refused[p.PID] != "":
 		return refuse("pid %d (%s) %s", p.PID, p.Name, refused[p.PID])
 	case p.ContainerID != "": // Reconcile marks only runtime processes and PID 0, refused above; kept refused all the same
-		return refuseContainer(p, containerName(s, p.ContainerID))
+		return refuseContainer(p, s.ContainerName(p.ContainerID))
 	}
 	return nil
 }

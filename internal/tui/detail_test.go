@@ -826,6 +826,24 @@ func openDetail(t *testing.T, m *Model, k model.RowKey) tea.Cmd {
 
 // TestDetailNextFree: a process with a listener gets a next free field after its listeners,
 // the search from its lowest TCP port plus one, `…` until the answer arrives.
+// TestDetailProjectTitle pins the title to the LabelParts rule with the name and the ref
+// quoted apart, so an unprintable byte in one leaves the rest of the title as it is.
+func TestDetailProjectTitle(t *testing.T) {
+	for _, tt := range []struct {
+		pr   model.Project
+		want string
+	}{
+		{model.Project{Name: "api", Branch: "main"}, "api @ main"},
+		{model.Project{Name: "api", ShortSHA: "abc1234", Worktree: true}, "api @ abc1234 (worktree)"},
+		{model.Project{Name: "api"}, "api"},
+		{model.Project{Name: "a\x1bpi", Branch: "fe\x9bat", Worktree: true}, `"a\x1bpi" @ "fe\x9bat" (worktree)`},
+	} {
+		if got := detailProjectTitle(&tt.pr); got != tt.want {
+			t.Errorf("detailProjectTitle(%+v) = %q, want %q", tt.pr, got, tt.want)
+		}
+	}
+}
+
 func TestDetailNextFree(t *testing.T) {
 	s := fixture()
 	fp := &fakeProbe{}
