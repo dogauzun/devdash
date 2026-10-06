@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 
 	"github.com/dogauzun/devdash/internal/engine"
@@ -24,26 +25,14 @@ const exitRefused = 6
 
 // Seams for tests: kill(2), the snapshot, the terminal the confirmation is read from, and
 // whether stdout is a terminal. Unit tests replace killFn with a recorder, so they never signal.
+// term.IsTerminal is the TIOCGETA (darwin) or TCGETS (linux) ioctl.
 var (
 	killFn                   = engine.Kill
 	snapshotFn               = engine.Snapshot
 	stdin          io.Reader = os.Stdin
-	stdinTerminal            = func() bool { return isTerminal(os.Stdin) }
-	stdoutTerminal           = func(w io.Writer) bool { f, ok := w.(*os.File); return ok && isTerminal(f) }
+	stdinTerminal            = func() bool { return term.IsTerminal(os.Stdin.Fd()) }
+	stdoutTerminal           = func(w io.Writer) bool { f, ok := w.(*os.File); return ok && term.IsTerminal(f.Fd()) }
 )
-
-func isTerminal(f *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(f.Fd()), ioctlGetTermios)
-	return err == nil
-}
-
-// target is one row holding port N: a process (or PID 0 pseudo-process), or a container
-// whose published port has no process behind it.
-type target struct {
-	key     model.RowKey
-	sudo    bool // the owner is unknown (PID 0): it is another user's, so sudo might see it
-	runtime bool // the owner is a container runtime process (model.IsContainerRuntime)
-}
 
 // runKill stops whatever listens on TCP port N, from one snapshot: one plan per owner, shown
 // together and confirmed once; if any owner is refused, nothing is signalled.
@@ -56,13 +45,15 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	// Every name kill prints, the engine's refusals included, comes from s or after, so both are
 	// cleaned, piped or not (DEV-150). Plans match processes by pid and start time, which Clean keeps.
 	s = cleanText(s)
-	ts := targets(s, port)
-	if len(ts) == 0 {
+	// A listener reconciled to a container is that container's holder, not its process's, so
+	// only the container row says which container to stop.
+	hs := model.Holders(s, port)
+	if len(hs) == 0 {
 		return write(stdout, stderr, fmt.Sprintf("nothing listens on port %d\n", port), 0)
 	}
 
 	ko := engine.KillOptions{Tree: o.Tree, Force: o.Force}
-	plans, code := planTargets(s, ts, ko, stderr)
+	plans, code := planTargets(s, hs, ko, stderr)
 	if code != 0 {
 		return code
 	}
@@ -93,24 +84,24 @@ func runKill(ctx context.Context, o options, eo engine.Options, port uint16, std
 	return code
 }
 
-// planTargets plans each target with ko, deduped. When any target is refused, it says why on
+// planTargets plans each holder with ko, deduped. When any holder is refused, it says why on
 // stderr, then that nothing was signalled, and returns the exit code: 3 when every refusal is an
-// unknown owner's (sudo might see it), else exitRefused.
-func planTargets(s model.Snapshot, ts []target, ko engine.KillOptions, stderr io.Writer) ([]engine.Plan, int) {
+// unknown owner's (PID 0: another user's, so sudo might see it), else exitRefused.
+func planTargets(s model.Snapshot, hs []model.Holder, ko engine.KillOptions, stderr io.Writer) ([]engine.Plan, int) {
 	var plans []engine.Plan
 	code := 0
-	for _, t := range ts {
-		p, err := engine.NewPlan(s, t.key, ko)
+	for _, h := range hs {
+		p, err := engine.NewPlan(s, h.Key, ko)
 		if err == nil {
 			plans = append(plans, p)
 			continue
 		}
-		if t.sudo {
+		if h.Process != nil && h.Process.PID == 0 {
 			fmt.Fprintf(stderr, "devdash: %v: %s\n", err, ownerHint(s))
 			code = max(code, 3)
 		} else {
 			msg := err.Error()
-			if t.runtime { // most likely a container's port that Docker could not name
+			if h.Process != nil && model.IsContainerRuntime(*h.Process) { // most likely a container's port that Docker could not name
 				msg = withDocker(msg, s)
 			}
 			fmt.Fprintln(stderr, "devdash:", msg)
@@ -206,37 +197,22 @@ func recheckPort(ctx context.Context, b *bytes.Buffer, eo engine.Options, port u
 		fmt.Fprintln(stderr, "devdash: cannot check the port again:", err)
 		return
 	}
-	held := targets(after, port)
+	held := model.Holders(after, port)
 	if len(held) == 0 {
 		fmt.Fprintf(b, "port %d is free\n", port)
 		return
 	}
 	var who []string
 	other := false // a holder that was not signalled
-	for _, t := range held {
-		who = append(who, describe(after, t))
-		other = other || t.key.ContainerID == "" && !signalled[t.key]
+	for _, h := range held {
+		who = append(who, describe(after, h))
+		other = other || h.Key.ContainerID == "" && !signalled[h.Key]
 	}
 	fmt.Fprintf(b, "port %d is still held by %s", port, strings.Join(who, ", "))
 	if other && !tree {
 		b.WriteString("; a forked child can hold it after its parent exits: try --tree")
 	}
 	b.WriteString("\n")
-}
-
-// targets are the rows holding TCP port N, model.Holders: every process with a listener on it,
-// and every container that publishes it. A listener reconciled to a container is that
-// container's target, not its holder's, so only the container row says which container to stop.
-func targets(s model.Snapshot, port uint16) []target {
-	var ts []target
-	for _, h := range model.Holders(s, port) {
-		t := target{key: h.Key}
-		if p := h.Process; p != nil {
-			t.sudo, t.runtime = p.PID == 0, model.IsContainerRuntime(*p)
-		}
-		ts = append(ts, t)
-	}
-	return ts
 }
 
 // dedupe drops a plan whose every pid an earlier plan already signals (in tree mode, an owner
@@ -298,24 +274,20 @@ func outcome(o engine.Outcome) string {
 }
 
 // describe names the holder of a port for the after-kill check.
-func describe(s model.Snapshot, t target) string {
-	if id := t.key.ContainerID; id != "" {
-		for _, c := range s.Containers {
-			if c.ID == id && c.Name != "" {
-				return "container " + c.Name
-			}
+func describe(s model.Snapshot, h model.Holder) string {
+	if p := h.Process; p != nil {
+		if p.PID == 0 {
+			return "an unknown owner (" + ownerHint(s) + ")"
 		}
-		return "container " + id
+		return fmt.Sprintf("%d %s", p.PID, p.Name)
 	}
-	for _, p := range s.Processes {
-		if p.Key() == t.key {
-			if p.PID == 0 {
-				return "an unknown owner (" + ownerHint(s) + ")"
-			}
-			return fmt.Sprintf("%d %s", p.PID, p.Name)
+	id := h.Key.ContainerID
+	for _, c := range s.Containers {
+		if c.ID == id && c.Name != "" {
+			return "container " + c.Name
 		}
 	}
-	return "?"
+	return "container " + id
 }
 
 // ownerHint is the listener_owner_unreadable warning's hint followed by the Docker warning's,

@@ -96,6 +96,7 @@ type options struct {
 	Timeout  time.Duration // kill --timeout, positive
 	Cmd      string        // "", "port", "free", "kill" or "version"
 	Args     []string      // the subcommand's arguments, flags removed
+	Port     uint16        // port, free and kill: N, 1 to 65535
 }
 
 func main() {
@@ -121,17 +122,14 @@ func run(args []string, stdout, stderr io.Writer, c collector.Collector) int {
 		ver, rev, built := versionInfo(version, commit, date, buildInfo())
 		return write(stdout, stderr, fmt.Sprintf("devdash %s (commit %s, built %s)\n", ver, rev, built), 0)
 	case "port":
-		port, _ := parsePort(o.Args[0]) // checked by parse
 		if o.JSON {
-			return runPortJSON(ctx, o.engine(c), port, stdout, stderr)
+			return runPortJSON(ctx, o.engine(c), o.Port, stdout, stderr)
 		}
-		return runPort(ctx, o.engine(c), port, stdout, stderr)
+		return runPort(ctx, o.engine(c), o.Port, stdout, stderr)
 	case "free":
-		port, _ := parsePort(o.Args[0]) // checked by parse
-		return runFree(ctx, o.engine(c), port, stdout, stderr)
+		return runFree(ctx, o.engine(c), o.Port, stdout, stderr)
 	case "kill":
-		port, _ := parsePort(o.Args[0]) // checked by parse
-		return runKill(ctx, o, o.engine(c), port, stdout, stderr)
+		return runKill(ctx, o, o.engine(c), o.Port, stdout, stderr)
 	}
 	if o.JSON {
 		return runJSON(ctx, o.engine(c), stdout, stderr)
@@ -243,6 +241,69 @@ func dockerLabel(ep docker.Endpoint) string {
 // the usage does (checkedValue, flagError).
 func parse(args []string) (options, error) {
 	o := options{Tick: engine.DefaultTick, Timeout: engine.DefaultKillTimeout}
+	var bad error // the value a flag refused, as "--name value: reason"
+	fs := flagSet(&o, &bad)
+
+	// The flag package stops at the first non-flag argument; resume after each one so flags
+	// may follow the subcommand. No subcommand takes an argument starting with "-".
+	var pos []string
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			return o, flagError(err, bad, slices.Contains(args, "kill"))
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		pos = append(pos, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+	o.NoColor = o.NoColor || os.Getenv("NO_COLOR") != ""
+	if o.Tick < engine.MinTick {
+		return o, fmt.Errorf("--tick %v is below the minimum of %v", o.Tick, engine.MinTick)
+	}
+	if len(pos) > 0 {
+		o.Cmd, o.Args = pos[0], pos[1:]
+	}
+
+	switch o.Cmd {
+	case "":
+	case "version":
+		if len(o.Args) > 0 {
+			return o, fmt.Errorf("version takes no arguments")
+		}
+	case "port", "free", "kill":
+		if len(o.Args) != 1 {
+			return o, fmt.Errorf("%s takes one port number", o.Cmd)
+		}
+		port, err := parsePort(o.Args[0])
+		if err != nil {
+			return o, err
+		}
+		o.Port = port
+		if o.Cmd == "kill" && o.Timeout <= 0 {
+			return o, fmt.Errorf("--timeout %v is not positive", o.Timeout)
+		}
+	default:
+		return o, fmt.Errorf("unknown command %q", o.Cmd)
+	}
+	if o.JSON && o.Cmd != "" && o.Cmd != "port" {
+		return o, fmt.Errorf("--json combines only with port, not %q", o.Cmd)
+	}
+	var killOnly error
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "tree", "force", "yes", "timeout":
+			if o.Cmd != "kill" && killOnly == nil {
+				killOnly = fmt.Errorf("--%s only applies to kill", f.Name)
+			}
+		}
+	})
+	return o, killOnly
+}
+
+// flagSet defines every flag on o. It prints nothing; a value a flag refuses is recorded in
+// *bad (checkedValue).
+func flagSet(o *options, bad *error) *flag.FlagSet {
 	fs := flag.NewFlagSet("devdash", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {} // run prints the usage once, to the right stream
@@ -288,69 +349,8 @@ func parse(args []string) (options, error) {
 	boolVar(&o.Force, "force")
 	boolVar(&o.Yes, "yes")
 	durationVar(&o.Timeout, "timeout")
-	var bad error // the value a flag refused, as "--name value: reason"
-	fs.VisitAll(func(f *flag.Flag) { f.Value = checkedValue{f.Value, f.Name, &bad} })
-
-	// The flag package stops at the first non-flag argument; resume after each one so flags
-	// may follow the subcommand. No subcommand takes an argument starting with "-".
-	var pos []string
-	for rest := args; ; {
-		if err := fs.Parse(rest); err != nil {
-			return o, flagError(err, bad, slices.Contains(args, "kill"))
-		}
-		if fs.NArg() == 0 {
-			break
-		}
-		pos = append(pos, fs.Arg(0))
-		rest = fs.Args()[1:]
-	}
-	o.NoColor = o.NoColor || os.Getenv("NO_COLOR") != ""
-	if o.Tick < engine.MinTick {
-		return o, fmt.Errorf("--tick %v is below the minimum of %v", o.Tick, engine.MinTick)
-	}
-	if len(pos) > 0 {
-		o.Cmd, o.Args = pos[0], pos[1:]
-	}
-
-	switch o.Cmd {
-	case "":
-	case "version":
-		if len(o.Args) > 0 {
-			return o, fmt.Errorf("version takes no arguments")
-		}
-	case "port", "free":
-		if len(o.Args) != 1 {
-			return o, fmt.Errorf("%s takes one port number", o.Cmd)
-		}
-		if _, err := parsePort(o.Args[0]); err != nil {
-			return o, err
-		}
-	case "kill":
-		if len(o.Args) != 1 {
-			return o, fmt.Errorf("kill takes one port number")
-		}
-		if _, err := parsePort(o.Args[0]); err != nil {
-			return o, err
-		}
-		if o.Timeout <= 0 {
-			return o, fmt.Errorf("--timeout %v is not positive", o.Timeout)
-		}
-	default:
-		return o, fmt.Errorf("unknown command %q", o.Cmd)
-	}
-	if o.JSON && o.Cmd != "" && o.Cmd != "port" {
-		return o, fmt.Errorf("--json combines only with port, not %q", o.Cmd)
-	}
-	var killOnly error
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "tree", "force", "yes", "timeout":
-			if o.Cmd != "kill" && killOnly == nil {
-				killOnly = fmt.Errorf("--%s only applies to kill", f.Name)
-			}
-		}
-	})
-	return o, killOnly
+	fs.VisitAll(func(f *flag.Flag) { f.Value = checkedValue{f.Value, f.Name, bad} })
+	return fs
 }
 
 // rootDir turns one --roots entry into an absolute directory. A leading "~" or "~/" is $HOME,
