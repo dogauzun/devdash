@@ -189,6 +189,40 @@ func TestPortDigitKey(t *testing.T) {
 	}
 }
 
+// TestPortDigitAfterPort: while the applied filter is a port number, a digit starts a new port
+// search instead of appending to it (DEV-215); any other applied filter is appended to.
+func TestPortDigitAfterPort(t *testing.T) {
+	s := fixture()
+	pl := &fakePlanner{}
+	m, src := newTest(t, 80, 24, func(o *Options) { o.Probe, o.Plan = (&fakeProbe{}).probe, pl.plan })
+	feed(m, s)
+	close(src.ch)
+	search(m, "5173")
+	press(m, "enter", "x")
+	if !m.kill.active() {
+		t.Fatalf("x did not open the kill modal:\n%s", screen(m))
+	}
+	press(m, "esc")
+	search(m, "8080")
+	if !m.filtering || m.filter != "8080" || m.sel != keyOf(s, 200) {
+		t.Fatalf("5173 enter x esc 8080: filtering %v, filter %q, selected %+v:\n%s", m.filtering, m.filter, m.sel, screen(m))
+	}
+	if got := portLine(m); got != "port 8080 · 1 holder · next free 8082" {
+		t.Errorf("port line %q:\n%s", got, screen(m))
+	}
+
+	// Not port numbers: a leading zero, past 65535, a word, a space.
+	for _, q := range []string{"node", "0", "0123", "70000", "51 x"} {
+		m = newPortTest(t, 80, 24, fixture(), &fakeProbe{})
+		press(m, "/")
+		typeText(m, q)
+		press(m, "enter", "8")
+		if !m.filtering || m.filter != q+"8" {
+			t.Errorf("after %q applied: filtering %v, filter %q, want %q", q, m.filtering, m.filter, q+"8")
+		}
+	}
+}
+
 // TestPortSelectsHolder: a query that becomes a port number selects its exact holder, in a
 // collapsed group and under a hidden shell; clearing the filter brings back the row chosen
 // before and the fold.

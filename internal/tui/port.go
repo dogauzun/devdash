@@ -84,9 +84,13 @@ func portQuery(q string) uint16 {
 	return uint16(n)
 }
 
-// portKey starts a port search from the table: exactly what / and then the digit d do.
+// portKey starts a port search from the table: exactly what / and then the digit d do, except
+// that an applied port number is replaced, not appended to: no port has more digits (DEV-215).
 func (m *Model) portKey(d string) tea.Cmd {
 	m.filtering = true
+	if portQuery(m.filter) != 0 {
+		return m.setFilter(d)
+	}
 	return m.setFilter(m.filter + d)
 }
 
