@@ -131,12 +131,10 @@ func (m *Model) closeDetail() {
 // one process and snapshot. The answer stays while the same process and port are asked again
 // from a newer snapshot, so the field does not flicker to `…` on every refresh.
 type detailFree struct {
-	key   model.RowKey // the process asked for
-	from  uint16       // its lowest TCP port
-	taken time.Time    // TakenAt of the snapshot asked from
-	seq   uint64       // tags the latest run; an answer with another tag is dropped
-	ans   portAnswer   // the latest answer for key and from
-	have  bool         // ans answers key and from
+	key      model.RowKey // the process asked for
+	from     uint16       // its lowest TCP port
+	taken    time.Time    // TakenAt of the snapshot asked from
+	probeRun              // its answer, for key and from
 }
 
 // detailFreeMsg is a next free run's answer, tagged with its run.
@@ -147,9 +145,7 @@ type detailFreeMsg struct {
 
 // apply keeps the answer when it is the latest run's.
 func (msg detailFreeMsg) apply(m *Model) {
-	if msg.seq == m.dfree.seq {
-		m.dfree.ans, m.dfree.have = msg.ans, true
-	}
+	m.dfree.take(msg.seq, msg.ans)
 }
 
 // lowestPort is p's lowest TCP port: listeners of any proto but UDP, as holds and freeport.Find
@@ -197,8 +193,7 @@ func (m *Model) detailProbe() tea.Cmd {
 		f.have = false
 	}
 	f.key, f.from, f.taken = key, from, s.TakenAt
-	f.seq++
-	seq, probe := f.seq, m.o.Probe
+	seq, probe := f.start(), m.o.Probe
 	return func() tea.Msg { return detailFreeMsg{seq: seq, ans: nextFree(s, from, probe)} }
 }
 

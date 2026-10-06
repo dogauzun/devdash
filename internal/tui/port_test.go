@@ -17,6 +17,25 @@ import (
 	"github.com/dogauzun/devdash/internal/model"
 )
 
+// TestProbeRun: only the latest run's answer is kept; an older run's, arriving late, is dropped.
+func TestProbeRun(t *testing.T) {
+	var r probeRun
+	old := r.start()
+	latest := r.start()
+	r.take(old, portAnswer{next: 1, found: true})
+	if r.have {
+		t.Fatalf("an older run's answer was kept: %+v", r)
+	}
+	r.take(latest, portAnswer{next: 2, found: true})
+	if !r.have || r.ans.next != 2 {
+		t.Fatalf("the latest run's answer was not kept: %+v", r)
+	}
+	r.take(old, portAnswer{next: 1, found: true})
+	if r.ans.next != 2 {
+		t.Errorf("an older run's answer replaced the latest's: %+v", r)
+	}
+}
+
 // fakeProbe is a scripted Prober: every port binds but those in taken, and err, when set, is
 // the answer for the ports in failAt, or for every port when failAt is nil. It records the
 // ports asked, so a test sees whether, and for what, the probe ran. No TUI test binds a socket.
