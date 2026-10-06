@@ -13,7 +13,7 @@ The `Makefile` wraps what CI runs; `make` lists the targets.
 
 ```sh
 make check      # the pre-push gate: lint + vet (darwin and linux), the four cross-builds, go test -race -count=1,
-                #   licenses-check
+                #   the run-devdash skill's drive_test.py (python3), licenses-check
 make licenses   # rewrite THIRD_PARTY_LICENSES (shipped in the archives) after a dependency change
 make fmt        # gofmt + goimports rewrite (golangci-lint fmt)
 make build      # ./devdash for this machine
