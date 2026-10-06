@@ -323,75 +323,83 @@ func (m *Model) killView(w, h int) string {
 		head, rest = "cannot kill ", ""
 		tail = append(killReason(model.Clean(k.refusal)), "", "esc close")
 	case killConfirm, killOutside, killRunning:
-		switch {
-		case k.refusal != "":
-			rest += ": " + k.opts.Mode()
-			tail = killReason(model.Clean(k.refusal))
-			tail[0] = "refused: " + tail[0]
-			tail = append(tail, "", "p process  t tree  f force  esc cancel")
-			return m.killLayout(w, h, killTitle(head, name, rest, w), nil, tail)
-		case k.survivors:
-			rest += ": force-kill survivors, SIGKILL to " + model.Count(len(k.plan.Procs), "process", "processes")
-		default:
-			rest += fmt.Sprintf(": %s, %s to %s", k.opts.Mode(), unix.SignalName(k.plan.Signal), model.Count(len(k.plan.Procs), "process", "processes"))
-		}
-		list = m.killPlanLines(k.plan)
-		if k.plan.Group != 0 {
-			tail = append(tail, fmt.Sprintf("pid %d leads its process group: the signal goes to the whole group", k.plan.Group))
-		}
-		if k.stage == killOutside {
-			tail = append(tail, styleWarn.Render(name+" is outside every project, usually a system service."))
-		}
-		hint := ""
-		switch k.stage {
-		case killConfirm:
-			hint = "p process  t tree  f force  enter confirm  esc cancel"
-		case killOutside:
-			hint = "Confirm again: press Y (shift+y)  esc cancel"
-		case killRunning:
-			hint = fmt.Sprintf("signalling %s, waiting up to %s", unix.SignalName(k.plan.Signal), m.o.KillTimeout)
-		}
-		// Confirm only what can be seen: when not one pid line fits beside the hints, confirm
-		// is off until the terminal grows.
-		k.blind = k.stage != killRunning && h-1-len(killWrap(append(tail, hint), w)) < 1
-		if k.blind {
-			hint = "too small to show the plan: enlarge to confirm  esc cancel"
-		}
-		tail = append(tail, hint)
+		rest, list, tail = m.killPlanView(rest, name, w, h)
 	case killReport:
-		if k.err != nil {
-			rest += ": nothing was signalled"
-			tail = []string{model.Clean(k.err.Error()), "", "esc close"}
-			break
-		}
-		exited := 0
-		var rows []string
-		for _, o := range k.result.Outcomes {
-			if o.Exited {
-				exited++
-				continue
-			}
-			outcome := model.Clean(killOutcome(o))
-			if errors.Is(o.Err, engine.ErrPermission) {
-				outcome = styleWarn.Render(outcome) // the last column: tabwriter does not pad it
-			}
-			rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Label()), outcome))
-		}
-		sig := unix.SignalName(k.plan.Signal)
-		if k.survivors && !k.opts.Force { // the report covers the whole kill (DEV-165), so both rounds' signals (DEV-178)
-			sig = "SIGTERM, then SIGKILL"
-		}
-		rest += fmt.Sprintf(": %d of %s exited after %s", exited, model.Count(len(k.result.Outcomes), "process", "processes"), sig)
-		list = killTable(rows)
-		tail = []string{"esc close"}
-		if len(k.result.Survivors()) > 0 {
-			tail = []string{"f force-kill survivors (SIGKILL)  esc close"}
-		}
-		if m.o.Sudo && slices.ContainsFunc(k.result.Outcomes, func(o engine.Outcome) bool { return errors.Is(o.Err, engine.ErrPermission) }) {
-			tail[0] += ", then " + sudoHint // S works in the table, not in this modal (sudo.go)
-		}
+		rest, list, tail = m.killReportView(rest)
 	}
 	return m.killLayout(w, h, killTitle(head, name, rest, w), list, tail)
+}
+
+// killPlanView is the modal's title rest (after the target's name), list and tail before the
+// signal and while it runs: the plan, or the refusal of the mode p, t or f chose. It sets
+// k.blind.
+func (m *Model) killPlanView(rest, name string, w, h int) (string, []string, []string) {
+	k := &m.kill
+	if k.refusal != "" {
+		tail := killReason(model.Clean(k.refusal))
+		tail[0] = "refused: " + tail[0]
+		return rest + ": " + k.opts.Mode(), nil, append(tail, "", "p process  t tree  f force  esc cancel")
+	}
+	n := model.Count(len(k.plan.Procs), "process", "processes")
+	if k.survivors {
+		rest += ": force-kill survivors, SIGKILL to " + n
+	} else {
+		rest += fmt.Sprintf(": %s, %s to %s", k.opts.Mode(), unix.SignalName(k.plan.Signal), n)
+	}
+	var tail []string
+	if k.plan.Group != 0 {
+		tail = append(tail, fmt.Sprintf("pid %d leads its process group: the signal goes to the whole group", k.plan.Group))
+	}
+	hint := "p process  t tree  f force  enter confirm  esc cancel"
+	switch k.stage {
+	case killOutside:
+		tail = append(tail, styleWarn.Render(name+" is outside every project, usually a system service."))
+		hint = "Confirm again: press Y (shift+y)  esc cancel"
+	case killRunning:
+		hint = fmt.Sprintf("signalling %s, waiting up to %s", unix.SignalName(k.plan.Signal), m.o.KillTimeout)
+	}
+	// Confirm only what can be seen: when not one pid line fits beside the hints, confirm
+	// is off until the terminal grows.
+	k.blind = k.stage != killRunning && h-1-len(killWrap(append(tail, hint), w)) < 1
+	if k.blind {
+		hint = "too small to show the plan: enlarge to confirm  esc cancel"
+	}
+	return rest, m.killPlanLines(k.plan), append(tail, hint)
+}
+
+// killReportView is the modal's title rest (after the target's name), list and tail once the
+// kill finished: the processes that did not exit and why, or why nothing was signalled.
+func (m *Model) killReportView(rest string) (string, []string, []string) {
+	k := &m.kill
+	if k.err != nil {
+		return rest + ": nothing was signalled", nil, []string{model.Clean(k.err.Error()), "", "esc close"}
+	}
+	exited := 0
+	var rows []string
+	for _, o := range k.result.Outcomes {
+		if o.Exited {
+			exited++
+			continue
+		}
+		outcome := model.Clean(killOutcome(o))
+		if errors.Is(o.Err, engine.ErrPermission) {
+			outcome = styleWarn.Render(outcome) // the last column: tabwriter does not pad it
+		}
+		rows = append(rows, fmt.Sprintf("%d\t%s\t%s", o.Process.PID, model.Clean(o.Process.Label()), outcome))
+	}
+	sig := unix.SignalName(k.plan.Signal)
+	if k.survivors && !k.opts.Force { // the report covers the whole kill (DEV-165), so both rounds' signals (DEV-178)
+		sig = "SIGTERM, then SIGKILL"
+	}
+	rest += fmt.Sprintf(": %d of %s exited after %s", exited, model.Count(len(k.result.Outcomes), "process", "processes"), sig)
+	tail := []string{"esc close"}
+	if len(k.result.Survivors()) > 0 {
+		tail = []string{"f force-kill survivors (SIGKILL)  esc close"}
+	}
+	if m.o.Sudo && slices.ContainsFunc(k.result.Outcomes, func(o engine.Outcome) bool { return errors.Is(o.Err, engine.ErrPermission) }) {
+		tail[0] += ", then " + sudoHint // S works in the table, not in this modal (sudo.go)
+	}
+	return rest, killTable(rows), tail
 }
 
 // killTitleMin is the fewest cells a cut label keeps in a kill title.
