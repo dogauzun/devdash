@@ -52,7 +52,7 @@ fmt: ## Rewrite files with gofmt and goimports
 
 test: ## go test -race, uncached; the run-devdash skill's emulator test
 	$(GO) test -race -count=1 ./...
-	python3 .claude/skills/run-devdash/drive_test.py
+	python3 -B .claude/skills/run-devdash/drive_test.py
 
 bench: ## Benchmarks, 20 iterations each
 	$(GO) test -run '^$$' -bench . -benchtime 20x ./...
