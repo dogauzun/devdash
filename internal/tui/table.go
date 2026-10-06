@@ -3,6 +3,7 @@ package tui
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -548,19 +549,30 @@ func (c groupCount) text(g model.GroupKind) string {
 }
 
 // tableCache holds what the table derives from all the rows, not just the visible ones, so a
-// key press or a tick redraws without walking every row. It belongs to one m.rows: every
-// rebuild flattens into a new slice, which makes the cache stale.
+// key press or a tick redraws without walking every row. Its first part belongs to one
+// snapshot and one pair of a and d toggles: a new snapshot zeroes the whole cache (update), so
+// a filter keystroke, a fold or s does not count the snapshot again. The rest belongs to one
+// m.rows: every rebuild flattens into a new slice, which makes it stale.
 type tableCache struct {
-	rows    []model.Row                 // the m.rows it was computed for
-	counts  map[model.RowKey]groupCount // header counts
-	kids    map[model.RowKey]bool       // rows with children when expanded and unfiltered
+	base      map[model.RowKey]groupCount // header counts of the snapshot with the a and d toggles (groupCounts)
+	kids      map[model.RowKey]bool       // rows with children when expanded and unfiltered
+	all, hide bool                        // the ShowAll and HideContainers base and kids were counted with
+
+	rows    []model.Row                 // the m.rows the rest was computed for
+	counts  map[model.RowKey]groupCount // header counts: base, and the groups only a search shows
 	longest int                         // widest name cell among the process and container rows
 	short   bool                        // tags shown as "!" (shortTags) when longest was measured
 }
 
-// cache returns the table cache for the current rows, computing it when they changed.
+// cache returns the table cache for the current snapshot, toggles and rows, computing what
+// changed.
 func (m *Model) cache() *tableCache {
 	c := &m.tcache
+	if c.base == nil || c.all != m.view.ShowAll || c.hide != m.view.HideContainers {
+		c.all, c.hide = m.view.ShowAll, m.view.HideContainers
+		c.base, c.kids = m.groupCounts()
+		c.counts = nil // the rows' part read the old kids
+	}
 	short := m.shortTags()
 	if c.counts != nil && len(c.rows) == len(m.rows) && (len(m.rows) == 0 || &c.rows[0] == &m.rows[0]) {
 		if c.short != short { // a resize across commandWidth changes the tags drawn, not the rows
@@ -570,7 +582,7 @@ func (m *Model) cache() *tableCache {
 		return c
 	}
 	c.rows, c.short = m.rows, short
-	c.counts, c.kids = m.groupCounts()
+	c.counts = m.searchCounts(c.base)
 	c.measure(m)
 	return c
 }
@@ -589,25 +601,33 @@ func (c *tableCache) measure(m *Model) {
 // them, expanded and unfiltered, so a header's counts stay put when it is collapsed or
 // filtered. Dimmed rows count, since they are drawn. Compose and containers groups count
 // distinct containers, since Linux runs a docker-proxy per published port and address
-// family. It also reports which rows have children in those rows. A group the view omits
-// whole but a search shows (its rows all hidden by a or d, rebuild) is counted with every
-// row shown, as the search finds it, rather than as zero.
+// family. It also reports which rows have children in those rows. It depends only on the
+// snapshot and the two toggles (cache).
 func (m *Model) groupCounts() (map[model.RowKey]groupCount, map[model.RowKey]bool) {
 	view := model.ViewOptions{ShowAll: m.view.ShowAll, HideContainers: m.view.HideContainers}
-	counts, kids := countGroups(model.Flatten(m.upd.Snapshot, view))
-	if m.filter != "" && (!view.ShowAll || view.HideContainers) {
-		var more map[model.RowKey]groupCount
-		for _, r := range m.rows {
-			if _, ok := counts[r.Key]; ok || r.Key.Header == model.GroupNone {
-				continue
-			}
-			if more == nil {
-				more, _ = countGroups(model.Flatten(m.upd.Snapshot, model.ViewOptions{ShowAll: true}))
-			}
-			counts[r.Key] = more[r.Key]
-		}
+	return countGroups(model.Flatten(m.upd.Snapshot, view))
+}
+
+// searchCounts is base with the groups the view omits whole but a search shows (their rows all
+// hidden by a or d, rebuild), counted with every row shown, as the search finds them, rather
+// than as zero. It returns base itself when there are none, and never writes to it.
+func (m *Model) searchCounts(base map[model.RowKey]groupCount) map[model.RowKey]groupCount {
+	if m.filter == "" || m.view.ShowAll && !m.view.HideContainers {
+		return base
 	}
-	return counts, kids
+	counts := base
+	var more map[model.RowKey]groupCount
+	for _, r := range m.rows {
+		if _, ok := counts[r.Key]; ok || r.Key.Header == model.GroupNone {
+			continue
+		}
+		if more == nil {
+			more, _ = countGroups(model.Flatten(m.upd.Snapshot, model.ViewOptions{ShowAll: true}))
+			counts = maps.Clone(base)
+		}
+		counts[r.Key] = more[r.Key]
+	}
+	return counts
 }
 
 // countGroups counts each group's rows and distinct ports in all, flattened rows with

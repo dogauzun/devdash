@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -881,5 +884,79 @@ func TestTableInlineCode(t *testing.T) {
 	}
 	if got := s.Processes[5].Label(); got != "python3" {
 		t.Errorf("Label = %q, want python3", got)
+	}
+}
+
+// TestTableCountsPerSnapshot: header counts are counted once per snapshot and a and d toggles,
+// not again on a filter keystroke, a fold or s; a new snapshot is counted again, even one
+// taken at the same time (DEV-206).
+func TestTableCountsPerSnapshot(t *testing.T) {
+	m, _ := newTest(t, 120, 30)
+	feed(m, fixture())
+	m.View()
+	base := reflect.ValueOf(m.tcache.base).UnsafePointer()
+	same := func(what string) {
+		t.Helper()
+		m.View()
+		if reflect.ValueOf(m.tcache.base).UnsafePointer() != base {
+			t.Errorf("%s counted the snapshot again", what)
+		}
+	}
+	press(m, "/", "z")
+	same("a filter keystroke")
+	press(m, "esc", "s")
+	same("s")
+	selectRow(t, m, model.RowKey{Header: model.GroupProject, Group: shopID})
+	press(m, "left")
+	same("a fold")
+	press(m, "a")
+	m.View()
+	if reflect.ValueOf(m.tcache.base).UnsafePointer() == base {
+		t.Error("a did not count the snapshot again")
+	}
+	press(m, "a", "right")
+	m.View() // counted with a off again, so only the new snapshot can count it again
+
+	s := fixture() // same TakenAt, one process fewer
+	s.Processes = slices.Delete(s.Processes, 2, 3)
+	feed(m, s)
+	if want := "▾ shop @ feat/cart (worktree) · 3 processes · 1 port"; line(m, want) == "" {
+		t.Errorf("no header %q after a new snapshot:\n%s", want, screen(m))
+	}
+}
+
+// BenchmarkFilterKey is one filter keystroke and the redraw after it on a 5000-process
+// snapshot spread over 50 projects (DEV-206).
+func BenchmarkFilterKey(b *testing.B) {
+	s := model.Snapshot{SchemaVersion: 1, TakenAt: at(2 * time.Second), Host: model.Host{OS: "darwin", UID: 501}}
+	for i := range 50 {
+		id := fmt.Sprintf("/src/p%02d", i)
+		s.Projects = append(s.Projects, model.Project{ID: id, Root: id, Name: fmt.Sprintf("p%02d", i), Branch: "main"})
+	}
+	for i := range 5000 {
+		name := fmt.Sprint("proc", i)
+		p := model.Process{PID: 100 + i, PPID: 1, StartTime: at(time.Hour), UID: 501, User: "dev", Name: name,
+			Argv: []string{name, "--serve"}, Kind: model.KindOther}
+		if i%10 != 0 {
+			p.PPID = 100 + i/3
+		}
+		if i%7 != 0 {
+			p.ProjectID = s.Projects[(i/10)%50].ID
+		}
+		if i%5 == 1 {
+			p.Listeners = []model.Listener{lis("tcp4", "127.0.0.1", uint16(1000+i))}
+		}
+		s.Processes = append(s.Processes, p)
+	}
+	m := New(Options{Source: &fakeSource{ch: make(chan engine.Update)}, Now: func() time.Time { return now }})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	feed(m, s)
+	press(m, "/", "p")
+	keys := [...]string{"r", "backspace"} // "pr", then "p" again: both match every process
+	i := 0
+	for b.Loop() {
+		m.Update(key(keys[i%2]))
+		m.View()
+		i++
 	}
 }
