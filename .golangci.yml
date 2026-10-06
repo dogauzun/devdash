@@ -27,14 +27,14 @@ linters:
           msg: use github.com/charmbracelet/x/term
     funlen:
       # A ratchet, not a target: just above the worst non-test function left,
-      # writePort at 65 statements. Lower it when that function is split.
+      # groupsOf at 49 statements. Lower it when that function is split.
       # Lines count layout and rank the same functions, so only statements.
       lines: -1
-      statements: 66
+      statements: 50
     gocognit:
       # A ratchet, not a target: just above the worst non-test function left,
-      # writePort at 47. Lower it when that function is split.
-      min-complexity: 48
+      # groupsOf at 34. Lower it when that function is split.
+      min-complexity: 35
     nakedret:
       max-func-lines: 30
   exclusions:
