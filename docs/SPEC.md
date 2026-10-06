@@ -152,7 +152,7 @@ A process belongs to the nearest git repository above its working directory; whe
 
 Branch comes from the repository's `HEAD` (`ref: refs/heads/<branch>`, or a 7-character SHA when detached), read from `.git/HEAD` for a main repository and from `<gitdir>/HEAD` for a worktree. A repository in git's reftable format keeps HEAD in its tables and writes the placeholder `ref: refs/heads/.invalid` to the file; devdash does not read reftables, so the branch of such a repository and its worktrees is unknown: empty, with no SHA, the header reads just the name, and the detail pane leaves out its branch field (DEV-163). Nested repositories and submodules resolve to the nearest `.git`, which is what a developer working inside the submodule expects.
 
-Resolution results are cached per directory path with the mtime of the `.git` entry and of `HEAD`; a hit costs one `stat`, a miss costs the walk, and the cache is capped at 4096 entries. Every filesystem read uses `os.Lstat` and refuses to follow a symlink out of the walked path, so a process running in a symlinked directory still resolves to the real repository.
+A directory that found a repository is cached by path, validated by the inode, size and mtime of that repository's `HEAD`; a hit costs one `lstat`, a miss costs the walk, and the cache is capped at 4096 entries. A directory with no project is remembered for the current tick only, so a new `git init` above it is seen on the next tick. Every filesystem read uses `os.Lstat` and refuses to follow a symlink out of the walked path, so a process running in a symlinked directory still resolves to the real repository.
 
 ## Process tree and kinds
 

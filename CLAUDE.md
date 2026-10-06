@@ -33,34 +33,39 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   `testdata/snapshot.golden.json`, rewritten with `go test ./cmd/devdash -run TestJSONGolden -update`), `port.go`
   (`writePort`, the v0.1.1 lines; `writeAnswer`, the terminal answer built around them), `portjson.go` (`port N --json`),
   `free.go` (`runFree`; the package var `probe` that tests replace), `kill.go` (`runKill`: plan, confirmation, exit
-  codes), `tty_darwin.go` / `tty_linux.go` (the termios and winsize ioctls that `isTerminal` and `stdoutWidth` use).
-- `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`),
-  the raw input types and `NeedsArgv` (the names whose argv is read over the process limit) in `build.go`; one file
-  per seam: `project.go` (`Resolver`), `kind.go` (`Classify`), `rows.go` (`Row`, `Flatten`), `reconcile.go`
-  (`Reconcile`), `tags.go` (`Tag`), `holders.go` (`Listener.TCP` and `PortMapping.TCP`, which sockets hold a TCP port;
-  `Holders`: a TCP port's holders, as `kill N` and the TUI's kill result check them). `format.go` holds the text the
-  dashboard, `port N` and `kill N` show: `Project.Label`, `Uptime`, `Clean`, `Location`, `Count`, `Process.PortList`,
-  `Snapshot.ProjectNames`.
-- `internal/collector` — `Collector` interface in `collector.go` (no build tag, nothing OS-specific; `Result`, `Process`,
-  `Listener` alias `model.Raw`, `model.Process`, `model.RawListener`); `fake.go` is the scripted test `Fake`;
-  one implementation per OS in `collector_darwin.go` / `collector_linux.go` and sibling files with the same build tag;
-  `procstat_darwin.go` / `procstat_linux.go` (`ProcStat`: a pid's start time and parent as the snapshot has them, or
-  `ErrGone`; what kill's pid-reuse check re-reads).
+  codes). The tty checks are package vars over `charmbracelet/x/term` that tests replace: `stdinTerminal` and
+  `stdoutTerminal` in `kill.go`, `stdoutWidth` in `port.go`.
+- `internal/model` — stdlib only, pure. Types in `model.go`; `Build` (raw sample + previous snapshot → `Snapshot`), the
+  raw input types and `NeedsArgv` (the names whose argv is read over the process limit) in `build.go`; one file per
+  seam: `project.go` (`Resolver`; `NewTick`, the per-tick memo the engine starts once per sample), `kind.go`
+  (`Classify`), `rows.go` (`Row`, `Flatten`), `reconcile.go` (`Reconcile`), `tags.go` (`Tag`), `holders.go`
+  (`Listener.TCP` and `PortMapping.TCP`, which sockets hold a TCP port; `Holders`: a TCP port's holders, as `kill N` and
+  the TUI's kill result check them). `format.go` holds the text the dashboard, `port N` and `kill N` show:
+  `Project.Label`, `Uptime`, `Clean`, `Location`, `Count`, `Process.PortList`, `Snapshot.ProjectNames`,
+  `Snapshot.ContainerName`, `Snapshot.Here`.
+- `internal/collector` — `Collector` interface in `collector.go` (no build tag, nothing OS-specific; `Result`,
+  `Process`, `Listener` alias `model.Raw`, `model.Process`, `model.RawListener`; `countDenied`, the denied count both
+  report); `fake.go` is the scripted test `Fake`; one implementation per OS in `collector_darwin.go` /
+  `collector_linux.go` and sibling files with the same build tag; `procstat_darwin.go` / `procstat_linux.go`
+  (`ProcStat`: a pid's start time and parent as the snapshot has them, or `ErrGone`; what kill's pid-reuse check
+  re-reads).
 - Everything lives under `internal/`; no public Go API is promised.
 - `internal/engine` — the refresh loop (`Run`, `Updates`, `Refresh`), the one-shot `Snapshot` for the CLI,
   uid-to-user naming, and the kill both `kill N` and the dashboard run: `kill.go` (`NewPlan`, `Kill`), `killtext.go`
   (`KillOptions.Mode`); tested with `testing/synctest` against `collector.Fake`. `TestTagsLiveRemovedWorktree` is the
   phase 6 gate (a server in a removed worktree carries both tags).
 - `internal/freeport` — the free-port search behind `free N` and `port N`'s next free line: `Find` (the first port from
-  N to `Last(N)` that the snapshot does not hold and the probe can bind) and `Probe`, a raw-socket bind (not
-  `net.Listen`) with its per-OS socket setup in `probe_linux.go` / `probe_darwin.go`. The root-only
-  `TestFindLiveOtherUser` is the CI gate (run with sudo).
+  N to `Last(N)` that the snapshot does not hold and the probe can bind), `Next` (`Find` from N+1, none for 65535: the
+  next free that `port N` and the dashboard show) and `Probe`, a raw-socket bind (not `net.Listen`) with its per-OS
+  socket setup in `probe_linux.go` / `probe_darwin.go`. The root-only `TestFindLiveOtherUser` is the CI gate (run with
+  sudo).
 - `internal/tui` — the dashboard (Bubble Tea v2, Lip Gloss v2): `tui.go` (`Options`, `Model`, key routing, layout),
-  `header.go` (header, footer), `style.go` (the ANSI styles), `clean.go` (`quote`, `quoteArgv`: no snapshot text
-  reaches the terminal raw), and one file per feature with its own state type and `action` messages: `table.go`
-  (a folded chain's label: `drawnLinks`, `chainLabel`), `rows.go` (selection by row key, filter, `unfold`: the TUI
-  unfolds chains itself, not `model.Flatten`), `port.go` (digits start a port search, the holder is selected, the
-  port line; its bind probe is `Options.Probe`, a fake in every test), `detail.go`, `help.go`, `open.go`, `kill.go`,
+  `header.go` (header, footer), `style.go` (the ANSI styles), `clean.go` (`quote`, `quoteArgv`: no snapshot text reaches
+  the terminal raw), and one file per feature with its own state type and `action` messages: `table.go` (a folded
+  chain's label: `drawnLinks`, `chainLabel`), `rows.go` (selection by row key, filter, `unfold`: the TUI unfolds chains
+  itself, not `model.Flatten`), `port.go` (digits start a port search, the holder is selected, the port line; its bind
+  probe is `Options.Probe`, a fake in every test; `probeRun`, the latest free-port search, which the detail pane's next
+  free shares), `detail.go`, `help.go`, `open.go` (the opener per OS in `open_darwin.go` / `open_linux.go`), `kill.go`,
   `sudo.go` (`S`, the rerun under sudo); `pager.go` is the paged window the help overlay, the kill modal and the detail
   pane share. Tested by sending `tea.Msg`s to the model and asserting on `View()`; shared fixture and helpers in
   `helpers_test.go` (`selectRow`, `rowsKeys`, `drop`, `key()` with pgup, pgdown, home and end), folded and unfolded
@@ -72,7 +77,8 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
 - Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
 - Tests first. Every bug fix adds a test that reproduces it.
 - No cgo; no shelling out to lsof/ss/netstat/ps on the refresh path.
-- Dependencies kept short: `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2` (no Bubbles).
+- Dependencies kept short: `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2` (no Bubbles),
+  `github.com/charmbracelet/x/term` (the tty checks in `cmd/devdash`).
   No gopsutil, no Docker SDK.
 - Every PR is reviewed by the `pr-reviewer` agent (`.claude/agents/pr-reviewer.md`); merge only on its
   `Verdict: APPROVE` / `Open findings: none.` with CI green.
