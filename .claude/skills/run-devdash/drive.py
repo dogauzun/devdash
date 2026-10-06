@@ -8,11 +8,12 @@ the first). A step is literal keys plus names in angle brackets: <up> <down> <le
 <enter> <esc> <tab> <backspace> <pgup> <pgdown> <home> <end> <ctrl-c> <ctrl-u>, and
 <wait:SECONDS> to let the dashboard refresh. The selected row (reverse video) is marked "» ".
 
-Python 3 standard library only. The screen is rebuilt by a small terminal emulator, and a
-resize before every print makes the dashboard repaint in full, so the emulator never has
-to follow incremental updates.
+Python 3 standard library only. The screen is rebuilt by a small terminal emulator (tested
+by drive_test.py), and a resize before every print makes the dashboard repaint in full; the
+emulator also follows the incremental updates after it (scroll regions, tabs).
 """
 import argparse
+import codecs
 import fcntl
 import os
 import pty
@@ -37,21 +38,37 @@ STRING = re.compile(r"\x1b[\]P_^X].*?(?:\x07|\x1b\\)", re.S)  # OSC, DCS, APC, P
 
 
 class Screen:
-    """The subset of a terminal the dashboard's full repaint uses."""
+    """The subset of xterm the dashboard's renderer uses. feed takes the pty's bytes."""
 
     def __init__(self, cols, rows):
         self.cols, self.rows = cols, rows
         self.y = self.x = 0
         self.reverse = False
         self.pending = ""
+        self.decode = codecs.getincrementaldecoder("utf-8")("replace").decode  # keeps a cut char
         self.wipe()
+        self.reset_region()
+
+    def reset_region(self):
+        self.top, self.bot = 0, self.rows - 1
+
+    def scroll(self, at, n):
+        """Move rows at..bot up n lines (down for n < 0), blanking the rows that open up."""
+        for grid, fill in ((self.cells, " "), (self.marks, False)):
+            for _ in range(min(abs(n), self.bot - at + 1)):
+                if n > 0:
+                    del grid[at]
+                    grid.insert(self.bot, [fill] * self.cols)
+                else:
+                    del grid[self.bot]
+                    grid.insert(at, [fill] * self.cols)
 
     def wipe(self):
         self.cells = [[" "] * self.cols for _ in range(self.rows)]
         self.marks = [[False] * self.cols for _ in range(self.rows)]
 
     def feed(self, data):
-        buf = self.pending + data
+        buf = self.pending + self.decode(data)
         i = 0
         while i < len(buf):
             c = buf[i]
@@ -77,6 +94,13 @@ class Screen:
                     break
                 i = m.end()
             else:
+                if kind == "D":  # index
+                    self.put("\n")
+                elif kind == "M":  # reverse index
+                    if self.y == self.top:
+                        self.scroll(self.top, -1)
+                    else:
+                        self.y = max(0, self.y - 1)
                 i += 3 if kind in "()" else 2
         self.pending = buf[i:]
 
@@ -84,7 +108,12 @@ class Screen:
         if c == "\r":
             self.x = 0
         elif c == "\n":
-            self.y = min(self.rows - 1, self.y + 1)
+            if self.y == self.bot:
+                self.scroll(self.top, 1)
+            else:
+                self.y = min(self.rows - 1, self.y + 1)
+        elif c == "\t":  # tab stops every 8 columns, as the renderer sets them (CSI ? 5 W)
+            self.x = min(self.cols - 1, (self.x // 8 + 1) * 8)
         elif c == "\b":
             self.x = max(0, self.x - 1)
         elif c >= " ":
@@ -142,6 +171,19 @@ class Screen:
         elif final == "@":
             row[self.x:self.x] = blank * n
             del row[self.cols:]
+        elif final == "r":  # margins, 1-based and inclusive; an invalid pair is ignored
+            top = (a[0] or 1) - 1
+            bot = min(self.rows, (a[1] if len(a) > 1 else 0) or self.rows) - 1
+            if top < bot:
+                self.top, self.bot = top, bot
+                self.y = self.x = 0
+        elif final == "S":
+            self.scroll(self.top, n)
+        elif final == "T":
+            self.scroll(self.top, -n)
+        elif final in "LM" and self.top <= self.y <= self.bot:
+            self.scroll(self.y, -n if final == "L" else n)
+            self.x = 0
 
     def lines(self):
         out = []
@@ -188,12 +230,13 @@ def main():
                 return False
             if not data:
                 return False
-            screen.feed(data.decode("utf-8", "replace"))
+            screen.feed(data)
         return True
 
     def show(label):
         for c in (cols - 1, cols):  # a resize makes the dashboard repaint in full
             screen.wipe()
+            screen.reset_region()  # as a terminal does on a resize
             resize(c)
             alive = pump(0.5)
         print(f"=== {label}")
