@@ -3,9 +3,12 @@ version: "2"
 linters:
   default: standard
   enable:
+    - forbidigo
+    - funlen
     - gocognit
     - misspell
     - modernize
+    - nakedret
     - unconvert
     - unparam
   settings:
@@ -15,15 +18,31 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+    forbidigo:
+      # Matches by package name, so an aliased unix import is caught too.
+      analyze-types: true
+      forbid:
+        # No hand-written tty ioctls: isTerminal and the width come from x/term.
+        - pattern: ^unix\.IoctlGet(Termios|Winsize)$
+          msg: use github.com/charmbracelet/x/term
+    funlen:
+      # A ratchet, not a target: just above the worst non-test function left,
+      # writePort at 65 statements. Lower it when that function is split.
+      # Lines count layout and rank the same functions, so only statements.
+      lines: -1
+      statements: 66
     gocognit:
       # A ratchet, not a target: just above the worst non-test function left,
-      # (*linuxCollector).listeners at 59. Lower it when that function is split.
-      min-complexity: 60
+      # writePort at 47. Lower it when that function is split.
+      min-complexity: 48
+    nakedret:
+      max-func-lines: 30
   exclusions:
     rules:
       # Table-driven test functions exceed any useful threshold.
       - path: _test\.go
         linters:
+          - funlen
           - gocognit
 
 formatters:

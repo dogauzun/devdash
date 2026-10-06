@@ -12,7 +12,7 @@ Two independent read-only audits, one for the interface code and one for the cor
 1. Spawn two agents in a single message so they run in parallel. Both: `subagent_type: "general-purpose"`, `model: "opus"` (Opus 5.5). Do not audit inline and do not merge the two into one agent.
    - Interface agent: scope `cmd/devdash/` and `internal/tui/`.
    - Core agent: scope `internal/model/`, `internal/collector/`, `internal/engine/`, `internal/docker/` and `internal/freeport/`.
-   - Linter line, the same for both: golangci-lint v2.13.2 (pinned in CI), config `.golangci.yml` (`default: standard` plus `gocognit`, `misspell`, `modernize`, `unconvert` and `unparam`; gocognit `min-complexity: 60`, a ratchet just above the worst non-test function, with `_test.go` files excluded; formatters `gofmt` and `goimports`), run by `make lint` for darwin and linux.
+   - Linter line, the same for both: golangci-lint v2.13.2 (pinned in CI), config `.golangci.yml` (`default: standard` plus `forbidigo`, `funlen`, `gocognit`, `misspell`, `modernize`, `nakedret`, `unconvert` and `unparam`; forbidigo forbids `unix.IoctlGetTermios`/`IoctlGetWinsize` (use `x/term`); funlen `statements: 66` (lines off) and gocognit `min-complexity: 48`, ratchets just above the worst non-test function, with `_test.go` files excluded from both; nakedret `max-func-lines: 30`; formatters `gofmt` and `goimports`), run by `make lint` for darwin and linux.
 2. Give each agent the brief below with its scope and the linter line filled in. If the user passed an argument (a path or a topic), add it to both briefs as a narrower scope.
 3. Wait for both reports. Do not start the summary with one report missing.
 4. Write the summary in the format below.
