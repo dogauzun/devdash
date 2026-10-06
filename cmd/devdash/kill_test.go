@@ -409,16 +409,19 @@ func TestKillCleansText(t *testing.T) {
 	}
 }
 
-func TestTargetsContainer(t *testing.T) {
+func TestHoldersContainer(t *testing.T) {
 	s := model.Snapshot{Containers: []model.Container{
 		{ID: "abc", Name: "shop-db-1", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
 	}}
-	ts := targets(s, 5432)
-	if len(ts) != 1 || ts[0].key != (model.RowKey{ContainerID: "abc"}) {
-		t.Fatalf("targets %+v", ts)
+	hs := model.Holders(s, 5432)
+	if len(hs) != 1 || hs[0].Key != (model.RowKey{ContainerID: "abc"}) {
+		t.Fatalf("holders %+v", hs)
+	}
+	if got := describe(s, hs[0]); got != "container shop-db-1" {
+		t.Errorf("describe %q, want container shop-db-1", got)
 	}
 	var r *engine.Refusal
-	if _, err := engine.NewPlan(s, ts[0].key, engine.KillOptions{}); !errors.As(err, &r) || !strings.Contains(r.Reason, "docker stop shop-db-1") {
+	if _, err := engine.NewPlan(s, hs[0].Key, engine.KillOptions{}); !errors.As(err, &r) || !strings.Contains(r.Reason, "docker stop shop-db-1") {
 		t.Errorf("err %v, want a docker stop refusal", err)
 	}
 }
@@ -657,26 +660,5 @@ func TestKillContainers(t *testing.T) {
 				t.Errorf("stdout %q, want no plan", stdout.String())
 			}
 		})
-	}
-}
-
-// TestTargetsSharedBackend: each container whose port a shared proxy holds on N is one
-// target, the proxy itself none; a socket on N that matched no container keeps its holder.
-func TestTargetsSharedBackend(t *testing.T) {
-	any6 := netip.IPv6Unspecified()
-	backend := model.Process{PID: 30, Name: "com.docker.backend", StartTime: t0, Listeners: []model.Listener{
-		{Proto: "tcp6", Addr: any6, Port: 5432, ContainerID: "db"}, {Proto: "tcp6", Addr: any6, Port: 6379, ContainerID: "cache"},
-		{Proto: "tcp4", Addr: netip.MustParseAddr("127.0.0.1"), Port: 5432},
-	}}
-	s := model.Snapshot{Processes: []model.Process{backend}, Containers: []model.Container{
-		{ID: "db", Ports: []model.PortMapping{{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}}},
-		{ID: "cache", Ports: []model.PortMapping{{HostPort: 6379, ContainerPort: 6379, Proto: "tcp"}}},
-	}}
-	want := []target{{key: model.RowKey{ContainerID: "db"}}, {key: backend.Key(), runtime: true}}
-	if got := targets(s, 5432); !slices.Equal(got, want) {
-		t.Errorf("targets %+v, want %+v", got, want)
-	}
-	if got := targets(s, 6379); !slices.Equal(got, []target{{key: model.RowKey{ContainerID: "cache"}}}) {
-		t.Errorf("targets %+v, want cache only", got)
 	}
 }

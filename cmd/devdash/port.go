@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
-	"golang.org/x/sys/unix"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/dogauzun/devdash/internal/engine"
 	"github.com/dogauzun/devdash/internal/freeport"
@@ -29,11 +29,11 @@ var stdoutWidth = func(w io.Writer) int {
 	if !ok {
 		return 0
 	}
-	ws, err := unix.IoctlGetWinsize(int(f.Fd()), ioctlGetWinsize)
+	cols, _, err := term.GetSize(f.Fd())
 	if err != nil {
 		return 0
 	}
-	return int(ws.Col)
+	return cols
 }
 
 // runPort answers "who has port N" from one snapshot (no CPU, so one sample): exit 0 and one

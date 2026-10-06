@@ -34,15 +34,15 @@ func TestParse(t *testing.T) {
 		{[]string{"--tick=1m"}, with(func(o *options) { o.Tick = time.Minute })},
 		{[]string{"--all", "--no-docker", "--no-color"}, with(func(o *options) { o.All, o.NoDocker, o.NoColor = true, true, true })},
 		{[]string{"version"}, with(func(o *options) { o.Cmd = "version"; o.Args = []string{} })},
-		{[]string{"port", "3000"}, with(func(o *options) { o.Cmd, o.Args = "port", []string{"3000"} })},
-		{[]string{"port", "3000", "--json"}, with(func(o *options) { o.Cmd, o.Args, o.JSON = "port", []string{"3000"}, true })},
-		{[]string{"--json", "port", "3000"}, with(func(o *options) { o.Cmd, o.Args, o.JSON = "port", []string{"3000"}, true })},
-		{[]string{"free", "3000", "--no-docker"}, with(func(o *options) { o.Cmd, o.Args, o.NoDocker = "free", []string{"3000"}, true })},
+		{[]string{"port", "3000"}, with(func(o *options) { o.Cmd, o.Args, o.Port = "port", []string{"3000"}, 3000 })},
+		{[]string{"port", "3000", "--json"}, with(func(o *options) { o.Cmd, o.Args, o.Port, o.JSON = "port", []string{"3000"}, 3000, true })},
+		{[]string{"--json", "port", "3000"}, with(func(o *options) { o.Cmd, o.Args, o.Port, o.JSON = "port", []string{"3000"}, 3000, true })},
+		{[]string{"free", "3000", "--no-docker"}, with(func(o *options) { o.Cmd, o.Args, o.Port, o.NoDocker = "free", []string{"3000"}, 3000, true })},
 		{[]string{"--all", "port", "3000", "--tick", "1s", "--roots", "code"}, with(func(o *options) {
-			o.All, o.Tick, o.Roots, o.Cmd, o.Args = true, time.Second, []string{j("code")}, "port", []string{"3000"}
+			o.All, o.Tick, o.Roots, o.Cmd, o.Args, o.Port = true, time.Second, []string{j("code")}, "port", []string{"3000"}, 3000
 		})},
 		{[]string{"kill", "3000", "--tree", "--force", "--yes", "--timeout", "1s"}, with(func(o *options) {
-			o.Cmd, o.Args, o.Tree, o.Force, o.Yes, o.Timeout = "kill", []string{"3000"}, true, true, true, time.Second
+			o.Cmd, o.Args, o.Port, o.Tree, o.Force, o.Yes, o.Timeout = "kill", []string{"3000"}, 3000, true, true, true, time.Second
 		})},
 	}
 	for _, tt := range tests {
