@@ -440,6 +440,38 @@ func TestResolveCacheHit(t *testing.T) {
 	}
 }
 
+// TestResolveNewTick: after NewTick, every Resolve until the next NewTick shares one tick (the
+// engine resolves twice per tick when argv reads are limited): the second Resolve neither walks
+// a directory with no project again nor re-checks a cached project's HEAD (DEV-207). The next
+// NewTick starts over: the no-project directory is walked again, so a new `git init` is seen.
+func TestResolveNewTick(t *testing.T) {
+	base := tmp(t)
+	shop := mkrepo(t, base, "shop", "main")
+	other := mkdir(t, base, "other")
+	procs := []Process{inDir(10, other), inDir(11, shop)}
+	r := NewResolver("", nil)
+	r.Resolve(procs) // warm the cache: shop is a hit from now on
+	n := countLstat(t)
+
+	r.NewTick()
+	r.Resolve(procs)
+	first := *n
+	if first < 2 { // HEAD of shop, then the walk up from other
+		t.Fatalf("first Resolve of the tick: %d lstat calls, want a walk and a HEAD check", first)
+	}
+	*n = 0
+	if r.Resolve(procs); *n != 0 || procs[1].ProjectID != shop || procs[0].ProjectID != "" {
+		t.Errorf("second Resolve of the tick: %d lstat calls, want 0; ProjectIDs %q %q", *n, procs[0].ProjectID, procs[1].ProjectID)
+	}
+
+	mkrepo(t, base, "other", "main")
+	*n = 0
+	r.NewTick()
+	if r.Resolve(procs); *n == 0 || procs[0].ProjectID != other {
+		t.Errorf("next tick: %d lstat calls, ProjectID %q; want the walk to find %s", *n, procs[0].ProjectID, other)
+	}
+}
+
 func TestResolveCacheInvalidation(t *testing.T) {
 	base := tmp(t)
 	shop := mkrepo(t, base, "shop", "main")

@@ -110,6 +110,42 @@ type ViewOptions struct {
 // is omitted. Equal sort keys fall back to the row key, so the order never depends on the
 // order of s.Processes.
 func Flatten(s Snapshot, opts ViewOptions) []Row {
+	ordered := slices.SortedFunc(maps.Values(groupsOf(s, opts)), func(a, b *group) int {
+		ka, kb := a.header.Key, b.header.Key
+		return cmp.Or(
+			boolCompare(!a.here(), !b.here()),
+			cmp.Compare(lastRank(ka.Header), lastRank(kb.Header)),
+			b.active.Compare(a.active),
+			cmp.Compare(ka.Header, kb.Header),
+			cmp.Compare(ka.Group, kb.Group))
+	})
+	var rows []Row
+	for _, g := range ordered {
+		roots := g.tree()
+		shown := false
+		for _, n := range roots {
+			shown = n.mark() || shown
+		}
+		if !shown {
+			continue
+		}
+		order(roots, &opts)
+		rows = append(rows, g.header)
+		if opts.Collapsed[g.header.Key] {
+			continue
+		}
+		for _, n := range roots {
+			rows = n.emit(rows, 1, &opts)
+		}
+	}
+	return rows
+}
+
+// groupsOf returns the groups of s by header key, each with its nodes in s's order and its
+// latest start time: a node per process (skipping one with a known empty argv and no listener)
+// and per container with a published port and no process behind it, both dropped with
+// opts.HideContainers. Nodes carry their sort keys (the name in name mode only) and hidden.
+func groupsOf(s Snapshot, opts ViewOptions) map[RowKey]*group {
 	projects := make(map[string]*Project, len(s.Projects))
 	for i := range s.Projects {
 		projects[s.Projects[i].ID] = &s.Projects[i]
@@ -177,36 +213,7 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 			add(containerGroup(c), n)
 		}
 	}
-
-	ordered := slices.SortedFunc(maps.Values(groups), func(a, b *group) int {
-		ka, kb := a.header.Key, b.header.Key
-		return cmp.Or(
-			boolCompare(!a.here(), !b.here()),
-			cmp.Compare(lastRank(ka.Header), lastRank(kb.Header)),
-			b.active.Compare(a.active),
-			cmp.Compare(ka.Header, kb.Header),
-			cmp.Compare(ka.Group, kb.Group))
-	})
-	var rows []Row
-	for _, g := range ordered {
-		roots := g.tree()
-		shown := false
-		for _, n := range roots {
-			shown = n.mark() || shown
-		}
-		if !shown {
-			continue
-		}
-		order(roots, &opts)
-		rows = append(rows, g.header)
-		if opts.Collapsed[g.header.Key] {
-			continue
-		}
-		for _, n := range roots {
-			rows = n.emit(rows, 1, &opts)
-		}
-	}
-	return rows
+	return groups
 }
 
 // Hideable reports whether Flatten hides p unless ShowAll: a shell or an editor with no

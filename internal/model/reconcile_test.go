@@ -263,3 +263,32 @@ func TestOrbStackRows(t *testing.T) {
 		t.Errorf("HideContainers: rows %q", got)
 	}
 }
+
+// TestMatchContainer: the container a listener's socket belongs to, by the rules Reconcile lists.
+func TestMatchContainer(t *testing.T) {
+	byPort := map[uint16][]mapping{
+		5432: {{"db", any4}, {"db", any6}},
+		8000: {{"pod", netip.Addr{}}},
+		8080: {{"l1", lo}, {"l2", lo2}},
+		9090: {{"l1", lo}},
+		80:   {{"v4", any4}},
+	}
+	tests := []struct {
+		l    Listener
+		want string
+	}{
+		{lst("tcp4", any4, 5432), "db"},  // the same address
+		{lst("tcp6", any6, 8000), "pod"}, // an empty host IP is every interface of either family
+		{lst("tcp4", lo2, 8080), "l2"},   // the same specific address
+		{lst("tcp6", any6, 80), "v4"},    // the other family's every-interface mapping
+		{lst("tcp4", any4, 9090), "l1"},  // one container's specific mappings
+		{lst("tcp4", any4, 8080), ""},    // several containers' specific mappings
+		{lst("tcp4", lo, 5432), ""},      // a specific listener never takes an every-interface mapping
+		{lst("tcp4", any4, 1), ""},       // no mapping on the port
+	}
+	for _, tt := range tests {
+		if got := matchContainer(byPort, tt.l); got != tt.want {
+			t.Errorf("matchContainer(%s %v:%d) = %q, want %q", tt.l.Proto, tt.l.Addr, tt.l.Port, got, tt.want)
+		}
+	}
+}

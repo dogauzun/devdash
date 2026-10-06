@@ -19,10 +19,6 @@ import "net/netip"
 // Snapshot.Containers; Flatten turns them into rows. Reconcile modifies procs and their
 // Listeners in place (Build passes fresh slices) and returns procs.
 func Reconcile(procs []Process, containers []Container) []Process {
-	type mapping struct {
-		id string
-		ip netip.Addr // invalid for every interface of either family (Podman's empty host IP)
-	}
 	byPort := map[uint16][]mapping{}
 	for _, c := range containers {
 		for _, m := range c.Ports {
@@ -35,30 +31,6 @@ func Reconcile(procs []Process, containers []Container) []Process {
 	if len(byPort) == 0 {
 		return procs
 	}
-	match := func(l Listener) string {
-		addr, ms := l.Addr.Unmap(), byPort[l.Port]
-		for _, m := range ms {
-			if addr == m.ip || addr.IsUnspecified() && !m.ip.IsValid() {
-				return m.id
-			}
-		}
-		if !addr.IsUnspecified() {
-			return ""
-		}
-		for _, m := range ms {
-			if m.ip.IsUnspecified() {
-				return m.id // the other family's: the same family's matched above
-			}
-		}
-		owner := ""
-		for _, m := range ms {
-			if owner != "" && owner != m.id {
-				return "" // specific mappings of several containers: no way to tell which
-			}
-			owner = m.id
-		}
-		return owner
-	}
 	for i := range procs {
 		p := &procs[i]
 		if p.PID != 0 && !isProxy(*p) {
@@ -68,7 +40,7 @@ func Reconcile(procs []Process, containers []Container) []Process {
 		// own (OrbStack Helper's 32222, Docker Desktop's Kubernetes on 6443), keeps p its own row.
 		owner, whole := "", true
 		for j := range p.Listeners {
-			id := match(p.Listeners[j])
+			id := matchContainer(byPort, p.Listeners[j])
 			if id == "" || owner != "" && owner != id {
 				whole = false
 			}
@@ -87,4 +59,37 @@ func Reconcile(procs []Process, containers []Container) []Process {
 		}
 	}
 	return procs
+}
+
+// mapping is the host side of a published tcp port, as Reconcile indexes it by host port.
+type mapping struct {
+	id string     // the container's ID
+	ip netip.Addr // invalid for every interface of either family (Podman's empty host IP)
+}
+
+// matchContainer returns the ID of the container whose mapping on l's port takes l, by the
+// rules Reconcile lists, or "" for none; byPort holds the tcp mappings with a host port.
+func matchContainer(byPort map[uint16][]mapping, l Listener) string {
+	addr, ms := l.Addr.Unmap(), byPort[l.Port]
+	for _, m := range ms {
+		if addr == m.ip || addr.IsUnspecified() && !m.ip.IsValid() {
+			return m.id
+		}
+	}
+	if !addr.IsUnspecified() {
+		return ""
+	}
+	for _, m := range ms {
+		if m.ip.IsUnspecified() {
+			return m.id // the other family's: the same family's matched above
+		}
+	}
+	owner := ""
+	for _, m := range ms {
+		if owner != "" && owner != m.id {
+			return "" // specific mappings of several containers: no way to tell which
+		}
+		owner = m.id
+	}
+	return owner
 }

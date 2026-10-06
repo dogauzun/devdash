@@ -119,36 +119,8 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 		}
 	}
 
-	type id struct {
-		pid   int
-		start int64
-	}
-	prevCPU := make(map[id]time.Duration, len(prev.Processes))
-	for _, p := range prev.Processes {
-		if p.PID != 0 && p.Unknown&FieldCPU == 0 {
-			prevCPU[id{p.PID, p.StartTime.UnixNano()}] = p.CPUTime
-		}
-	}
-	wall := raw.TakenAt.Sub(prev.TakenAt)
-	for i := range procs {
-		p := &procs[i]
-		p.CPUPercent = math.NaN()
-		before, ok := prevCPU[id{p.PID, p.StartTime.UnixNano()}]
-		if ok && wall > 0 && p.Unknown&FieldCPU == 0 && p.CPUTime >= before {
-			p.CPUPercent = float64(p.CPUTime-before) / float64(wall) * 100
-		}
-	}
-
-	var warnings []Warning
-	at := map[string]int{}
-	for _, w := range raw.Warnings {
-		if i, ok := at[w.Code]; ok {
-			warnings[i].Count += w.Count
-			continue
-		}
-		at[w.Code] = len(warnings)
-		warnings = append(warnings, w)
-	}
+	cpuPercent(procs, prev, raw.TakenAt)
+	warnings := mergeWarnings(raw.Warnings)
 	timing := Timing{}
 	maps.Copy(timing, raw.Timings)
 	t := time.Now()
@@ -183,4 +155,45 @@ func Build(raw Raw, prev Snapshot, containers []Container, r *Resolver) Snapshot
 		Warnings:      warnings,
 		Timing:        timing,
 	}
+}
+
+// cpuPercent sets CPUPercent on every element of procs, sampled at now: the CPU time used since
+// prev by the same process (pid and start time) over the wall time since prev, NaN when either
+// sample's CPU time is unknown, the process is not in prev, or the clock did not move forward.
+func cpuPercent(procs []Process, prev Snapshot, now time.Time) {
+	type id struct {
+		pid   int
+		start int64
+	}
+	prevCPU := make(map[id]time.Duration, len(prev.Processes))
+	for _, p := range prev.Processes {
+		if p.PID != 0 && p.Unknown&FieldCPU == 0 {
+			prevCPU[id{p.PID, p.StartTime.UnixNano()}] = p.CPUTime
+		}
+	}
+	wall := now.Sub(prev.TakenAt)
+	for i := range procs {
+		p := &procs[i]
+		p.CPUPercent = math.NaN()
+		before, ok := prevCPU[id{p.PID, p.StartTime.UnixNano()}]
+		if ok && wall > 0 && p.Unknown&FieldCPU == 0 && p.CPUTime >= before {
+			p.CPUPercent = float64(p.CPUTime-before) / float64(wall) * 100
+		}
+	}
+}
+
+// mergeWarnings returns one warning per Code, in order of first appearance, with the counts
+// summed and the first one's hint; ws is not modified.
+func mergeWarnings(ws []Warning) []Warning {
+	var warnings []Warning
+	at := map[string]int{}
+	for _, w := range ws {
+		if i, ok := at[w.Code]; ok {
+			warnings[i].Count += w.Count
+			continue
+		}
+		at[w.Code] = len(warnings)
+		warnings = append(warnings, w)
+	}
+	return warnings
 }

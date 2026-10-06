@@ -412,3 +412,20 @@ func TestBuildRuntimeNoProject(t *testing.T) {
 		})
 	}
 }
+
+// TestMergeWarnings: one warning per Code, in order of first appearance, with the counts
+// summed and the first hint kept; the input is not modified.
+func TestMergeWarnings(t *testing.T) {
+	in := []Warning{{Code: "a", Count: 1, Hint: "first"}, {Code: "b", Count: 2}, {Code: "a", Count: 3, Hint: "second"}}
+	orig := slices.Clone(in)
+	want := []Warning{{Code: "a", Count: 4, Hint: "first"}, {Code: "b", Count: 2}}
+	if got := mergeWarnings(in); !reflect.DeepEqual(got, want) {
+		t.Errorf("mergeWarnings = %+v, want %+v", got, want)
+	}
+	if !reflect.DeepEqual(in, orig) {
+		t.Errorf("input modified: %+v", in)
+	}
+	if got := mergeWarnings(nil); got != nil {
+		t.Errorf("mergeWarnings(nil) = %+v, want nil", got)
+	}
+}

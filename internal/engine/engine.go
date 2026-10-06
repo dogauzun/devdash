@@ -234,6 +234,11 @@ func (e *Engine) collect(ctx context.Context, o collector.Options) (model.Raw, e
 			return model.Raw{}, errBusy
 		}
 	}
+	// One Resolver tick per sample: InProject during Collect and Build after it share the
+	// walks (DEV-207). Here, past the in-flight check, no abandoned Collect is using it.
+	if e.o.Resolver != nil {
+		e.o.Resolver.NewTick()
+	}
 	ctx, cancel := context.WithTimeout(ctx, collectTimeout)
 	defer cancel()
 	ch := make(chan outcome, 1) // buffered: an abandoned goroutine can always finish
