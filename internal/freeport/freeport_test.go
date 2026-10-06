@@ -98,8 +98,7 @@ func TestFind(t *testing.T) {
 	}
 }
 
-// TestFindProbeError: the search stops at the first probe error, so a failed probe is never
-// mistaken for "nothing free".
+// TestNext: the search `free n+1` makes, with no search at all for n = 65535.
 func TestNext(t *testing.T) {
 	held := model.Snapshot{Processes: []model.Process{{PID: 10, Name: "node", Listeners: []model.Listener{
 		{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 3001},
@@ -124,6 +123,8 @@ func TestNext(t *testing.T) {
 	}
 }
 
+// TestFindProbeError: the search stops at the first probe error, so a failed probe is never
+// mistaken for "nothing free".
 func TestFindProbeError(t *testing.T) {
 	boom := errors.New("bind: operation not permitted")
 	p := &probeSet{taken: []uint16{3000}, fail: map[uint16]error{3001: boom}}
