@@ -600,7 +600,7 @@ func TestReadCwd(t *testing.T) {
 				return tt.stat(path, st)
 			}
 			var p Process
-			if !c.readCwd(dir, &p) {
+			if !c.readCwd(dir, &p, map[int]bool{}) {
 				t.Fatal("readCwd: process gone")
 			}
 			if p.Cwd != tt.cwd || p.CwdDeleted != tt.deleted || statted != tt.statted {
@@ -698,6 +698,43 @@ func TestCollectOwnerHint(t *testing.T) {
 				t.Errorf("as a user: owner hint %q, err %v; want \"\" (Build's sudo hint)", res.OwnerHint, err)
 			}
 		})
+	}
+}
+
+// TestReadListens: net/tcp and net/tcp6 are read in that order, a missing file (tcp6 with IPv6
+// disabled) has no listeners, and any other read error is returned.
+func TestReadListens(t *testing.T) {
+	_, listens := proc500()
+	var want []Listener
+	for _, l := range listens {
+		if l.state == "" {
+			want = append(want, l.want)
+		}
+	}
+	dir, _ := copyProc500(t)
+	rows, err := readListens(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Listener
+	for _, r := range rows {
+		got = append(got, r.Listener)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("listeners:\n got %+v\nwant %+v", got, want)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "net/tcp6")); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err = readListens(dir); err != nil || len(rows) == 0 || len(rows) == len(want) {
+		t.Errorf("without tcp6: %d listeners, err %v; want only tcp's", len(rows), err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "net/tcp6"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readListens(dir); err == nil {
+		t.Error("tcp6 a directory: no error")
 	}
 }
 

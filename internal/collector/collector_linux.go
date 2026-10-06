@@ -71,7 +71,8 @@ func (c *linuxCollector) Collect(ctx context.Context, o Options) (Result, error)
 	res := Result{TakenAt: time.Now(), Host: host(), Timings: model.Timing{}}
 
 	limit := o.InProject != nil
-	procs, err := c.processes(ctx, res.Timings, !limit)
+	denied := map[int]bool{} // processes with a field read denied by EACCES
+	procs, err := c.processes(ctx, res.Timings, !limit, denied)
 	if err != nil {
 		return Result{}, err
 	}
@@ -83,10 +84,9 @@ func (c *linuxCollector) Collect(ctx context.Context, o Options) (Result, error)
 		return Result{}, err
 	}
 	res.Timings["listeners"] = time.Since(t)
-	var skipped map[int]bool // processes whose argv was not read (o.InProject)
 	if limit {
 		t := time.Now()
-		if procs, skipped, err = c.limitedArgv(ctx, procs, argvWanted(o, procs, res.Listeners)); err != nil {
+		if procs, err = c.limitedArgv(ctx, procs, argvWanted(o, procs, res.Listeners), denied); err != nil {
 			return Result{}, err
 		}
 		res.Timings["argv_cwd"] += time.Since(t)
@@ -107,23 +107,13 @@ func (c *linuxCollector) Collect(ctx context.Context, o Options) (Result, error)
 			}
 		}
 	}
-	unknown := 0
-	for _, p := range procs {
-		u := p.Unknown
-		if skipped[p.PID] {
-			u &^= model.FieldArgv // not read, not denied
-		}
-		if u != 0 {
-			unknown++
-		}
-	}
 	fieldsHint, ownerHint := c.hints(fdDenied)
 	// Root is denied only by ptrace access checks, so sudo helps a user only when the root it
 	// starts has CAP_SYS_PTRACE (not in a container with default capabilities, DEV-13), and an
 	// unowned listener only when permissions may hide its owner (DEV-144).
 	sudo := c.euid != 0 && c.sudoPtrace
-	if unknown > 0 {
-		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: unknown, Hint: fieldsHint, Sudo: sudo})
+	if n := countDenied(procs, denied); n > 0 {
+		res.Warnings = append(res.Warnings, model.Warning{Code: "process_fields_unreadable", Count: n, Hint: fieldsHint, Sudo: sudo})
 	}
 	res.OwnerHint = ownerHint
 	res.OwnerSudo = sudo && fdDenied
@@ -173,9 +163,9 @@ func boundingPtrace() bool {
 // processes reads every user-space process in one pass per pid, so a pid
 // reused between reads cannot mix two processes into one row. Kernel threads,
 // zombies and processes that exit mid-read are skipped. The result is sorted by
-// pid. Without withArgv, Argv is left for limitedArgv. It adds the "proctable" and
-// "argv_cwd" timings.
-func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.Duration, withArgv bool) ([]Process, error) {
+// pid. Without withArgv, Argv is left for limitedArgv. A field whose read fails with EACCES is
+// marked unknown and its process put in denied. It adds the "proctable" and "argv_cwd" timings.
+func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.Duration, withArgv bool, denied map[int]bool) ([]Process, error) {
 	btime, err := c.btime()
 	if err != nil {
 		return nil, err
@@ -204,13 +194,13 @@ func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.
 		}
 		dir := c.root + "/" + strconv.Itoa(pid)
 		t0 := time.Now()
-		p, ok := readProcTable(dir, pid, btime, pageSize)
+		p, ok := readProcTable(dir, pid, btime, pageSize, denied)
 		t1 := time.Now()
 		tTable += t1.Sub(t0)
 		if !ok {
 			continue
 		}
-		ok = (!withArgv || readArgv(dir, &p)) && c.readCwd(dir, &p)
+		ok = (!withArgv || readArgv(dir, &p, denied)) && c.readCwd(dir, &p, denied)
 		tArgv += time.Since(t1)
 		if ok {
 			procs = append(procs, p)
@@ -220,9 +210,9 @@ func (c *linuxCollector) processes(ctx context.Context, timings map[string]time.
 	return procs, nil
 }
 
-// readProcTable reads pid, ppid, uid, name, start time, CPU time and RSS.
-// ok is false for kernel threads, zombies and processes that are gone.
-func readProcTable(dir string, pid int, btime int64, pageSize uint64) (p Process, ok bool) {
+// readProcTable reads pid, ppid, uid, name, start time, CPU time and RSS; a denied statm marks
+// RSS unknown and pid denied. ok is false for kernel threads, zombies and processes that are gone.
+func readProcTable(dir string, pid int, btime int64, pageSize uint64, denied map[int]bool) (p Process, ok bool) {
 	// stat and status have the same mode; if either fails (exited, or
 	// hidepid=1) there is nothing to show.
 	b, err := os.ReadFile(dir + "/stat")
@@ -253,6 +243,7 @@ func readProcTable(dir string, pid int, btime int64, pageSize uint64) (p Process
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		p.Unknown |= model.FieldMem
+		denied[pid] = true
 	case err != nil:
 		return p, false
 	default:
@@ -265,39 +256,38 @@ func readProcTable(dir string, pid int, btime int64, pageSize uint64) (p Process
 	return p, true
 }
 
-// limitedArgv reads argv for the processes want marks and marks the others' argv unknown,
-// returning those in skipped. A process that exited since its first read is dropped.
-func (c *linuxCollector) limitedArgv(ctx context.Context, procs []Process, want []bool) (_ []Process, skipped map[int]bool, _ error) {
-	skipped = map[int]bool{}
+// limitedArgv reads argv for the processes want marks and marks the others' argv unknown, not
+// denied. A process that exited since its first read is dropped.
+func (c *linuxCollector) limitedArgv(ctx context.Context, procs []Process, want []bool, denied map[int]bool) ([]Process, error) {
 	kept := procs[:0]
 	for i, p := range procs {
 		if i%64 == 0 && ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			return nil, ctx.Err()
 		}
 		switch {
 		case !want[i]:
-			p.Unknown |= model.FieldArgv
-			skipped[p.PID] = true
-		case !readArgv(c.root+"/"+strconv.Itoa(p.PID), &p):
+			p.Unknown |= model.FieldArgv // not read, so not counted as denied
+		case !readArgv(c.root+"/"+strconv.Itoa(p.PID), &p, denied):
 			continue
 		}
 		kept = append(kept, p)
 	}
-	return kept, skipped, nil
+	return kept, nil
 }
 
-// readArgv fills Argv; ok is false when the process is gone. An empty cmdline (a
-// process that blanked its argv) leaves Argv nil.
+// readArgv fills Argv, or marks it unknown and p denied; ok is false when the process is gone.
+// An empty cmdline (a process that blanked its argv) leaves Argv nil.
 //
 // ponytail: a pid that exits and is reused between the stat read and the argv and
 // cwd reads (microseconds apart, after the pid space wraps; with InProject, after
 // the listener walk) still mixes two processes; re-check starttime after the last
 // read if that ever matters.
-func readArgv(dir string, p *Process) (ok bool) {
+func readArgv(dir string, p *Process, denied map[int]bool) (ok bool) {
 	b, err := os.ReadFile(dir + "/cmdline")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		p.Unknown |= model.FieldArgv
+		denied[p.PID] = true
 	case err != nil:
 		return false
 	default:
@@ -306,7 +296,8 @@ func readArgv(dir string, p *Process) (ok bool) {
 	return true
 }
 
-// readCwd fills Cwd and CwdDeleted; ok is false when the process is gone.
+// readCwd fills Cwd and CwdDeleted, or marks Cwd unknown and p denied; ok is false when the
+// process is gone.
 //
 // The kernel marks a removed cwd "<path> (deleted)"; macOS reports the bare old path, so the
 // mark is stripped. readlink cannot tell it from a live directory really named "x (deleted)"
@@ -314,11 +305,12 @@ func readArgv(dir string, p *Process) (ok bool) {
 // removed or not, and a removed directory has no links left. A failed stat leaves CwdDeleted
 // false, so the tag is never guessed (DEV-116).
 // ponytail: that live directory still loses " (deleted)" from Cwd; nlink > 0 could keep it.
-func (c *linuxCollector) readCwd(dir string, p *Process) (ok bool) {
+func (c *linuxCollector) readCwd(dir string, p *Process, denied map[int]bool) (ok bool) {
 	link, err := os.Readlink(dir + "/cwd")
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		p.Unknown |= model.FieldCwd
+		denied[p.PID] = true
 	case err != nil:
 		return false
 	}
@@ -344,90 +336,20 @@ func (c *linuxCollector) readCwd(dir string, p *Process) (ok bool) {
 // the processes skipped because their fd/ was denied on the last walk, and, below root, whether
 // another uid's listener is left unowned: its owner's fds were skipped as unreadable (DEV-144).
 func (c *linuxCollector) listeners(ctx context.Context, procs []Process) (_ []Listener, fdDenied bool, _ error) {
-	var rows []tcpListen
-	for _, f := range [...]struct{ file, proto string }{{"/net/tcp", "tcp4"}, {"/net/tcp6", "tcp6"}} {
-		b, err := os.ReadFile(c.root + f.file)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue // tcp6 is absent when IPv6 is disabled
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		rows = append(rows, parseNetTCP(b, f.proto)...)
+	rows, err := readListens(c.root)
+	if err != nil {
+		return nil, false, err
 	}
-
-	euid := c.euid
-	countable := func(r tcpListen) bool { return euid == 0 || r.uid == euid }
-	byInode := make(map[uint64]int, len(rows))
-	left := 0 // countable listeners still without an owner
-	for i, r := range rows {
-		byInode[r.inode] = i
-		if countable(r) {
-			left++
-		}
-	}
-	unmatchedSet := func() []uint64 {
-		var s []uint64
-		for _, r := range rows {
-			if r.PID == 0 && countable(r) {
-				s = append(s, r.inode)
-			}
-		}
-		slices.Sort(s)
-		return s
-	}
-
+	w := newFDWalk(c.root, c.euid, rows)
 	c.mu.Lock()
 	wasDenied, wasUnmatched := c.denied, c.unmatched
 	c.mu.Unlock()
-	denied := map[procKey]bool{}
-	linkDenied := false
-	scan := func(p Process) {
-		fdDir := c.root + "/" + strconv.Itoa(p.PID) + "/fd/"
-		fds, err := readDirNames(fdDir)
-		if errors.Is(err, fs.ErrPermission) { // not dumpable, e.g. gpg-agent or a setgid binary
-			denied[procKey{p.PID, p.StartTime.UnixNano()}] = true
-		}
-		if err != nil {
-			return // EACCES, or the process exited
-		}
-		for _, fd := range fds {
-			target, err := os.Readlink(fdDir + fd)
-			if err != nil {
-				linkDenied = linkDenied || errors.Is(err, fs.ErrPermission)
-				continue
-			}
-			inode, ok := parseSocketLink(target)
-			if !ok {
-				continue
-			}
-			if i, ok := byInode[inode]; ok && rows[i].PID == 0 {
-				rows[i].PID = p.PID
-				if countable(rows[i]) {
-					left--
-				}
-			}
-		}
-	}
 
-	var retry []Process // denied last time; scanned only if the unmatched set changed
-	for _, p := range procs {
-		if left == 0 {
-			break
-		}
-		if ctx.Err() != nil {
-			return nil, false, ctx.Err()
-		}
-		if p.UID != euid && euid != 0 { // others' fds fail with EACCES unless we are root
-			continue
-		}
-		if wasDenied[procKey{p.PID, p.StartTime.UnixNano()}] {
-			retry = append(retry, p)
-			continue
-		}
-		scan(p)
+	retry, err := w.walk(ctx, procs, wasDenied) // denied last time; scanned only if the unmatched set changed
+	if err != nil {
+		return nil, false, err
 	}
-	unmatched := unmatchedSet()
+	unmatched := w.unmatched()
 	if len(unmatched) > 0 && !slices.Equal(unmatched, wasUnmatched) {
 		// ponytail: retried pids come after higher ones, so a fork-shared socket held by
 		// a retried pid and a higher readable pid goes to the higher one.
@@ -435,26 +357,140 @@ func (c *linuxCollector) listeners(ctx context.Context, procs []Process) (_ []Li
 			if ctx.Err() != nil {
 				return nil, false, ctx.Err()
 			}
-			scan(p)
+			w.scan(p)
 		}
-		unmatched = unmatchedSet()
+		unmatched = w.unmatched()
 	} else {
 		for _, p := range retry {
-			denied[procKey{p.PID, p.StartTime.UnixNano()}] = true
+			w.denied[keyOf(p)] = true
 		}
 	}
 	c.mu.Lock()
-	c.denied, c.unmatched = denied, unmatched
+	c.denied, c.unmatched = w.denied, unmatched
 	c.mu.Unlock()
 
-	othersUnowned := false
-	out := make([]Listener, len(rows))
-	for i, r := range rows {
-		out[i] = r.Listener
-		othersUnowned = othersUnowned || r.PID == 0 && !countable(r)
-	}
-	return out, len(denied) > 0 || linkDenied || othersUnowned, nil
+	out, othersUnowned := w.result()
+	return out, len(w.denied) > 0 || w.linkDenied || othersUnowned, nil
 }
+
+// readListens reads the listening sockets of root's net/tcp, then net/tcp6. A missing file
+// has none: tcp6 is absent when IPv6 is disabled.
+func readListens(root string) ([]tcpListen, error) {
+	var rows []tcpListen
+	for _, f := range [...]struct{ file, proto string }{{"/net/tcp", "tcp4"}, {"/net/tcp6", "tcp6"}} {
+		b, err := os.ReadFile(root + f.file)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, parseNetTCP(b, f.proto)...)
+	}
+	return rows, nil
+}
+
+// fdWalk is one walk of fd links matching rows to their owners: scan sets a row's PID, counts
+// left down for each countable row it matches, and records what was denied on the way.
+type fdWalk struct {
+	root       string
+	euid       int
+	rows       []tcpListen
+	byInode    map[uint64]int   // index in rows by socket inode
+	left       int              // countable rows still without an owner
+	denied     map[procKey]bool // processes whose fd/ failed with EACCES
+	linkDenied bool             // an fd link read failed with EACCES or EPERM
+}
+
+func newFDWalk(root string, euid int, rows []tcpListen) *fdWalk {
+	w := &fdWalk{root: root, euid: euid, rows: rows, byInode: make(map[uint64]int, len(rows)), denied: map[procKey]bool{}}
+	for i, r := range rows {
+		w.byInode[r.inode] = i
+		if w.countable(r) {
+			w.left++
+		}
+	}
+	return w
+}
+
+// countable reports whether the walk can match r: its socket uid is euid, or any as root.
+func (w *fdWalk) countable(r tcpListen) bool { return w.euid == 0 || r.uid == w.euid }
+
+// walk scans, in order, the processes of procs whose fds euid may read, until every countable
+// row is matched. It skips and returns those in skip: their fd/ was denied on the last walk.
+func (w *fdWalk) walk(ctx context.Context, procs []Process, skip map[procKey]bool) (retry []Process, _ error) {
+	for _, p := range procs {
+		if w.left == 0 {
+			break
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if p.UID != w.euid && w.euid != 0 { // others' fds fail with EACCES unless we are root
+			continue
+		}
+		if skip[keyOf(p)] {
+			retry = append(retry, p)
+			continue
+		}
+		w.scan(p)
+	}
+	return retry, nil
+}
+
+// scan gives p the unowned rows whose sockets its fds hold.
+func (w *fdWalk) scan(p Process) {
+	fdDir := w.root + "/" + strconv.Itoa(p.PID) + "/fd/"
+	fds, err := readDirNames(fdDir)
+	if errors.Is(err, fs.ErrPermission) { // not dumpable, e.g. gpg-agent or a setgid binary
+		w.denied[keyOf(p)] = true
+	}
+	if err != nil {
+		return // EACCES, or the process exited
+	}
+	for _, fd := range fds {
+		target, err := os.Readlink(fdDir + fd)
+		if err != nil {
+			w.linkDenied = w.linkDenied || errors.Is(err, fs.ErrPermission)
+			continue
+		}
+		inode, ok := parseSocketLink(target)
+		if !ok {
+			continue
+		}
+		if i, ok := w.byInode[inode]; ok && w.rows[i].PID == 0 {
+			w.rows[i].PID = p.PID
+			if w.countable(w.rows[i]) {
+				w.left--
+			}
+		}
+	}
+}
+
+// unmatched returns the sorted inodes of the countable rows still without an owner.
+func (w *fdWalk) unmatched() []uint64 {
+	var s []uint64
+	for _, r := range w.rows {
+		if r.PID == 0 && w.countable(r) {
+			s = append(s, r.inode)
+		}
+	}
+	slices.Sort(s)
+	return s
+}
+
+// result returns the listeners, and whether a row the walk could not match (another uid's,
+// below root) is left unowned.
+func (w *fdWalk) result() (_ []Listener, othersUnowned bool) {
+	out := make([]Listener, len(w.rows))
+	for i, r := range w.rows {
+		out[i] = r.Listener
+		othersUnowned = othersUnowned || r.PID == 0 && !w.countable(r)
+	}
+	return out, othersUnowned
+}
+
+func keyOf(p Process) procKey { return procKey{p.PID, p.StartTime.UnixNano()} }
 
 // readDirNames lists a directory without the per-entry allocations of os.ReadDir.
 func readDirNames(path string) ([]string, error) {

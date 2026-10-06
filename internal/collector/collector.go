@@ -63,6 +63,19 @@ func argvWanted(o Options, procs []Process, ls []Listener) []bool {
 	return want
 }
 
+// countDenied is process_fields_unreadable's count: the processes of procs that denied has,
+// those with a field read denied by permissions, so one dropped after it was marked does not
+// count, nor does an argv left unread (Options.InProject).
+func countDenied(procs []Process, denied map[int]bool) int {
+	n := 0
+	for _, p := range procs {
+		if denied[p.PID] {
+			n++
+		}
+	}
+	return n
+}
+
 // host describes this machine and the effective uid devdash runs as.
 func host() model.Host {
 	name, _ := os.Hostname()
