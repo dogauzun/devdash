@@ -323,7 +323,7 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 	d.field("cwd", cwd)
 	if pr := detailProject(s, p.ProjectID); pr != nil {
 		project := detailProjectTitle(pr)
-		if loc := model.Location(pr, detailHere(s)); loc != "" {
+		if loc := model.Location(pr, s.Here()); loc != "" {
 			project += " · " + loc
 		}
 		d.field("project", project)
@@ -489,30 +489,13 @@ func detailHeader(d *detailDoc, s model.Snapshot, r model.Row) {
 	}
 }
 
-// detailProjectTitle is `name @ branch (worktree)`, with the short SHA for a detached HEAD.
+// detailProjectTitle is pr's label (model.Project.LabelParts) with its name and ref each
+// quoted: `name @ branch (worktree)`, with the short SHA for a detached HEAD.
 func detailProjectTitle(pr *model.Project) string {
-	ref := pr.Branch
-	if ref == "" {
-		ref = pr.ShortSHA
-	}
-	t := quote(pr.Name)
-	if ref != "" {
-		t += " @ " + quote(ref)
-	}
-	if pr.Worktree {
-		t += " (worktree)"
-	}
-	return t
-}
-
-// detailHere returns the snapshot's Here project, the one devdash was run from, or nil.
-func detailHere(s model.Snapshot) *model.Project {
-	for i := range s.Projects {
-		if s.Projects[i].Here {
-			return &s.Projects[i]
-		}
-	}
-	return nil
+	q := *pr
+	q.Name, q.Branch, q.ShortSHA = quote(pr.Name), quote(pr.Branch), quote(pr.ShortSHA)
+	head, wt := q.LabelParts()
+	return head + wt
 }
 
 // detailProject returns the snapshot's project with id, or nil.

@@ -98,6 +98,31 @@ func TestFind(t *testing.T) {
 	}
 }
 
+// TestNext: the search `free n+1` makes, with no search at all for n = 65535.
+func TestNext(t *testing.T) {
+	held := model.Snapshot{Processes: []model.Process{{PID: 10, Name: "node", Listeners: []model.Listener{
+		{Proto: "tcp4", Addr: netip.IPv4Unspecified(), Port: 3001},
+	}}}}
+	tests := []struct {
+		n      uint16
+		taken  []uint16
+		want   uint16
+		wantOK bool
+		asked  []uint16
+	}{
+		{n: 3000, taken: []uint16{3002}, want: 3003, wantOK: true, asked: []uint16{3002, 3003}}, // from n+1, as `free n+1`
+		{n: 65534, taken: []uint16{65535}, asked: []uint16{65535}},                              // none in range
+		{n: 65535}, // no search at all
+	}
+	for _, tt := range tests {
+		p := &probeSet{taken: tt.taken}
+		got, ok, err := Next(held, tt.n, p.probe)
+		if err != nil || got != tt.want || ok != tt.wantOK || !slices.Equal(p.asked, tt.asked) {
+			t.Errorf("Next(%d) = %d, %v, %v asking %v; want %d, %v, nil asking %v", tt.n, got, ok, err, p.asked, tt.want, tt.wantOK, tt.asked)
+		}
+	}
+}
+
 // TestFindProbeError: the search stops at the first probe error, so a failed probe is never
 // mistaken for "nothing free".
 func TestFindProbeError(t *testing.T) {

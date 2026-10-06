@@ -293,12 +293,7 @@ func killHolder(s model.Snapshot, h model.Holder) string {
 	p := h.Process
 	switch {
 	case p == nil:
-		for _, c := range s.Containers {
-			if c.ID == h.Key.ContainerID && c.Name != "" {
-				return c.Name
-			}
-		}
-		return h.Key.ContainerID
+		return s.ContainerName(h.Key.ContainerID)
 	case p.PID == 0:
 		return "unknown owner"
 	}

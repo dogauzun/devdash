@@ -36,8 +36,8 @@ func runPortJSON(ctx context.Context, o engine.Options, port uint16, stdout, std
 		return exitFailed
 	}
 	a := portAnswer(snap, port)
-	if !a.Free && port < 65535 {
-		next, ok, err := freeport.Find(snap, port+1, probe)
+	if !a.Free {
+		next, ok, err := freeport.Next(snap, port, probe)
 		switch {
 		case err != nil:
 			fmt.Fprintln(stderr, "devdash: next free:", err)

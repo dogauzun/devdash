@@ -281,13 +281,7 @@ func describe(s model.Snapshot, h model.Holder) string {
 		}
 		return fmt.Sprintf("%d %s", p.PID, p.Name)
 	}
-	id := h.Key.ContainerID
-	for _, c := range s.Containers {
-		if c.ID == id && c.Name != "" {
-			return "container " + c.Name
-		}
-	}
-	return "container " + id
+	return "container " + s.ContainerName(h.Key.ContainerID)
 }
 
 // ownerHint is the listener_owner_unreadable warning's hint followed by the Docker warning's,

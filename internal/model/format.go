@@ -98,6 +98,28 @@ func (s Snapshot) ProjectNames() map[string]string {
 	return ns
 }
 
+// ContainerName is the name of container id in s, or id when Docker gave it no name or s has
+// no such container: how `kill N` and the dashboard name a container. Snapshot text, not yet
+// cleaned.
+func (s Snapshot) ContainerName(id string) string {
+	for _, c := range s.Containers {
+		if c.ID == id && c.Name != "" {
+			return c.Name
+		}
+	}
+	return id
+}
+
+// Here is s's Here project, the one devdash was run from, or nil.
+func (s Snapshot) Here() *Project {
+	for i := range s.Projects {
+		if s.Projects[i].Here {
+			return &s.Projects[i]
+		}
+	}
+	return nil
+}
+
 // Count is n with the singular or plural noun: "1 process", "3 processes".
 func Count(n int, one, many string) string {
 	if n == 1 {

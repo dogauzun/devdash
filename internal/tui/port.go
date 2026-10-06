@@ -136,11 +136,9 @@ func probeSelf(s model.Snapshot, n uint16, probe freeport.Prober) portAnswer {
 	return a
 }
 
-// nextFree searches, below 65535, from n+1 with freeport.Find, as `devdash free n+1` does.
+// nextFree is freeport.Next's answer for n: the search `devdash free n+1` makes, none for 65535.
 func nextFree(s model.Snapshot, n uint16, probe freeport.Prober) (a portAnswer) {
-	if n < 65535 {
-		a.next, a.found, a.err = freeport.Find(s, n+1, probe)
-	}
+	a.next, a.found, a.err = freeport.Next(s, n, probe)
 	return a
 }
 
