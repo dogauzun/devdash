@@ -96,7 +96,7 @@ func (m *Model) portKey(d string) tea.Cmd {
 func (m *Model) portSearch() tea.Cmd {
 	n := portQuery(m.filter)
 	if n != m.port.n {
-		m.port = portState{n: n, probeRun: probeRun{seq: m.port.seq + 1}} // drops the old port's run
+		m.port = portState{n: n, seq: m.port.seq + 1} // drops the old port's run
 	}
 	if n == 0 {
 		return nil
