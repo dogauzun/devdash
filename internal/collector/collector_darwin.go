@@ -194,18 +194,6 @@ func cwdGone(path string) bool {
 	return errors.Is(unix.Lstat(path, &st), syscall.ENOENT)
 }
 
-// countDenied counts the processes of procs that denied has, so one dropped after it was
-// marked does not count.
-func countDenied(procs []Process, denied map[int]bool) int {
-	n := 0
-	for _, p := range procs {
-		if denied[p.PID] {
-			n++
-		}
-	}
-	return n
-}
-
 // readArgv fills p.Argv from kern.procargs2 using buf (kern.argmax bytes) and returns why it
 // could not, or drop for a process of uid that is dropped rather than shown half-filled.
 func readArgv(lib *libSystem, buf []byte, p *Process, uid int) (drop bool, _ error) {
