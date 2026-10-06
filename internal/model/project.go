@@ -22,7 +22,8 @@ type Resolver struct {
 	roots []string
 	here  string             // devdash's own working directory, resolved; "" for none (SetHere)
 	cache map[string]cached  // directory → repository found by its walk; only hits, across ticks
-	tick  map[string]Project // directory → result for the current Resolve call, misses included
+	tick  map[string]Project // directory → result for the current tick, misses included
+	ticks bool               // NewTick was called: ticks are the caller's, and Resolve no longer starts one
 }
 
 // cached is a walk result plus what validates it: the HEAD file and its lstat when read.
@@ -57,6 +58,16 @@ func (r *Resolver) SetHere(dir string) {
 	}
 }
 
+// NewTick starts a tick: every Resolve until the next NewTick looks each directory up at most
+// once and reuses the result, a directory with no project included, so the engine's two
+// Resolve calls per tick (collector.Options.InProject, then Build) walk once (DEV-207). Across
+// ticks only directories that found a repository stay cached (dir). A Resolver whose caller
+// never calls NewTick starts a tick on every Resolve.
+func (r *Resolver) NewTick() {
+	clear(r.tick)
+	r.ticks = true
+}
+
 func realPath(p string) string {
 	if p == "" {
 		return ""
@@ -70,7 +81,8 @@ func realPath(p string) string {
 // Resolve sets ProjectID on every element of procs in place (Build passes its own fresh
 // slice), "" for the "other" group, for PID 0 pseudo-processes and for container-runtime
 // processes (IsContainerRuntime), and returns each project referenced by at least one process,
-// once, in order of first reference, the one of the SetHere directory with Here set.
+// once, in order of first reference, the one of the SetHere directory with Here set. Each
+// call is a tick of its own unless the caller marks ticks with NewTick.
 //
 // Steps 1–5 of the spec: the nearest repository above the process cwd, else above the cwd of
 // its parent, grandparent and great-grandparent. Step 6, once every process has had steps
@@ -81,7 +93,9 @@ func realPath(p string) string {
 // no project for step 6, and ends the parent chain of a process below it (a container's
 // process under its shim), so a repository only runtime processes sit in is not a project.
 func (r *Resolver) Resolve(procs []Process) []Project {
-	clear(r.tick)
+	if !r.ticks {
+		clear(r.tick)
+	}
 	byPID := make(map[int]int, len(procs))
 	skip := make([]bool, len(procs)) // PID 0 pseudo-processes and runtime processes
 	for i, p := range procs {
@@ -253,7 +267,7 @@ func repoAt(dir string) (p Project, head string, headFI fs.FileInfo, ok bool) {
 	dotgit := filepath.Join(dir, ".git")
 	fi, err := lstat(dotgit)
 	if err != nil {
-		return
+		return Project{}, "", nil, false
 	}
 	p = Project{ID: dir, Root: dir, Name: filepath.Base(dir), CommonDir: dotgit}
 	gitdir := dotgit

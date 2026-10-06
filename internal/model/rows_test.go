@@ -497,6 +497,54 @@ func TestFlattenContainers(t *testing.T) {
 	}
 }
 
+// TestGroupsOf: the nodes of each group in snapshot order, before any tree or sort, with the
+// group's latest start; a known empty argv with no listener is no node, and HideContainers
+// drops both kinds of container node.
+func TestGroupsOf(t *testing.T) {
+	proxy := fp(30, 1, 0, "docker-proxy", "", KindContainer, 5432)
+	proxy.ContainerID = "c1"
+	empty := fp(40, 1, 9, "kworker", "", KindOther)
+	empty.Argv = nil
+	snap := Snapshot{
+		Projects:  shop(),
+		Processes: []Process{proxy, fp(11, 10, 5, "vite", "/src/shop", KindServer), fp(10, 1, 3, "api", "/src/shop", KindServer), fp(20, 1, 1, "zsh", "", KindShell), empty},
+		Containers: []Container{
+			{ID: "c1", Name: "db", ComposeProject: "shop", Ports: []PortMapping{{HostPort: 5432}}},
+			{ID: "c2", Name: "redis", Ports: []PortMapping{{HostPort: 6379}}},
+			{ID: "c3", Name: "worker", Ports: []PortMapping{{ContainerPort: 80}}}, // nothing published: no node
+		},
+	}
+	type got struct {
+		keys   []RowKey
+		active time.Time
+	}
+	collect := func(opts ViewOptions) map[RowKey]got {
+		out := map[RowKey]got{}
+		for k, g := range groupsOf(snap, opts) {
+			var keys []RowKey
+			for _, n := range g.nodes {
+				keys = append(keys, n.row.Key)
+			}
+			out[k] = got{keys, g.active}
+		}
+		return out
+	}
+	project, other := RowKey{Header: GroupProject, Group: "/src/shop"}, RowKey{Header: GroupOther}
+	want := map[RowKey]got{
+		project:                               {[]RowKey{snap.Processes[1].Key(), snap.Processes[2].Key()}, snap.Processes[1].StartTime},
+		other:                                 {[]RowKey{snap.Processes[3].Key()}, snap.Processes[3].StartTime},
+		{Header: GroupCompose, Group: "shop"}: {[]RowKey{proxy.Key()}, proxy.StartTime},
+		{Header: GroupContainers}:             {[]RowKey{{ContainerID: "c2"}}, time.Time{}},
+	}
+	if g := collect(ViewOptions{}); !reflect.DeepEqual(g, want) {
+		t.Errorf("groups %+v\nwant %+v", g, want)
+	}
+	want = map[RowKey]got{project: want[project], other: want[other]}
+	if g := collect(ViewOptions{HideContainers: true}); !reflect.DeepEqual(g, want) {
+		t.Errorf("HideContainers: groups %+v\nwant %+v", g, want)
+	}
+}
+
 func TestFlattenCollapse(t *testing.T) {
 	const s = "/src/shop"
 	snap := Snapshot{Projects: shop(), Processes: []Process{
