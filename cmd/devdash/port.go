@@ -69,36 +69,7 @@ func runPort(ctx context.Context, o engine.Options, port uint16, stdout, stderr 
 // with no socket on it (iptables only) gets one line per published address, with pid -. It
 // prints "free" and returns false when nothing listens on port.
 func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
-	projects := s.ProjectNames()
-	hint := "run with sudo to see it"
-	for _, x := range s.Warnings {
-		if x.Code == "listener_owner_unreadable" {
-			hint = x.Hint
-		}
-	}
-	containers := map[string]model.Container{}
-	for _, c := range s.Containers {
-		containers[c.ID] = c
-	}
-	// container is the name, project and description columns of id's line.
-	container := func(id string) (string, string, string) {
-		c, ok := containers[id]
-		if !ok {
-			c = model.Container{ID: id}
-		}
-		name, project, desc := c.Name, c.ComposeProject, "container"
-		if name == "" {
-			name = c.ID
-		}
-		if project == "" {
-			project = "-"
-		}
-		if c.Image != "" {
-			desc += " (" + c.Image + ")"
-		}
-		return name, project, desc
-	}
-
+	c := newPortColumns(s)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	found := false
 	held := map[string]bool{} // containers with a socket on port
@@ -108,48 +79,19 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 				continue
 			}
 			found = true
-			addr := netip.AddrPortFrom(l.Addr, l.Port)
 			if l.ContainerID != "" {
 				held[l.ContainerID] = true
-				name, project, desc := container(l.ContainerID)
-				pid := "-"
-				if p.PID != 0 {
-					pid, desc = strconv.Itoa(p.PID), desc+" via "+p.Name
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", pid, name, project, addr, desc)
-				continue
 			}
-			project := projects[p.ProjectID]
-			if project == "" {
-				project = "-"
-			}
-			switch {
-			case p.PID == 0:
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\towner unknown: %s\n", p.PID, p.Name, project, addr, withDocker(hint, s))
-			case model.IsContainerRuntime(p) && dockerHint(s) != "":
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", p.PID, p.Name, project, addr, dockerHint(s))
-			default:
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, addr)
-			}
+			fmt.Fprintln(tw, c.listener(p, l))
 		}
 	}
-	for _, c := range s.Containers {
-		if held[c.ID] {
+	for _, ct := range s.Containers {
+		if held[ct.ID] {
 			continue
 		}
-		var addrs []netip.Addr
-		for _, m := range c.Ports {
-			ip := m.HostIP
-			if !ip.IsValid() { // Podman's empty host IP: every interface
-				ip = netip.IPv4Unspecified()
-			}
-			if m.HostPort == port && m.TCP() && !slices.Contains(addrs, ip) {
-				addrs = append(addrs, ip)
-			}
-		}
-		for _, ip := range addrs {
+		for _, ip := range publishedAddrs(ct, port) {
 			found = true
-			name, project, desc := container(c.ID)
+			name, project, desc := c.container(ct.ID)
 			fmt.Fprintf(tw, "-\t%s\t%s\t%s\t%s, no listening socket\n", name, project, netip.AddrPortFrom(ip, port), desc)
 		}
 	}
@@ -158,6 +100,78 @@ func writePort(w io.Writer, s model.Snapshot, port uint16) (bool, error) {
 		return false, err
 	}
 	return true, tw.Flush()
+}
+
+// portColumns is what writePort's lines take from the snapshot besides the listener: project
+// names, the owner-unknown hint and the containers by ID.
+type portColumns struct {
+	s          model.Snapshot
+	projects   map[string]string
+	hint       string
+	containers map[string]model.Container
+}
+
+func newPortColumns(s model.Snapshot) portColumns {
+	c := portColumns{s: s, projects: s.ProjectNames(), hint: "run with sudo to see it", containers: map[string]model.Container{}}
+	for _, x := range s.Warnings {
+		if x.Code == "listener_owner_unreadable" {
+			c.hint = x.Hint
+		}
+	}
+	for _, ct := range s.Containers {
+		c.containers[ct.ID] = ct
+	}
+	return c
+}
+
+// listener is the tab-separated line of p's listener l: the container's when Reconcile matched
+// l to one, otherwise p's, ending with the owner-unknown or Docker hint when it carries one.
+func (c portColumns) listener(p model.Process, l model.Listener) string {
+	addr := netip.AddrPortFrom(l.Addr, l.Port)
+	if l.ContainerID != "" {
+		name, project, desc := c.container(l.ContainerID)
+		pid := "-"
+		if p.PID != 0 {
+			pid, desc = strconv.Itoa(p.PID), desc+" via "+p.Name
+		}
+		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", pid, name, project, addr, desc)
+	}
+	project := cmp.Or(c.projects[p.ProjectID], "-")
+	switch {
+	case p.PID == 0:
+		return fmt.Sprintf("%d\t%s\t%s\t%s\towner unknown: %s", p.PID, p.Name, project, addr, withDocker(c.hint, c.s))
+	case model.IsContainerRuntime(p) && dockerHint(c.s) != "":
+		return fmt.Sprintf("%d\t%s\t%s\t%s\t%s", p.PID, p.Name, project, addr, dockerHint(c.s))
+	}
+	return fmt.Sprintf("%d\t%s\t%s\t%s", p.PID, p.Name, project, addr)
+}
+
+// container is the name, project and description columns of container id's line.
+func (c portColumns) container(id string) (name, project, desc string) {
+	ct, ok := c.containers[id]
+	if !ok {
+		ct = model.Container{ID: id}
+	}
+	desc = "container"
+	if ct.Image != "" {
+		desc += " (" + ct.Image + ")"
+	}
+	return cmp.Or(ct.Name, ct.ID), cmp.Or(ct.ComposeProject, "-"), desc
+}
+
+// publishedAddrs is the distinct host addresses c publishes port on over tcp, in mapping order.
+func publishedAddrs(c model.Container, port uint16) []netip.Addr {
+	var addrs []netip.Addr
+	for _, m := range c.Ports {
+		ip := m.HostIP
+		if !ip.IsValid() { // Podman's empty host IP: every interface
+			ip = netip.IPv4Unspecified()
+		}
+		if m.HostPort == port && m.TCP() && !slices.Contains(addrs, ip) {
+			addrs = append(addrs, ip)
+		}
+	}
+	return addrs
 }
 
 // detailIndent starts each line writeAnswer adds under a holder, so they read as its own.
