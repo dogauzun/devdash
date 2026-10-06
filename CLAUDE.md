@@ -78,7 +78,9 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
 - Tests first. Every bug fix adds a test that reproduces it.
 - No cgo; no shelling out to lsof/ss/netstat/ps on the refresh path.
 - Dependencies kept short: `golang.org/x/sys`, `github.com/ebitengine/purego` (darwin), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2` (no Bubbles),
-  `github.com/charmbracelet/x/term` (the tty checks in `cmd/devdash`).
+  `github.com/charmbracelet/x/term` (the tty checks in `cmd/devdash`), `github.com/charmbracelet/x/ansi` (display width,
+  cut and truncate in the TUI and `port N`), `github.com/charmbracelet/colorprofile` (the `--no-color` profile; the
+  styled goldens).
   No gopsutil, no Docker SDK.
 - Every PR is reviewed by the `pr-reviewer` agent (`.claude/agents/pr-reviewer.md`); merge only on its
   `Verdict: APPROVE` / `Open findings: none.` with CI green.
