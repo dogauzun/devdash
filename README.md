@@ -146,7 +146,8 @@ make check   # lint, vet, cross-builds for darwin and linux, race tests (what CI
 `make` lists the other targets. Without make: `CGO_ENABLED=0 go build ./cmd/devdash` and
 `go test -race ./...`.
 
-`make demo` re-records the GIF above from [demo.tape](https://github.com/dogauzun/devdash/blob/main/demo.tape) (Linux only, as root).
+`make demo` re-records the GIF above from [demo.tape](https://github.com/dogauzun/devdash/blob/main/demo.tape) (Linux only, as root);
+`make demo-docker` does it in a Linux container, for macOS.
 
 ## Contributing
 

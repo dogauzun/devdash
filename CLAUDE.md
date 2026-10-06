@@ -20,6 +20,7 @@ make build      # ./devdash for this machine
 make snapshot   # goreleaser check + release --snapshot --clean into dist/ (goreleaser v2.18.2), then CI's archive
                 #   check, scripts/check-archives.sh
 make demo       # re-record docs/demo.gif from demo.tape (Linux as root; vhs, ttyd, ffmpeg, Chromium)
+make demo-docker  # the same in a privileged Linux container (scripts/demo.Dockerfile); the way on macOS
 ```
 
 Single steps: `make lint`, `make vet`, `make cross`, `make test`, `make bench`, `make docker-gate`. golangci-lint is
