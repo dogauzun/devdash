@@ -99,30 +99,17 @@ func (r Result) ExitCode() int {
 
 // osys is the OS seam: unit tests replace it, so they record signals instead of sending them.
 type osys struct {
-	// start returns a pid's start time read from the OS now, in the collector's terms, or
-	// errGone when the pid does not exist or is a zombie (on Linux, once every thread has
-	// exited, so its files are closed).
-	start   func(pid int) (time.Time, error)
-	ppid    func(pid int) (int, error) // read from the OS now, from the same source as start
+	// stat returns a pid's start time, in the collector's terms, and its parent, read from
+	// the OS now (collector.ProcStat), or collector.ErrGone when the pid does not exist or is a
+	// zombie (on Linux, once every thread has exited, so its files are closed).
+	stat    func(pid int) (start time.Time, ppid int, err error)
 	getpgid func(pid int) (int, error)
 	kill    func(pid int, sig syscall.Signal) error
 	sleep   func(time.Duration)
 	self    func() (pid, ppid int) // devdash's pid and its parent's, read now
 }
 
-var errGone = collector.ErrGone
-
-func procStart(pid int) (time.Time, error) {
-	t, _, err := collector.ProcStat(pid)
-	return t, err
-}
-
-func procPPID(pid int) (int, error) {
-	_, ppid, err := collector.ProcStat(pid)
-	return ppid, err
-}
-
-var realOS = osys{start: procStart, ppid: procPPID, getpgid: syscall.Getpgid, kill: syscall.Kill, sleep: time.Sleep,
+var realOS = osys{stat: collector.ProcStat, getpgid: syscall.Getpgid, kill: syscall.Kill, sleep: time.Sleep,
 	self: func() (int, int) { return os.Getpid(), os.Getppid() }}
 
 // NewPlan returns what killing the process with row key key would signal, computed from s, or
@@ -354,9 +341,9 @@ func kill(p Plan, timeout time.Duration, sy osys) (Result, error) {
 // inside that window would still be signalled. Closing it needs pidfd (Linux only); macOS
 // has no race-free way.
 func valid(o *Outcome, sy osys) bool {
-	start, err := sy.start(o.Process.PID)
+	start, _, err := sy.stat(o.Process.PID)
 	switch {
-	case errors.Is(err, errGone):
+	case errors.Is(err, collector.ErrGone):
 		o.Exited = true
 	case err != nil:
 		o.Err = fmt.Errorf("cannot read start time, not signalled: %w", err)
@@ -438,8 +425,8 @@ func wait(outs []Outcome, deadline time.Time, sy osys) {
 			if !o.Signalled || o.Exited {
 				continue
 			}
-			start, err := sy.start(o.Process.PID)
-			if errors.Is(err, errGone) || err == nil && !start.Equal(o.Process.StartTime) {
+			start, _, err := sy.stat(o.Process.PID)
+			if errors.Is(err, collector.ErrGone) || err == nil && !start.Equal(o.Process.StartTime) {
 				o.Exited = true
 			} else {
 				pending = true
@@ -488,7 +475,7 @@ func (sy osys) chain() []int {
 	c := []int{self}
 	for pid > 1 && !slices.Contains(c, pid) {
 		c = append(c, pid)
-		next, err := sy.ppid(pid)
+		_, next, err := sy.stat(pid)
 		if err != nil {
 			break
 		}

@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/dogauzun/devdash/internal/collector"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -42,13 +43,13 @@ type sent struct {
 	sig syscall.Signal
 }
 
-// fakeOS scripts the OS seam: starts holds live pids, pgids their groups (anything else is in
-// group 99), and kill records what it would send.
+// fakeOS scripts the OS seam: starts and ppids hold live pids (a pid in neither reads as gone),
+// pgids their groups (anything else is in group 99), and kill records what it would send.
 type fakeOS struct {
 	starts  map[int]time.Time
-	errs    map[int]error // start-time read errors
+	errs    map[int]error // stat read errors
 	pgids   map[int]int
-	ppids   map[int]int // parents for the fresh ancestor chain; a missing pid reads as gone
+	ppids   map[int]int // parents for the fresh ancestor chain
 	killErr map[int]error
 	dies    map[int]bool // removed from starts when signalled
 	sent    []sent
@@ -65,21 +66,16 @@ func newFake(ps ...model.Process) *fakeOS {
 
 func (f *fakeOS) sys() osys {
 	return osys{
-		start: func(pid int) (time.Time, error) {
+		stat: func(pid int) (time.Time, int, error) {
 			if err := f.errs[pid]; err != nil {
-				return time.Time{}, err
+				return time.Time{}, 0, err
 			}
-			t, ok := f.starts[pid]
-			if !ok {
-				return time.Time{}, errGone
+			t, live := f.starts[pid]
+			pp, ok := f.ppids[pid]
+			if !live && !ok {
+				return time.Time{}, 0, collector.ErrGone
 			}
-			return t, nil
-		},
-		ppid: func(pid int) (int, error) {
-			if pp, ok := f.ppids[pid]; ok {
-				return pp, nil
-			}
-			return 0, errGone
+			return t, pp, nil
 		},
 		getpgid: func(pid int) (int, error) {
 			if g, ok := f.pgids[pid]; ok {
@@ -399,12 +395,15 @@ func TestKillPollsUntilExit(t *testing.T) {
 		p := plan(t, f, proc(T, 7).Key(), KillOptions{}, proc(T, 7))
 		sy := f.sys()
 		polls := 0
-		start := sy.start
-		sy.start = func(pid int) (time.Time, error) {
+		stat := sy.stat
+		sy.stat = func(pid int) (time.Time, int, error) {
+			if pid != T { // devdash's ancestor chain
+				return stat(pid)
+			}
 			if polls++; polls == 4 { // validation, then three polls 100 ms apart
 				delete(f.starts, pid)
 			}
-			return start(pid)
+			return stat(pid)
 		}
 		t0 := time.Now()
 		r, err := kill(p, time.Second, sy)

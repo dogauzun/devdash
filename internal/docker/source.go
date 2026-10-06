@@ -42,10 +42,6 @@ func NewSource(ep Endpoint, tick, beat time.Duration) *Source {
 	return &Source{ep: ep, c: newClient(ep), timeout: requestTimeout, needPing: true, retry: newHoldoff(tick, beat), now: time.Now}
 }
 
-// RetryAfter is how long a failure or a missing socket keeps this Source off the network:
-// 10 refresh ticks, rounded up to a whole number of beats.
-func (s *Source) RetryAfter() time.Duration { return s.retry.after }
-
 // Endpoint is the endpoint this Source asks, for the detail pane's footer; the zero Endpoint
 // while a NewDiscoverySource has found none.
 func (s *Source) Endpoint() Endpoint {
@@ -56,11 +52,11 @@ func (s *Source) Endpoint() Endpoint {
 
 // Fetch returns the containers to use now and a warning when Docker is present but not
 // answering (nil otherwise). It pings once at start and after each failure; after a failure
-// or a missing socket it makes no request until RetryAfter has passed since the start of the
-// call that failed, so the retry is the first call at or after that time; with a beat, a
-// call up to retrySlack (1 s) early counts, so the engine's beat that is nominally
-// RetryAfter later retries even when it wakes sooner after its beat than the failing call
-// did. ctx bounds the whole call.
+// or a missing socket it makes no request until the holdoff (10 refresh ticks, rounded up
+// to whole beats) has passed since the start of the call that failed, so the retry is the
+// first call at or after that time; with a beat, a call up to retrySlack (1 s) early counts,
+// so the engine's beat that is nominally the holdoff later retries even when it wakes sooner
+// after its beat than the failing call did. ctx bounds the whole call.
 //
 // A unix socket that does not exist (ENOENT on the dial, at the ping or the list) is no
 // Docker at all: it clears the list, returns no warning, and calls until the retry return
@@ -81,35 +77,38 @@ func (s *Source) Fetch(ctx context.Context) ([]model.Container, *model.Warning) 
 	if s.c == nil && !s.find(start) {
 		return s.prev, s.warn
 	}
-	if s.needPing {
-		rctx, cancel := context.WithTimeout(ctx, s.timeout)
-		err := s.c.ping(rctx)
-		cancel()
-		switch {
-		case err == nil:
-			s.needPing = false
-		case ctx.Err() != nil:
-			return s.prev, s.warn
-		case s.missing(err):
-			return s.absent(start)
-		default:
-			return s.fail(start, err)
-		}
-	}
-	rctx, cancel := context.WithTimeout(ctx, s.timeout)
-	list, err := s.c.containers(rctx)
-	cancel()
-	switch {
-	case err == nil:
-		s.prev, s.warn = list, nil
-	case ctx.Err() != nil:
-		// The caller gave up; that says nothing about the endpoint.
+	switch err := s.ask(ctx); {
+	case err == nil, ctx.Err() != nil:
+		// A ctx that ended: the caller gave up; that says nothing about the endpoint.
+		return s.prev, s.warn
 	case s.missing(err):
 		return s.absent(start)
 	default:
 		return s.fail(start, err)
 	}
-	return s.prev, s.warn
+}
+
+// ask pings when needPing, then lists, each request bounded by s.timeout, and returns the
+// first error, changing nothing else. A good ping clears needPing; a good list replaces prev
+// and clears warn.
+func (s *Source) ask(ctx context.Context) error {
+	if s.needPing {
+		rctx, cancel := context.WithTimeout(ctx, s.timeout)
+		err := s.c.ping(rctx)
+		cancel()
+		if err != nil {
+			return err
+		}
+		s.needPing = false
+	}
+	rctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	list, err := s.c.containers(rctx)
+	if err != nil {
+		return err
+	}
+	s.prev, s.warn = list, nil
+	return nil
 }
 
 // missing reports whether err says the unix socket file does not exist, which means

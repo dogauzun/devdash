@@ -277,6 +277,48 @@ func TestFetchPingsOnceThenLists(t *testing.T) {
 	}
 }
 
+// TestAsk: ask returns the first failed request's error and changes nothing; a good ping
+// clears needPing, and a good list replaces the previous list and clears the warning.
+func TestAsk(t *testing.T) {
+	e := newEngine(t, dockerBody)
+	s := NewSource(e.ep, testTick, beat)
+	stale := &model.Warning{Code: "docker_unreachable"}
+	s.prev, s.warn = wantPodman, stale
+
+	e.set(func(e *engine) { e.down = true })
+	if err := s.ask(context.Background()); err == nil {
+		t.Fatal("ask on a down engine: no error")
+	}
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping}) {
+		t.Fatalf("down: requests = %q, want the ping only", r)
+	}
+	if !s.needPing || !reflect.DeepEqual(s.prev, wantPodman) || s.warn != stale {
+		t.Fatalf("down: needPing %v, prev %+v, warn %+v; want all unchanged", s.needPing, s.prev, s.warn)
+	}
+
+	e.set(func(e *engine) { e.down = false })
+	if err := s.ask(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.take(); !reflect.DeepEqual(r, []string{ping, list}) {
+		t.Fatalf("up: requests = %q, want ping then list", r)
+	}
+	if s.needPing || !reflect.DeepEqual(s.prev, wantDocker) || s.warn != nil {
+		t.Fatalf("up: needPing %v, prev %+v, warn %+v; want false, the list, nil", s.needPing, s.prev, s.warn)
+	}
+
+	e.set(func(e *engine) { e.down = true })
+	if err := s.ask(context.Background()); err == nil {
+		t.Fatal("ask after a good ping on a down engine: no error")
+	}
+	if r := e.take(); !reflect.DeepEqual(r, []string{list}) {
+		t.Fatalf("down after ping: requests = %q, want the list only", r)
+	}
+	if s.needPing || !reflect.DeepEqual(s.prev, wantDocker) || s.warn != nil {
+		t.Fatalf("down after ping: needPing %v, prev %+v, warn %+v; want unchanged", s.needPing, s.prev, s.warn)
+	}
+}
+
 func TestFetchNegotiatesAPIVersion(t *testing.T) {
 	// Docker 29 answers 400 to any API version below 1.44.
 	e := newEngine(t, dockerBody)
@@ -449,8 +491,8 @@ func TestFetchRetryInterval(t *testing.T) {
 			e := newEngine(t, dockerBody)
 			e.set(func(e *engine) { e.down = true })
 			s, clk := newSourceTick(e.ep, tick)
-			if s.RetryAfter() != retry {
-				t.Fatalf("RetryAfter = %v, want %v", s.RetryAfter(), retry)
+			if s.retry.after != retry {
+				t.Fatalf("retry.after = %v, want %v", s.retry.after, retry)
 			}
 			for round := range 3 {
 				if _, w := fetch(t, s); !reflect.DeepEqual(w, unreachable(e.ep)) {
@@ -577,8 +619,8 @@ func TestFetchRetryWithoutBeat(t *testing.T) {
 	s := NewSource(e.ep, 1100*time.Millisecond, 0)
 	clk := &clock{t: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
 	s.now = clk.now
-	if s.RetryAfter() != 11*time.Second {
-		t.Fatalf("RetryAfter = %v, want 11s", s.RetryAfter())
+	if s.retry.after != 11*time.Second {
+		t.Fatalf("retry.after = %v, want 11s", s.retry.after)
 	}
 	fetch(t, s)
 	e.take()

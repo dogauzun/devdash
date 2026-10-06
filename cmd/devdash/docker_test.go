@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dogauzun/devdash/internal/docker"
@@ -70,33 +71,69 @@ func TestDockerDiscovered(t *testing.T) {
 
 // TestDockerRetryFollowsTick: after a failure or a missing socket the Source waits 10
 // refresh ticks rounded up to the 5 s Docker beat (spec "Failure modes": "retry every 10th
-// tick"), not 10 of its own fetches.
+// tick"), not 10 of its own fetches. The dashboard's rediscovering Source holds off the same.
 func TestDockerRetryFollowsTick(t *testing.T) {
-	stubDiscover(t, docker.Endpoint{Network: "unix", Address: "/run/docker.sock"}, true, nil)
-	for _, tc := range []struct {
-		tick, want time.Duration
-	}{
-		{0, 20 * time.Second}, // the default 2 s tick
-		{2 * time.Second, 20 * time.Second},
-		{500 * time.Millisecond, 5 * time.Second},
-		{3 * time.Second, 30 * time.Second},
-		{1100 * time.Millisecond, 15 * time.Second}, // 11 s, rounded up to the 15 s Docker beat
-		{600 * time.Millisecond, 10 * time.Second},  // 6 s, rounded up to the 10 s Docker beat
-	} {
-		src, ok := options{Tick: tc.tick}.engine(fake()).Docker.(*docker.Source)
-		if !ok {
-			t.Fatalf("--tick %v: Docker is not a Source", tc.tick)
-		}
-		if got := src.RetryAfter(); got != tc.want {
-			t.Errorf("--tick %v: RetryAfter = %v, want %v", tc.tick, got, tc.want)
-		}
-	}
-	o, err := parse([]string{"--tick", "1s"})
+	sock := filepath.Join(t.TempDir(), "docker.sock")
+	ep := docker.Endpoint{Network: "unix", Address: sock}
+	parsed, err := parse([]string{"--tick", "1s"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src := o.engine(fake()).Docker.(*docker.Source); src.RetryAfter() != 10*time.Second {
-		t.Errorf("--tick 1s parsed: RetryAfter = %v, want 10s", src.RetryAfter())
+	for _, tc := range []struct {
+		name      string
+		o         options
+		dashboard bool
+		want      time.Duration
+	}{
+		{"default tick", options{}, false, 20 * time.Second}, // the default 2 s tick
+		{"2s", options{Tick: 2 * time.Second}, false, 20 * time.Second},
+		{"500ms", options{Tick: 500 * time.Millisecond}, false, 5 * time.Second},
+		{"3s", options{Tick: 3 * time.Second}, false, 30 * time.Second},
+		{"1.1s", options{Tick: 1100 * time.Millisecond}, false, 15 * time.Second}, // 11 s, rounded up to the 15 s Docker beat
+		{"600ms", options{Tick: 600 * time.Millisecond}, false, 10 * time.Second}, // 6 s, rounded up to the 10 s Docker beat
+		{"--tick 1s parsed", parsed, false, 10 * time.Second},
+		{"dashboard, default tick", options{}, true, 20 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				_ = os.Remove(sock)
+				eo := tc.o.engine
+				if tc.dashboard {
+					stubDiscoverSeq(t, discovered{}, discovered{ep: ep, ok: true}) // found at the first Fetch
+					eo = tc.o.dashboard
+				} else {
+					stubDiscover(t, ep, true, nil)
+				}
+				src, ok := eo(fake()).Docker.(*docker.Source)
+				if !ok {
+					t.Fatal("Docker is not a Source")
+				}
+				retriesAt(t, src, sock, tc.want)
+			})
+		})
+	}
+}
+
+// retriesAt checks, in a synctest bubble, that src, whose endpoint is the missing unix socket
+// sock, makes no request until want after the call that found it missing, and retries then.
+// sock becomes a plain file after that call, so a request fails as unreachable and shows as a
+// warning. The check is 2 s short of want, past the Source's 1 s slack for an early beat.
+func retriesAt(t *testing.T, src *docker.Source, sock string, want time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	if cs, w := src.Fetch(ctx); cs != nil || w != nil {
+		t.Fatalf("missing socket: Fetch = %v, %+v; want nothing", cs, w)
+	}
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(want - 2*time.Second)
+	if _, w := src.Fetch(ctx); w != nil {
+		t.Fatalf("request %v after the failure, want none before %v", want-2*time.Second, want)
+	}
+	time.Sleep(2 * time.Second)
+	if _, w := src.Fetch(ctx); w == nil || w.Code != "docker_unreachable" {
+		t.Fatalf("at %v: warning %+v, want the retry's docker_unreachable", want, w)
 	}
 }
 
@@ -222,9 +259,6 @@ func TestDashboardRediscovers(t *testing.T) {
 	src, ok := eo.Docker.(*docker.Source)
 	if !ok {
 		t.Fatalf("nothing found: dashboard Docker = %#v, want a rediscovering Source", eo.Docker)
-	}
-	if src.RetryAfter() != 20*time.Second {
-		t.Errorf("RetryAfter = %v, want 20s (10 default ticks)", src.RetryAfter())
 	}
 	to := tuiOptions(o, engine.New(eo), eo.Docker)
 	if to.DockerSocket == nil || to.DockerSocket() != "" {

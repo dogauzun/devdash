@@ -222,22 +222,13 @@ func TestAdaptiveInterval(t *testing.T) {
 					if u.Interval != want {
 						t.Errorf("tick %d: interval %v, want %v", i, u.Interval, want)
 					}
-					if got := hasWarning(u, "refresh_slowed"); got != (want > tt.tick) {
+					if got := warning(u.Warnings, "refresh_slowed") != nil; got != (want > tt.tick) {
 						t.Errorf("tick %d: refresh_slowed warning %v at %v", i, got, want)
 					}
 				}
 			})
 		})
 	}
-}
-
-func hasWarning(u Update, code string) bool {
-	for _, w := range u.Warnings {
-		if w.Code == code {
-			return true
-		}
-	}
-	return false
 }
 
 // TestSlowedHintOnFailedTicks: backoff caused by timed-out ticks is reported although no new
@@ -249,7 +240,7 @@ func TestSlowedHintOnFailedTicks(t *testing.T) {
 		first := <-e.Updates()
 		for i, want := range []time.Duration{2e9, 2e9, 4e9, 4e9, 4e9, 8e9} {
 			u := <-e.Updates()
-			if u.Interval != want || hasWarning(u, "refresh_slowed") != (want > DefaultTick) {
+			if u.Interval != want || (warning(u.Warnings, "refresh_slowed") != nil) != (want > DefaultTick) {
 				t.Errorf("failed tick %d: interval %v, want %v; warnings %v", i, u.Interval, want, u.Warnings)
 			}
 			if len(u.Snapshot.Warnings) != 0 {
@@ -283,7 +274,7 @@ func TestManyProcesses(t *testing.T) {
 		t0 := time.Now()
 		for _, at := range []time.Duration{0, 5 * time.Second, 10 * time.Second, 15 * time.Second, 20 * time.Second} {
 			u := next(t, e, t0, at) // fast ticks never halve below 5 s
-			if u.Interval != 5*time.Second || !hasWarning(u, "many_processes") || hasWarning(u, "refresh_slowed") {
+			if u.Interval != 5*time.Second || warning(u.Warnings, "many_processes") == nil || warning(u.Warnings, "refresh_slowed") != nil {
 				t.Errorf("at %v: interval %v warnings %v", at, u.Interval, u.Warnings)
 			}
 		}
