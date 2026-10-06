@@ -85,23 +85,14 @@ func openPort(r model.Row) int {
 	return low
 }
 
-// openURL runs open (macOS) or xdg-open (Linux) on url, as the user who ran sudo when devdash
-// is root (openAs).
+// openURL runs opener, open on macOS and xdg-open on Linux, on url, as the user who ran sudo
+// when devdash is root (openAs).
 func openURL(url string) error {
-	name := ""
-	switch runtime.GOOS {
-	case "darwin":
-		name = "open"
-	case "linux":
-		name = "xdg-open"
-	default:
-		return fmt.Errorf("no browser opener on %s", runtime.GOOS)
-	}
 	cred, env, err := openAs(os.Geteuid(), os.Getenv, runtime.GOOS, user.LookupId)
 	if err != nil {
 		return err
 	}
-	return openWith(name, url, cred, env)
+	return openWith(opener, url, cred, env)
 }
 
 // errOpenAsRoot is openAs's refusal: root never starts a browser as root.

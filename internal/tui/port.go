@@ -17,13 +17,35 @@ import (
 // "Release 1.1", Port search and The port line). The free-port probe runs as a tea.Cmd, off
 // the UI goroutine, and its answer comes back as an action.
 
-// portState is the port line's state: the query's port, its holders and the probe's answer.
+// portState is the port line's state: the query's port, its holders and the probe's answer for
+// n, kept until the next snapshot's arrives.
 type portState struct {
-	n       uint16     // the query's port number; 0 when the query is not one
-	holders int        // len(model.Holders) of n in the latest snapshot
-	seq     uint64     // tags the latest probe run; an answer with another tag is dropped
-	ans     portAnswer // the latest answer for n, kept until the next snapshot's arrives
-	have    bool       // ans answers n
+	n       uint16 // the query's port number; 0 when the query is not one
+	holders int    // len(model.Holders) of n in the latest snapshot
+	probeRun
+}
+
+// probeRun is the latest run of a free-port search (the port line's, the detail pane's next
+// free) and its answer. The search runs off the UI goroutine, so answers can arrive late or out
+// of order: only the latest run's is kept.
+type probeRun struct {
+	seq  uint64     // tags the latest run
+	ans  portAnswer // the latest run's answer
+	have bool       // ans is set
+}
+
+// start tags a new run as the latest and returns its tag; an earlier run's answer is dropped
+// from now on.
+func (r *probeRun) start() uint64 {
+	r.seq++
+	return r.seq
+}
+
+// take keeps ans when seq tags the latest run.
+func (r *probeRun) take(seq uint64, ans portAnswer) {
+	if seq == r.seq {
+		r.ans, r.have = ans, true
+	}
 }
 
 // portAnswer is what one probe run found for port n.
@@ -44,8 +66,8 @@ type portProbedMsg struct {
 
 // apply keeps the answer when it is the latest run's, for the current port.
 func (msg portProbedMsg) apply(m *Model) {
-	if msg.seq == m.port.seq && m.port.n != 0 {
-		m.port.ans, m.port.have = msg.ans, true
+	if m.port.n != 0 {
+		m.port.take(msg.seq, msg.ans)
 	}
 }
 
@@ -74,7 +96,7 @@ func (m *Model) portKey(d string) tea.Cmd {
 func (m *Model) portSearch() tea.Cmd {
 	n := portQuery(m.filter)
 	if n != m.port.n {
-		m.port = portState{n: n, seq: m.port.seq + 1}
+		m.port = portState{n: n, seq: m.port.seq + 1} // drops the old port's run
 	}
 	if n == 0 {
 		return nil
@@ -96,8 +118,7 @@ func (m *Model) portProbe() tea.Cmd {
 	}
 	s, n, probe := m.upd.Snapshot, p.n, m.o.Probe
 	p.holders = len(model.Holders(s, n))
-	p.seq++
-	search, seq := nextFree, p.seq
+	search, seq := nextFree, p.start()
 	if p.holders == 0 {
 		search = probeSelf
 	}

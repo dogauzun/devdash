@@ -79,7 +79,7 @@ type Model struct {
 	sel    model.RowKey // selected row; never an index (rows.go)
 	selIdx int          // index of sel in rows, -1 when rows is empty
 	top    int          // first table row on screen (table.go)
-	tcache tableCache   // derived from all rows, per rebuild (table.go)
+	tcache tableCache   // derived from all rows, per snapshot and per rebuild (table.go)
 
 	filter    string // active filter query (rows.go)
 	filtering bool   // the filter prompt has the keyboard
@@ -232,6 +232,7 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 	case updateMsg:
 		m.upd = engine.Update(msg)
 		m.have = m.upd.Snapshot.SchemaVersion != 0
+		m.tcache = tableCache{} // its header counts are the old snapshot's (table.go)
 		m.rebuild()
 		m.killPorts()
 		return tea.Batch(m.wait(), m.portProbe())
