@@ -9,9 +9,9 @@ import (
 // NewDiscoverySource returns a Source with no endpoint yet, for a dashboard started before
 // Docker or Podman: each Fetch while it has none runs discover (Discover with the process's
 // Env), and one that finds nothing holds off as a missing socket does, so discovery runs
-// again on the first beat at or after 10 refresh ticks (RetryAfter), with no containers and
-// no warning in between. An endpoint discover returns with an error gives the
-// docker_endpoint_invalid warning until the next attempt. Once discover finds an endpoint
+// again on the first beat at or after 10 refresh ticks, with no containers and no warning in
+// between. An endpoint discover returns with an error gives the docker_endpoint_invalid
+// warning until the next attempt. Once discover finds an endpoint
 // the Source keeps it and behaves as NewSource's for it, pinging and listing in the same
 // call. It does not discover or connect until the first Fetch.
 func NewDiscoverySource(discover func() (Endpoint, bool, error), tick, beat time.Duration) *Source {

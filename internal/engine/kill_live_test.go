@@ -127,8 +127,8 @@ func holds(s model.Snapshot, pid int, port uint16) bool {
 
 func alive(t *testing.T, pid int) bool {
 	t.Helper()
-	_, err := procStart(pid)
-	if err != nil && !errors.Is(err, errGone) {
+	_, _, err := collector.ProcStat(pid)
+	if err != nil && !errors.Is(err, collector.ErrGone) {
 		t.Fatal(err)
 	}
 	return err == nil
@@ -302,7 +302,7 @@ func TestKillLiveRefusesDevdash(t *testing.T) {
 	}
 	t.Logf("devdash's ancestors from the OS: %v", chain[1:])
 	for _, pid := range chain[1:] {
-		start, err := procStart(pid)
+		start, _, err := collector.ProcStat(pid)
 		if err != nil {
 			continue
 		}

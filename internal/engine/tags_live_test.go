@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogauzun/devdash/internal/collector"
 	"github.com/dogauzun/devdash/internal/model"
 )
 
@@ -150,17 +151,17 @@ func spawnOrphan(t *testing.T, dir string) (int, uint16) {
 	if g, err := syscall.Getpgid(pid); err != nil || g != leader || port > 65535 {
 		t.Fatalf("helper %d: group %d (err %v), port %d", pid, g, err, port)
 	}
-	start, err := procStart(pid)
+	start, _, err := collector.ProcStat(pid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if st, err := procStart(pid); err == nil && st.Equal(start) {
+		if st, _, err := collector.ProcStat(pid); err == nil && st.Equal(start) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		ppid, err := procPPID(pid)
+		_, ppid, err := collector.ProcStat(pid)
 		if err != nil {
 			t.Fatal(err)
 		}
