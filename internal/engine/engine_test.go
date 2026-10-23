@@ -507,9 +507,23 @@ func TestLookupUser(t *testing.T) {
 	if got := lookupUser(os.Getuid()); got != me.Username {
 		t.Errorf("own uid: %q, want %q", got, me.Username)
 	}
-	const nobodyHas = 2147400047
-	if got := lookupUser(nobodyHas); got != strconv.Itoa(nobodyHas) {
-		t.Errorf("unknown uid: %q, want the number", got)
+	// A uid no user database knows. nss-systemd (systemd 258 and later) synthesizes a
+	// foreign-N record for every uid in the foreign range 0x7FFE0000-0x7FFEFFFF, where the
+	// former constant 2147400047 sat (foreign-47471 on the Linux CI runner), so probe for
+	// one that LookupId rejects, starting below that range.
+	unknown := 0
+	for uid := 2147300047; uid < 2147300047+64; uid++ {
+		var unknownErr user.UnknownUserIdError
+		if _, err := user.LookupId(strconv.Itoa(uid)); errors.As(err, &unknownErr) {
+			unknown = uid
+			break
+		}
+	}
+	if unknown == 0 {
+		t.Skip("every probed uid has a user record")
+	}
+	if got := lookupUser(unknown); got != strconv.Itoa(unknown) {
+		t.Errorf("unknown uid %d: %q, want the number", unknown, got)
 	}
 }
 
