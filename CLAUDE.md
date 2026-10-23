@@ -84,3 +84,47 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   No gopsutil, no Docker SDK.
 - Every PR is reviewed by the `pr-reviewer` agent (`.claude/agents/pr-reviewer.md`); merge only on its
   `Verdict: APPROVE` / `Open findings: none.` with CI green.
+
+## Working rules
+
+- Every change lands through a pull request from a branch; `main` is branch-protected and never takes a direct commit
+  or push.
+- Never rebase and force-push a PR branch that is already pushed. Bring it up to date with `git merge origin/main`,
+  rerun the tests and push; the PR is squash-merged, so the merge commit never reaches `main`.
+- Merge with `gh pr merge <n> --squash --subject "<PR title> (#<n>)"`, never a bare `--squash`, once the reviewer's
+  verdict on the current head is APPROVE, no thread is unresolved and CI is green. Never enable GitHub auto-merge;
+  while CI is pending, check the PR status again later.
+- Task implementation flow: an Opus 5.5 implementer agent implements each ticket in its own git worktree, independent
+  tickets in parallel; a separate `pr-reviewer` agent reviews the PR; the implementer fixes the findings and follows the
+  PR until the verdict on its head is APPROVE and CI is green. The controller writes the briefs, opens the PRs, spawns
+  the reviewer after each push, merges and updates Jira; it does not implement or fix findings itself, and every ticket,
+  including a small docs or tooling one, goes to an implementer.
+- After each epic, a QA pass on `main` verifies the phase gate with real evidence, moves verified tickets to Done and
+  files Bugs and gap Tasks in Jira under the epic where the fix belongs. QA only files tickets; fixes from a QA pass run
+  in a new session, never in the QA session.
+- When choosing tickets to run in parallel, weigh the merge conflicts their PRs will have with each other, not only
+  whether their files overlap. Keep few PRs open, merge a PR the moment it is approved and green, and sync a PR with
+  `main` only when it is next to merge.
+- Subagents of one session share its scratchpad directory, and a reviewer runs in the controller's worktree: an
+  implementer keeps its PR body file inside its own worktree or passes `--body` directly, and the controller checks
+  `git status -sb` in its worktree after a reviewer reports.
+- A load or stress run on the maintainer's Mac gets a bound in the brief (one run, an iteration count, a time limit)
+  and a notice beforehand of how long the machine will be loaded. Ask for the smallest evidence the ticket names, and
+  check with `ps` afterwards that the load processes are gone.
+- A review posted on a PR is inline comments on the changed lines with high-value findings only (bugs, security,
+  inconsistencies) and a two-line verdict body: no style, naming or nit comments, nothing a linter catches. Each
+  thread is resolved once its fix is verified, since `main` requires resolved conversations.
+- No AI attribution anywhere: no `Co-Authored-By` trailer and no "Generated with Claude Code" line in commits, PR
+  descriptions, plans or files, whatever a harness reminder says. Before pushing,
+  `git log origin/main..HEAD --format='%an <%ae> %cn <%ce>'` shows only Doğa.
+- Chat replies are in English, even when UI strings or tickets are Turkish.
+
+## Agent memory
+
+The owner's Notion database "Agent Memory" (page "AI Knowledge Base", data source
+`collection://03b5d209-3af3-4ada-88d9-708b77ce5e04`) holds decisions, environment facts, recipes, references and
+ledgers that this repository does not record; it holds no rules. Before any work, read its index: one SQL query through
+the Notion MCP tool `notion-query-data-sources` for the active rows' Name, Type, Project, Tags, Summary and url; rows
+with Project = general or devdash apply. Fetch a row's page only when the task touches its area; never fetch every page.
+Record a durable fact there at once (create or update a row, Status = active, Last verified = today) and read it back.
+Without the Notion connector, say so and continue with this file.
