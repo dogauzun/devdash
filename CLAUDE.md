@@ -112,7 +112,7 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   and a notice beforehand of how long the machine will be loaded. Ask for the smallest evidence the ticket names, and
   check with `ps` afterwards that the load processes are gone.
 - A review posted on a PR is inline comments on the changed lines with high-value findings only (bugs, security,
-  inconsistencies) and a one-line verdict body: no style, naming or nit comments, nothing a linter catches. Each
+  inconsistencies) and a two-line verdict body: no style, naming or nit comments, nothing a linter catches. Each
   thread is resolved once its fix is verified, since `main` requires resolved conversations.
 - No AI attribution anywhere: no `Co-Authored-By` trailer and no "Generated with Claude Code" line in commits, PR
   descriptions, plans or files, whatever a harness reminder says. Before pushing,
