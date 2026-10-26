@@ -1,9 +1,7 @@
 # The devdash Tasks database
 
 Reference and recipes for agents that file, query and move devdash tasks in Notion. The binding rules (statuses and
-transitions, task keys, the `Ticket:` line and the `PR` property) are in `CLAUDE.md` under Working rules; this file
-does not repeat them. The `Ticket:` line reaches git because the squash merge passes the PR's Description text as the
-commit body (`--body`, or `--body-file`).
+transitions, task keys and the `PR` property) are in `CLAUDE.md` under Working rules; this file does not repeat them.
 
 Work has been tracked in Notion since 2026-10-26. `DEV-n` keys in git history, `DECISIONS.md` and code from before
 the cutover refer to the closed Jira project DEV, not to the IDs in this database.
@@ -50,6 +48,14 @@ SELECT "userDefined:ID" AS id, Name, Status, Type, Labels, Epic, PR, url
 FROM [collection://f734c0d6-d1bd-4525-80ec-e56461f5d053]
 WHERE Status != 'Done'
 ORDER BY "userDefined:ID"
+```
+
+The task of a PR (the PR body carries no task link; the `PR` property is the one link between the two):
+
+```sql
+SELECT "userDefined:ID" AS id, Name, Status, url
+FROM [collection://f734c0d6-d1bd-4525-80ec-e56461f5d053]
+WHERE PR = 'https://github.com/dogauzun/devdash/pull/<n>'
 ```
 
 To Do sweep, the tasks ready to start: the board query with these conditions added to its `WHERE`. Relation columns

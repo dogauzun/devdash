@@ -93,14 +93,14 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   rerun the tests and push; the PR is squash-merged, so the merge commit never reaches `main`.
 - Merge with `gh pr merge <n> --squash --subject "<PR title> (#<n>)" --body "<Description text>"` (or `--body-file`
   for a multi-line body), never a bare `--squash`: the squash subject is the PR title and the squash body is the PR's
-  Description text, which carries the `Ticket:` line into git. Merge once the reviewer's verdict on the current head
-  is APPROVE, no thread is unresolved and CI is green. Never enable GitHub auto-merge; while CI is pending, check the
-  PR status again later.
+  Description text. Merge once the reviewer's verdict on the current head is APPROVE, no thread is unresolved and CI
+  is green. Never enable GitHub auto-merge; while CI is pending, check the PR status again later.
 - Tasks live in the devdash Tasks database in Notion (page Projects / devdash, data source
   `collection://f734c0d6-d1bd-4525-80ec-e56461f5d053`); filing and transitions go through the Notion MCP: In Progress
-  when work starts, In Review when the PR opens, Done after the merge. Branch names and PR titles carry no task key; the
-  PR body's `Ticket:` line holds the task page URL, and the task's `PR` property holds the PR URL, set when the PR opens.
-  The database's schema, ticket conventions and SQL recipes are in `.claude/rules/tracker.md`.
+  when work starts, In Review when the PR opens, Done after the merge. Branch names, PR titles and PR bodies carry no
+  task key or link (the tracker is private); the task's `PR` property holds the PR URL, set when the PR opens, and is
+  how the task of a PR is found (the recipe in `.claude/rules/tracker.md`). The database's schema, ticket conventions
+  and SQL recipes are in that file.
 - Task implementation flow: an Opus 5.5 implementer agent implements each task in its own git worktree, independent
   tasks in parallel; a separate `pr-reviewer` agent reviews the PR; the implementer fixes the findings and follows the
   PR until the verdict on its head is APPROVE and CI is green. The controller writes the briefs, opens the PRs, spawns
