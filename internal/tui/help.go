@@ -36,13 +36,6 @@ var helpKeys = [][2]string{
 // helpKeyWidth is the key column of the help overlay.
 const helpKeyWidth = 12
 
-// helpPos is the help overlay's scroll position, as the last render laid it out.
-// Its page is 0 when everything fit, so no key scrolls.
-type helpPos struct {
-	pager
-	total int // overlay lines
-}
-
 // helpLines is the overlay below its title: every key with its action, the action wrapped to
 // w with continuation lines indented to the action column (as the detail pane's values), then,
 // when there are any, every current warning in full, one per line, wrapped to w with
@@ -86,9 +79,8 @@ func (m *Model) helpLines(w int) []string {
 func (m *Model) helpView(w, h int) string {
 	lines := m.helpLines(w)
 	p := &m.hpos
-	p.total = len(lines)
 	if 2+len(lines) <= h {
-		p.top, p.page = 0, 0
+		p.top, p.page, p.total = 0, 0, len(lines) // page 0: no key scrolls
 		title := styleBold.Render("Keys") + styleDim.Render("  (any key closes)")
 		return strings.Join(append([]string{title, ""}, lines...), "\n")
 	}
@@ -106,10 +98,10 @@ func (m *Model) helpView(w, h int) string {
 func (m *Model) helpKey(k tea.KeyPressMsg) tea.Cmd {
 	if p := &m.hpos; p.page > 0 {
 		if d := scrollStep(k.String(), p.page); d != 0 {
-			p.move(d, p.total)
+			p.move(d)
 			return nil
 		}
 	}
-	m.help, m.hpos = false, helpPos{}
+	m.help, m.hpos = false, pager{}
 	return nil
 }

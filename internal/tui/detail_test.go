@@ -704,6 +704,7 @@ func TestDetailScrollResets(t *testing.T) {
 		feed(m, s)
 		selectRow(t, m, keyOf(s, 101))
 		press(m, "enter")
+		m.View() // pgdown scrolls the pane as the last render laid it out; Bubble Tea renders after every message
 		press(m, "pgdown")
 		if first, _, _, ok := panePosition(m); !ok || first == 1 {
 			t.Fatalf("width %d: pgdown does not scroll the pane:\n%s", w, screen(m))
@@ -731,6 +732,28 @@ func TestDetailScrollResets(t *testing.T) {
 		if strings.Contains(screen(m), "full argv") || strings.Contains(screen(m), "… +") {
 			t.Errorf("width %d: a short command is capped:\n%s", w, screen(m))
 		}
+	}
+}
+
+// TestDetailScrollClamped: pgdown stops at the last page even with no render between the
+// keys, so one pgup after many pgdowns shows the page before the last.
+func TestDetailScrollClamped(t *testing.T) {
+	m, _ := newTest(t, 80, 24)
+	s := fixture()
+	s.Processes[1].Argv = longArgv()
+	feed(m, s)
+	selectRow(t, m, keyOf(s, 101))
+	press(m, "enter")
+	first, last, n, ok := panePosition(m)
+	if !ok || n < 3*(last-first+1) {
+		t.Fatalf("want a pane at least three pages long:\n%s", screen(m))
+	}
+	for range 2 * n {
+		press(m, "pgdown")
+	}
+	press(m, "pgup")
+	if _, last, n, _ := panePosition(m); last == n {
+		t.Errorf("pgup after paging past the end still shows the last page:\n%s", screen(m))
 	}
 }
 

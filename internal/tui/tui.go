@@ -93,7 +93,7 @@ type Model struct {
 	help    bool         // help overlay open (help.go)
 	kill    killState
 	kafter  killAfter // the last kill's ports, until the first snapshot after it (kill.go)
-	hpos    helpPos   // help overlay scroll position (help.go)
+	hpos    pager     // help overlay scroll position (help.go)
 	sudo    sudoState // the S confirmation (sudo.go)
 
 	status string // one-shot message in the footer (open failed, kill result); cleared by the next key

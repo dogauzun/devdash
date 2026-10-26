@@ -98,7 +98,7 @@ func (m *Model) detailScrollOf(key model.RowKey) *detailScroll {
 func (m *Model) detailPage(lines []string, key model.RowKey, h int) []string {
 	ds := m.detailScrollOf(key)
 	if h < 1 || len(lines) <= h {
-		ds.top, ds.page = 0, max(h, 1)
+		ds.top, ds.page, ds.total = 0, max(h, 1), len(lines)
 		return lines
 	}
 	page, pos := ds.cut(lines, h, "lines %d-%d of %d, pgup/pgdn")
@@ -109,14 +109,14 @@ func (m *Model) detailPage(lines []string, key model.RowKey, h int) []string {
 }
 
 // detailKey handles pgup and pgdown while the pane is open: they move the pane by the page the
-// last render showed, and the next render clamps it. Every other key goes on to the table.
+// last render showed, within its lines. Every other key goes on to the table.
 func (m *Model) detailKey(s string) bool {
 	r, _ := m.selected() // the zero key when nothing is selected, as in detailView
 	ds := m.detailScrollOf(r.Key)
 	if s != "pgup" && s != "pgdown" {
 		return false
 	}
-	ds.top = max(ds.top+scrollStep(s, ds.page), 0) // no upper clamp: the next render clamps
+	ds.move(scrollStep(s, ds.page))
 	return true
 }
 
