@@ -214,7 +214,7 @@ func (m *Model) detailNextFree(d *detailDoc, p *model.Process) {
 	case a.found:
 		d.field("next free", strconv.Itoa(int(a.next)))
 	default:
-		d.field("next free", fmt.Sprintf("none in %d-%d", from+1, freeport.Last(from+1)))
+		d.field("next free", "none in "+freeport.Span(from))
 	}
 }
 

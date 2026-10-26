@@ -13,7 +13,7 @@ import (
 var probe freeport.Prober = freeport.Probe
 
 // runFree answers "which port can I use instead" from one snapshot (no CPU, so one sample):
-// the first port from `from` to freeport.Last(from) that nothing in the snapshot holds and
+// the first port of freeport.Find's range from `from` that nothing in the snapshot holds and
 // that probe can bind, on its own line with exit 0, so `PORT=$(devdash free 3000)` works;
 // nothing and exit 1 when none is. A snapshot or probe that fails is exit 5 with nothing on
 // stdout: 1 only answers the question asked.

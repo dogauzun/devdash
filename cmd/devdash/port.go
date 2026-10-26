@@ -225,7 +225,7 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 	case ok:
 		fmt.Fprintf(&out, "next free: %d\n", next)
 	case port < 65535: // no search for 65535, so no line
-		fmt.Fprintf(&out, "next free: none in %d-%d\n", port+1, freeport.Last(port+1))
+		fmt.Fprintf(&out, "next free: none in %s\n", freeport.Span(port))
 	}
 	code := write(stdout, stderr, out.String(), 0)
 	if nextErr != nil {
@@ -319,7 +319,7 @@ func holderLines(p model.Process, pr, here *model.Project, now time.Time, width 
 	}
 	lines = append(lines, strings.Join(append([]string{where}, rest...), ", "))
 	if p.Tags != 0 {
-		lines = append(lines, strings.Join(p.Tags.Labels(), ", "))
+		lines = append(lines, p.Tags.Text())
 	}
 	return lines
 }

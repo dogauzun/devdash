@@ -201,3 +201,11 @@ func TestPortList(t *testing.T) {
 		}
 	}
 }
+
+func TestTagSetText(t *testing.T) {
+	for s, want := range map[TagSet]string{0: "", TagCwdDeleted: "cwd deleted", TagOrphaned | TagCwdDeleted: "orphaned, cwd deleted"} {
+		if got := s.Text(); got != want {
+			t.Errorf("%02b.Text() = %q, want %q", s, got, want)
+		}
+	}
+}

@@ -123,6 +123,16 @@ func TestNext(t *testing.T) {
 	}
 }
 
+// TestSpan: the range Next(n) searches, n+1 to Last(n+1), cut at 65535; "" for 65535, which
+// has no search.
+func TestSpan(t *testing.T) {
+	for n, want := range map[uint16]string{3000: "3001-3100", 65435: "65436-65535", 65500: "65501-65535", 65534: "65535-65535", 65535: ""} {
+		if got := Span(n); got != want {
+			t.Errorf("Span(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
 // TestFindProbeError: the search stops at the first probe error, so a failed probe is never
 // mistaken for "nothing free".
 func TestFindProbeError(t *testing.T) {

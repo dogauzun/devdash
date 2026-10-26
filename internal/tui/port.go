@@ -54,7 +54,7 @@ type portAnswer struct {
 	free    bool   // self: n binds
 	refused bool   // self: the bind of n failed (another user's listener, or a port below 1024)
 	next    uint16 // the first free port from n+1, when found is set
-	found   bool   // n+1..freeport.Last(n+1) has a free port
+	found   bool   // freeport.Span(n) has a free port
 	err     error  // the probe failed; the search stopped there
 }
 
@@ -195,7 +195,7 @@ func (m *Model) portLine(w int) string {
 		case a.found:
 			parts = append(parts, "next free "+strconv.Itoa(int(a.next)))
 		default:
-			parts = append(parts, "no free port in "+strconv.Itoa(int(p.n)+1)+"-"+strconv.Itoa(int(freeport.Last(p.n+1))))
+			parts = append(parts, "no free port in "+freeport.Span(p.n))
 		}
 		if a.refused {
 			parts = append(parts, "bind refused")
