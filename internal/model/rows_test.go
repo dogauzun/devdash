@@ -839,3 +839,23 @@ func TestHideable(t *testing.T) {
 		}
 	}
 }
+
+func TestStartedBefore(t *testing.T) {
+	early, late := fp(20, 1, 0, "a", "", KindOther), fp(10, 1, 5, "b", "", KindOther)
+	same, samePID := fp(11, 1, 0, "c", "", KindOther), fp(20, 1, 0, "d", "", KindOther)
+	for _, tc := range []struct {
+		name string
+		a, b *Process
+		want bool
+	}{
+		{"earlier start, higher pid", &early, &late, true},
+		{"later start, lower pid", &late, &early, false},
+		{"equal start, lower pid", &same, &early, true},
+		{"equal start, higher pid", &early, &same, false},
+		{"equal start and pid", &early, &samePID, false},
+	} {
+		if got := tc.a.StartedBefore(tc.b); got != tc.want {
+			t.Errorf("%s: StartedBefore = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

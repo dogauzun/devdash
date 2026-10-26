@@ -514,7 +514,7 @@ func detailProject(s model.Snapshot, id string) *model.Project {
 // detailParents returns p's ancestors from its parent up, as "name pid", following PPID through
 // the snapshot until pid 0 (no parent). A parent that is missing from the snapshot, or that
 // did not start strictly before its child by (start time, pid) and so is a reused pid, ends
-// the chain as a bare "pid N". The start-time rule is Flatten's; it makes cycles impossible.
+// the chain as a bare "pid N". The rule is [model.Process.StartedBefore], as in Flatten.
 func detailParents(s model.Snapshot, p *model.Process) []string {
 	byPID := make(map[int]*model.Process, len(s.Processes))
 	for i := range s.Processes {
@@ -525,7 +525,7 @@ func detailParents(s model.Snapshot, p *model.Process) []string {
 	var chain []string
 	for c := p; c.PPID > 0 && len(chain) < detailMaxChain; {
 		par := byPID[c.PPID]
-		if par == nil || !detailStartedBefore(par, c) {
+		if par == nil || !par.StartedBefore(c) {
 			chain = append(chain, fmt.Sprintf("pid %d", c.PPID))
 			break
 		}
@@ -533,14 +533,6 @@ func detailParents(s model.Snapshot, p *model.Process) []string {
 		c = par
 	}
 	return chain
-}
-
-// detailStartedBefore reports whether a started strictly before b by (start time, pid).
-func detailStartedBefore(a, b *model.Process) bool {
-	if c := a.StartTime.Compare(b.StartTime); c != 0 {
-		return c < 0
-	}
-	return a.PID < b.PID
 }
 
 // detailBytes formats n in binary units: "512 B", "1.5 KiB", "178.9 MiB".
