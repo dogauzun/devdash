@@ -98,7 +98,7 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   `collection://f734c0d6-d1bd-4525-80ec-e56461f5d053`); filing and transitions go through the Notion MCP: In Progress
   when work starts, In Review when the PR opens, Done after the merge. Branch names and PR titles carry no task key; the
   PR body's `Ticket:` line holds the task page URL, and the task's `PR` property holds the PR URL, set when the PR opens.
-  Conventions and SQL recipes are in the Agent Memory row `tracker-basics`.
+  The database's schema, ticket conventions and SQL recipes are in `.claude/rules/tracker.md`.
 - Task implementation flow: an Opus 5.5 implementer agent implements each task in its own git worktree, independent
   tasks in parallel; a separate `pr-reviewer` agent reviews the PR; the implementer fixes the findings and follows the
   PR until the verdict on its head is APPROVE and CI is green. The controller writes the briefs, opens the PRs, spawns
@@ -124,12 +124,11 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   `git log origin/main..HEAD --format='%an <%ae> %cn <%ce>'` shows only Doğa.
 - Chat replies are in English, even when UI strings or tasks are Turkish.
 
-## Agent memory
+## Memory
 
-The owner's Notion database "Agent Memory" (page "AI Knowledge Base", data source
-`collection://03b5d209-3af3-4ada-88d9-708b77ce5e04`) holds decisions, environment facts, recipes, references and
-ledgers that this repository does not record; it holds no rules. Before any work, read its index: one SQL query through
-the Notion MCP tool `notion-query-data-sources` for the active rows' Name, Type, Project, Tags, Summary and url; rows
-with Project = general or devdash apply. Fetch a row's page only when the task touches its area; never fetch every page.
-Record a durable fact there at once (create or update a row, Status = active, Last verified = today) and read it back.
-Without the Notion connector, say so and continue with this file.
+Project knowledge lives in this repository: rules in this file and in `.claude/rules/`, decisions in `DECISIONS.md`,
+recipes in `.claude/skills/`. A durable fact learned in a session goes into the file that owns it, through the PR flow:
+in the same PR as the change it came from, or in a docs PR of its own. Facts that must not be public (paths on the
+maintainer's machine, personal data) stay in the maintainer's local Claude Code auto memory and reach a subagent only
+through its brief. Notion holds the task tracker only: the devdash Tasks database, described in
+`.claude/rules/tracker.md`.
