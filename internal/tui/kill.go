@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -429,10 +430,7 @@ func killReason(r string) []string {
 func (m *Model) killPlanLines(p engine.Plan) []string {
 	rows := make([]string, 0, len(p.Procs))
 	for _, proc := range p.Procs {
-		project := m.kill.projects[proc.ProjectID]
-		if project == "" {
-			project = "-"
-		}
+		project := cmp.Or(m.kill.projects[proc.ProjectID], "-")
 		rows = append(rows, fmt.Sprintf("%d\t%s\t%s\t%s", proc.PID, model.Clean(proc.Label()), model.Clean(project), proc.PortList()))
 	}
 	return killTable(rows)

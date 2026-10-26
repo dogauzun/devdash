@@ -173,6 +173,18 @@ func TestHere(t *testing.T) {
 	}
 }
 
+func TestProject(t *testing.T) {
+	s := Snapshot{Projects: []Project{{ID: "a"}, {ID: "b"}}}
+	if got := s.Project("b"); got != &s.Projects[1] {
+		t.Errorf("Project(%q) = %+v, want a pointer to project b", "b", got)
+	}
+	for _, id := range []string{"gone", ""} {
+		if got := s.Project(id); got != nil {
+			t.Errorf("Project(%q) = %+v, want nil", id, got)
+		}
+	}
+}
+
 func TestPortList(t *testing.T) {
 	l := func(proto string, port uint16) Listener { return Listener{Proto: proto, Port: port} }
 	for _, tt := range []struct {
