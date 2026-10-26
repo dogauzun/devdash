@@ -40,9 +40,6 @@ func pid(u Update) int {
 // start runs a new engine in the bubble; the returned func stops it and waits for Run to return.
 func start(t *testing.T, o Options) (*Engine, func()) {
 	t.Helper()
-	if o.Resolver == nil {
-		o.Resolver = model.NewResolver("", nil)
-	}
 	e := New(o)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -360,8 +357,8 @@ func TestInProject(t *testing.T) {
 			t.Errorf("pid %d: ProjectID set to %q on the caller's slice", p.PID, p.ProjectID)
 		}
 	}
-	if got := New(Options{}).inProject(procs); !slices.Equal(got, make([]bool, len(procs))) {
-		t.Errorf("no Resolver: %v, want all false", got)
+	if got, want := New(Options{}).inProject(procs), []bool{true, false, true}; !slices.Equal(got, want) {
+		t.Errorf("default Resolver: inProject = %v, want %v", got, want)
 	}
 }
 

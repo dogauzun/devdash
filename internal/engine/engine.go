@@ -37,7 +37,7 @@ var errBusy = fmt.Errorf("previous collection still running: %w", context.Deadli
 // Options configures an Engine.
 type Options struct {
 	Collector collector.Collector
-	Resolver  *model.Resolver // reused across ticks; used by one goroutine at a time (see inProject)
+	Resolver  *model.Resolver // reused across ticks; used by one goroutine at a time (see inProject); nil means model.NewResolver("", nil)
 	Tick      time.Duration   // refresh interval; 0 means DefaultTick, raised to MinTick
 	// LookupUser names a uid for Process.User, called once per uid for the engine's life (each
 	// Snapshot or SnapshotAfter call is its own engine). nil means the OS lookup: the current
@@ -98,6 +98,9 @@ func New(o Options) *Engine {
 		o.Tick = DefaultTick
 	}
 	o.Tick = max(o.Tick, MinTick)
+	if o.Resolver == nil {
+		o.Resolver = model.NewResolver("", nil)
+	}
 	if o.LookupUser == nil {
 		o.LookupUser = lookupUser
 	}
@@ -236,9 +239,7 @@ func (e *Engine) collect(ctx context.Context, o collector.Options) (model.Raw, e
 	}
 	// One Resolver tick per sample: InProject during Collect and Build after it share the
 	// walks (DEV-207). Here, past the in-flight check, no abandoned Collect is using it.
-	if e.o.Resolver != nil {
-		e.o.Resolver.NewTick()
-	}
+	e.o.Resolver.NewTick()
 	ctx, cancel := context.WithTimeout(ctx, collectTimeout)
 	defer cancel()
 	ch := make(chan outcome, 1) // buffered: an abandoned goroutine can always finish
@@ -263,9 +264,6 @@ func (e *Engine) collect(ctx context.Context, o collector.Options) (model.Raw, e
 // Collect is in flight.
 func (e *Engine) inProject(procs []model.Process) []bool {
 	in := make([]bool, len(procs))
-	if e.o.Resolver == nil {
-		return in
-	}
 	ps := slices.Clone(procs)
 	e.o.Resolver.Resolve(ps)
 	for i, p := range ps {
