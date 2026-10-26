@@ -2,7 +2,8 @@
 
 Reference and recipes for agents that file, query and move devdash tasks in Notion. The binding rules (statuses and
 transitions, task keys, the `Ticket:` line and the `PR` property) are in `CLAUDE.md` under Working rules; this file
-does not repeat them.
+does not repeat them. The `Ticket:` line reaches git because the squash merge passes the PR's Description text as the
+commit body (`--body`, or `--body-file`).
 
 Work has been tracked in Notion since 2026-10-26. `DEV-n` keys in git history, `DECISIONS.md` and code from before
 the cutover refer to the closed Jira project DEV, not to the IDs in this database.
