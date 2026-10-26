@@ -27,15 +27,15 @@ linters:
         - pattern: ^unix\.IoctlGet(Termios|Winsize)$
           msg: use github.com/charmbracelet/x/term
     funlen:
-      # A ratchet, not a target: just above the worst non-test function left,
-      # groupsOf at 49 statements. Lower it when that function is split.
+      # A ratchet, not a target: at the worst non-test function left,
+      # detailProcess in internal/tui at 47 statements. Lower it when that function is split.
       # Lines count layout and rank the same functions, so only statements.
       lines: -1
-      statements: 50
+      statements: 47
     gocognit:
-      # A ratchet, not a target: just above the worst non-test function left,
-      # groupsOf at 34. Lower it when that function is split.
-      min-complexity: 35
+      # A ratchet, not a target: at the worst non-test function left,
+      # Resolver.Resolve in internal/model at 29. Lower it when that function is split.
+      min-complexity: 29
     nakedret:
       max-func-lines: 30
     revive:
