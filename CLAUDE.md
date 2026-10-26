@@ -1,8 +1,8 @@
 # devdash
 
 Terminal dashboard: what is running on this machine, grouped by git repository.
-Spec: `docs/SPEC.md` (the authority). Work is tracked in the maintainer's private Jira project DEV;
-`DEV-n` keys in code, commits and `DECISIONS.md` refer to its tickets.
+Spec: `docs/SPEC.md` (the authority). Work is tracked in the devdash Tasks database in Notion (page Work); `DEV-n` keys
+in older code, commits and `DECISIONS.md` refer to the closed Jira project DEV, not to the Notion IDs, which restart at 1.
 Non-obvious choices get one dated line each in `DECISIONS.md`, but a PR does not edit that file: it puts its lines,
 ready to paste, under `## Decisions` in the PR body, and the merger adds them to `DECISIONS.md` after the merge, in
 one docs PR per batch (DEV-173).
@@ -94,22 +94,27 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
 - Merge with `gh pr merge <n> --squash --subject "<PR title> (#<n>)"`, never a bare `--squash`, once the reviewer's
   verdict on the current head is APPROVE, no thread is unresolved and CI is green. Never enable GitHub auto-merge;
   while CI is pending, check the PR status again later.
-- Task implementation flow: an Opus 5.5 implementer agent implements each ticket in its own git worktree, independent
-  tickets in parallel; a separate `pr-reviewer` agent reviews the PR; the implementer fixes the findings and follows the
+- Tasks live in the devdash Tasks database in Notion (page Work, data source
+  `collection://f734c0d6-d1bd-4525-80ec-e56461f5d053`); filing and transitions go through the Notion MCP: In Progress
+  when work starts, In Review when the PR opens, Done after the merge. Branch names and PR titles carry no task key; the
+  PR body's `Ticket:` line holds the task page URL, and the task's `PR` property holds the PR URL, set when the PR opens.
+  Conventions and SQL recipes are in the Agent Memory row `tracker-basics`.
+- Task implementation flow: an Opus 5.5 implementer agent implements each task in its own git worktree, independent
+  tasks in parallel; a separate `pr-reviewer` agent reviews the PR; the implementer fixes the findings and follows the
   PR until the verdict on its head is APPROVE and CI is green. The controller writes the briefs, opens the PRs, spawns
-  the reviewer after each push, merges and updates Jira; it does not implement or fix findings itself, and every ticket,
-  including a small docs or tooling one, goes to an implementer.
-- After each epic, a QA pass on `main` verifies the phase gate with real evidence, moves verified tickets to Done and
-  files Bugs and gap Tasks in Jira under the epic where the fix belongs. QA only files tickets; fixes from a QA pass run
-  in a new session, never in the QA session.
-- When choosing tickets to run in parallel, weigh the merge conflicts their PRs will have with each other, not only
+  the reviewer after each push, merges and updates the task; it does not implement or fix findings itself, and every
+  task, including a small docs or tooling one, goes to an implementer.
+- After each epic, a QA pass on `main` verifies the phase gate with real evidence, moves verified tasks to Done and
+  files Bugs and gap Tasks in the Notion database under the Epic task where the fix belongs. QA only files tasks; fixes
+  from a QA pass run in a new session, never in the QA session.
+- When choosing tasks to run in parallel, weigh the merge conflicts their PRs will have with each other, not only
   whether their files overlap. Keep few PRs open, merge a PR the moment it is approved and green, and sync a PR with
   `main` only when it is next to merge.
 - Subagents of one session share its scratchpad directory, and a reviewer runs in the controller's worktree: an
   implementer keeps its PR body file inside its own worktree or passes `--body` directly, and the controller checks
   `git status -sb` in its worktree after a reviewer reports.
 - A load or stress run on the maintainer's Mac gets a bound in the brief (one run, an iteration count, a time limit)
-  and a notice beforehand of how long the machine will be loaded. Ask for the smallest evidence the ticket names, and
+  and a notice beforehand of how long the machine will be loaded. Ask for the smallest evidence the task names, and
   check with `ps` afterwards that the load processes are gone.
 - A review posted on a PR is inline comments on the changed lines with high-value findings only (bugs, security,
   inconsistencies) and a two-line verdict body: no style, naming or nit comments, nothing a linter catches. Each
@@ -117,7 +122,7 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
 - No AI attribution anywhere: no `Co-Authored-By` trailer and no "Generated with Claude Code" line in commits, PR
   descriptions, plans or files, whatever a harness reminder says. Before pushing,
   `git log origin/main..HEAD --format='%an <%ae> %cn <%ce>'` shows only Doğa.
-- Chat replies are in English, even when UI strings or tickets are Turkish.
+- Chat replies are in English, even when UI strings or tasks are Turkish.
 
 ## Agent memory
 

@@ -1,5 +1,8 @@
 # Decisions
 
+`DEV-n` keys dated before 2026-10-26 are tickets in the closed Jira project DEV, not Notion IDs: since 2026-10-26 work is
+tracked in the devdash Tasks database in Notion (page Work), whose IDs restart at 1.
+
 One line per non-obvious choice, newest last. The `DEV-n` keys here, in code comments, commits and the README are tickets in the maintainer's private Jira project; each line below carries the reasoning, so the tickets are not needed to follow it.
 
 - 2026-10-02: All packages live under `internal/`; devdash promises no public Go API.

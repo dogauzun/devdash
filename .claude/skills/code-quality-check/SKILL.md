@@ -20,7 +20,7 @@ Two independent read-only audits, one for the interface code and one for the cor
 ## Agent brief
 
 ```
-Audit <scope> of this repository for code quality. Read-only: do not edit, commit, or write to Jira or GitHub.
+Audit <scope> of this repository for code quality. Read-only: do not edit, commit, or write to the Notion task database or GitHub.
 
 Read first: CLAUDE.md, the part of docs/SPEC.md (the authority) that covers the area, and DECISIONS.md before you judge a design choice. A choice recorded in DECISIONS.md, required by the spec, or marked with a `ponytail:` comment is not a finding. CLAUDE.md fixes these, so they are not findings either: no cgo, no shelling out to lsof/ss/netstat/ps on the refresh path, the short dependency list, stdlib `flag`, no Bubbles.
 
