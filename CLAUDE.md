@@ -91,9 +91,11 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   or push.
 - Never rebase and force-push a PR branch that is already pushed. Bring it up to date with `git merge origin/main`,
   rerun the tests and push; the PR is squash-merged, so the merge commit never reaches `main`.
-- Merge with `gh pr merge <n> --squash --subject "<PR title> (#<n>)"`, never a bare `--squash`, once the reviewer's
-  verdict on the current head is APPROVE, no thread is unresolved and CI is green. Never enable GitHub auto-merge;
-  while CI is pending, check the PR status again later.
+- Merge with `gh pr merge <n> --squash --subject "<PR title> (#<n>)" --body "<Description text>"` (or `--body-file`
+  for a multi-line body), never a bare `--squash`: the squash subject is the PR title and the squash body is the PR's
+  Description text, which carries the `Ticket:` line into git. Merge once the reviewer's verdict on the current head
+  is APPROVE, no thread is unresolved and CI is green. Never enable GitHub auto-merge; while CI is pending, check the
+  PR status again later.
 - Tasks live in the devdash Tasks database in Notion (page Projects, data source
   `collection://f734c0d6-d1bd-4525-80ec-e56461f5d053`); filing and transitions go through the Notion MCP: In Progress
   when work starts, In Review when the PR opens, Done after the merge. Branch names and PR titles carry no task key; the

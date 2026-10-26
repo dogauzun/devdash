@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,11 +17,27 @@ import (
 )
 
 // New returns the macOS collector.
-func New() Collector { return darwinCollector{} }
+func New() Collector { return &darwinCollector{} }
 
-type darwinCollector struct{}
+// darwinCollector keeps the argv and fd buffers across Collects (DEV-14). mu is held by the
+// Collect using bufs; a Collect that finds it held, behind an abandoned one still running,
+// uses buffers of its own.
+type darwinCollector struct {
+	mu   sync.Mutex
+	bufs buffers
+}
 
-func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
+// buffers are a Collect's reusable buffers: arg is kern.argmax bytes, fd the PROC_PIDLISTFDS
+// buffer, grown as needed; both are allocated on first use.
+type buffers struct{ arg, fd []byte }
+
+func (c *darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
+	b := &c.bufs
+	if c.mu.TryLock() {
+		defer c.mu.Unlock()
+	} else {
+		b = &buffers{}
+	}
 	lib, err := loadLibSystem()
 	if err != nil {
 		return Result{}, fmt.Errorf("collector: load libSystem: %w", err)
@@ -37,12 +54,15 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	}
 
 	t = time.Now()
-	argmax, err := unix.SysctlUint32("kern.argmax")
-	if err != nil {
-		return Result{}, fmt.Errorf("collector: sysctl kern.argmax: %w", err)
+	if b.arg == nil {
+		argmax, err := unix.SysctlUint32("kern.argmax")
+		if err != nil {
+			return Result{}, fmt.Errorf("collector: sysctl kern.argmax: %w", err)
+		}
+		b.arg = make([]byte, argmax)
 	}
 	uid := os.Geteuid()
-	r := &fieldReader{lib: lib, argBuf: make([]byte, argmax), pathBuf: make([]byte, sizeofVnodePathInfo),
+	r := &fieldReader{lib: lib, argBuf: b.arg, pathBuf: make([]byte, sizeofVnodePathInfo),
 		taskBuf: make([]byte, sizeofProcTaskInfo), uid: uid, denied: map[int]bool{}, gone: map[string]bool{},
 		lstat: unix.Lstat}
 	limit := o.InProject != nil
@@ -53,7 +73,7 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	}
 
 	t = time.Now()
-	fd := fdListeners(lib, res.Processes)
+	fd := fdListeners(lib, res.Processes, &b.fd)
 	tp := time.Now()
 	pcb, pcbWarn := pcbListeners()
 	res.Timings["pcblist"] = time.Since(tp)
@@ -235,11 +255,16 @@ func argvFrom(b []byte, full bool, err error, own bool) (argv []string, drop boo
 }
 
 // fdListeners walks the socket fds of own-uid processes (the only ones libproc lets us read)
-// and returns their TCP listeners with the owning pid, one entry per socket and pid.
-func fdListeners(lib *libSystem, procs []Process) []sock {
+// and returns their TCP listeners with the owning pid, one entry per socket and pid. *buf is
+// the fd list buffer, allocated at 64 KiB when empty and left grown for the next Collect.
+func fdListeners(lib *libSystem, procs []Process, buf *[]byte) []sock {
 	uid := os.Geteuid()
 	var ls []sock
-	fdBuf := make([]byte, 64*1024)
+	if *buf == nil {
+		*buf = make([]byte, 64*1024)
+	}
+	fdBuf := *buf
+	defer func() { *buf = fdBuf }()
 	sockBuf := make([]byte, sizeofSocketFDInfo)
 	for _, p := range procs {
 		if p.UID != uid {
