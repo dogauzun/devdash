@@ -56,7 +56,7 @@ such as `Blocked by` can be queried only after the data source has been fetched 
 
 ```sql
 AND Status = 'To Do' AND Type != 'Epic'
-AND Labels NOT LIKE '%needs-decision%' AND Labels NOT LIKE '%blocked%'
+AND (Labels IS NULL OR (Labels NOT LIKE '%needs-decision%' AND Labels NOT LIKE '%blocked%'))
 AND ("Blocked by" IS NULL OR "Blocked by" = '[]')
 ```
 
