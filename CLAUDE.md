@@ -1,7 +1,7 @@
 # devdash
 
 Terminal dashboard: what is running on this machine, grouped by git repository.
-Spec: `docs/SPEC.md` (the authority). Work is tracked in the devdash Tasks database in Notion (page Projects); `DEV-n` keys
+Spec: `docs/SPEC.md` (the authority). Work is tracked in the devdash Tasks database in Notion (page Projects / devdash); `DEV-n` keys
 in older code, commits and `DECISIONS.md` refer to the closed Jira project DEV, not to the Notion IDs, which restart at 1.
 Non-obvious choices get one dated line each in `DECISIONS.md`, but a PR does not edit that file: it puts its lines,
 ready to paste, under `## Decisions` in the PR body, and the merger adds them to `DECISIONS.md` after the merge, in
@@ -96,7 +96,7 @@ pinned to v2.13.2 in CI and must be built with a Go at least as new as `go.mod`'
   Description text, which carries the `Ticket:` line into git. Merge once the reviewer's verdict on the current head
   is APPROVE, no thread is unresolved and CI is green. Never enable GitHub auto-merge; while CI is pending, check the
   PR status again later.
-- Tasks live in the devdash Tasks database in Notion (page Projects, data source
+- Tasks live in the devdash Tasks database in Notion (page Projects / devdash, data source
   `collection://f734c0d6-d1bd-4525-80ec-e56461f5d053`); filing and transitions go through the Notion MCP: In Progress
   when work starts, In Review when the PR opens, Done after the merge. Branch names and PR titles carry no task key; the
   PR body's `Ticket:` line holds the task page URL, and the task's `PR` property holds the PR URL, set when the PR opens.
