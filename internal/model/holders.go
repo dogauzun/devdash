@@ -20,6 +20,14 @@ func (l Listener) TCP() bool { return !strings.HasPrefix(l.Proto, "udp") }
 // TCP reports whether m publishes a TCP port: its proto is exactly "tcp", as Docker writes it.
 func (m PortMapping) TCP() bool { return m.Proto == "tcp" }
 
+// Publishes reports whether m publishes TCP port n.
+func (m PortMapping) Publishes(n uint16) bool { return m.HostPort == n && m.TCP() }
+
+// Publishes reports whether c publishes TCP port n through any of its mappings.
+func (c Container) Publishes(n uint16) bool {
+	return slices.ContainsFunc(c.Ports, func(m PortMapping) bool { return m.Publishes(n) })
+}
+
 // Holders returns the holders of TCP port n in s, as `kill N` targets them and checks the port
 // after the kill: each process with a listener on n, in snapshot order, and each container
 // publishing n over tcp, once. A listener reconciled to a container (Listener.ContainerID)
@@ -53,7 +61,7 @@ func Holders(s Snapshot, n uint16) []Holder {
 		}
 	}
 	for _, c := range s.Containers {
-		if slices.ContainsFunc(c.Ports, func(m PortMapping) bool { return m.HostPort == n && m.TCP() }) {
+		if c.Publishes(n) {
 			container(c.ID)
 		}
 	}

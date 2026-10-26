@@ -155,9 +155,7 @@ func nextFree(s model.Snapshot, n uint16, probe freeport.Prober) (a portAnswer) 
 // container's row, as model.Holders does (DEV-154), even when that row is a process drawn as
 // the container that does not hold n itself (DEV-166).
 func holds(r model.Row, n uint16) bool {
-	if r.Container != nil && slices.ContainsFunc(r.Container.Ports, func(pm model.PortMapping) bool {
-		return pm.HostPort == n && pm.TCP()
-	}) {
+	if r.Container != nil && r.Container.Publishes(n) {
 		return true
 	}
 	return r.Process != nil && slices.ContainsFunc(r.Process.Listeners, func(l model.Listener) bool {
