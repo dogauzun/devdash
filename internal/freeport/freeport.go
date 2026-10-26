@@ -59,6 +59,15 @@ func Next(s model.Snapshot, n uint16, probe Prober) (port uint16, ok bool, err e
 	return Find(s, n+1, probe)
 }
 
+// Span is the range Next(n) searches, as `port N` and the dashboard print it after "none in":
+// "A-B" for n+1 to Last(n+1), or "" for n = 65535, which has no search.
+func Span(n uint16) string {
+	if n == 65535 {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", n+1, Last(n+1))
+}
+
 // Probe is the real Prober. It binds a TCP socket to 0.0.0.0:port, then an IPV6_V6ONLY one to
 // [::]:port, and closes both: the bind fails beside any listener on the port, whatever user
 // owns it and whatever address it is on, so it catches the listeners of other users that a

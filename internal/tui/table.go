@@ -349,7 +349,7 @@ func tagText(r model.Row, short bool) string {
 	case short:
 		return "  !"
 	}
-	return "  " + strings.Join(r.Process.Tags.Labels(), ", ")
+	return "  " + r.Process.Tags.Text()
 }
 
 // shortTags reports whether tags are shown as "!": below commandWidth columns of the terminal,

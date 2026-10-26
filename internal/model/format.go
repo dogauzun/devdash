@@ -89,6 +89,10 @@ func (p Process) PortList() string {
 	return strings.Join(ss, ",")
 }
 
+// Text is s as the dashboard's tag column and `port N`'s holder line show it: the labels
+// comma-joined ("orphaned, cwd deleted"), or "" for no tags.
+func (s TagSet) Text() string { return strings.Join(s.Labels(), ", ") }
+
 // ProjectNames maps s's project IDs to their names.
 func (s Snapshot) ProjectNames() map[string]string {
 	ns := make(map[string]string, len(s.Projects))
