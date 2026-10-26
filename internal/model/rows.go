@@ -372,11 +372,20 @@ func (n *node) parent(byPID map[int]*node) *node {
 	if par == nil {
 		return nil
 	}
-	pp := par.row.Process
-	if c := pp.StartTime.Compare(p.StartTime); c > 0 || c == 0 && pp.PID >= p.PID {
+	if !par.row.Process.StartedBefore(p) {
 		return nil
 	}
 	return par
+}
+
+// StartedBefore reports whether p started strictly before q by (start time, pid): the rule
+// that decides a parent in the table's tree and in the detail pane's parent chain. A parent
+// that fails it is a reused pid, and it makes cycles impossible.
+func (p *Process) StartedBefore(q *Process) bool {
+	if c := p.StartTime.Compare(q.StartTime); c != 0 {
+		return c < 0
+	}
+	return p.PID < q.PID
 }
 
 // compareNodes orders siblings: by the sort mode, then listeners first, then oldest first,
