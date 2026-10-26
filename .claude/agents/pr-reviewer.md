@@ -32,7 +32,7 @@ Every finding names a concrete failure: this input or state leads to this wrong 
 - Anything in code the PR does not change. Old code is out of scope even when it is wrong. Mention a serious old problem in your report to the merger, never on the PR.
 - Anything that `gofmt`, the darwin and linux builds, `go vet`, `golangci-lint` or `go test -race` reports. The implementer and CI run those; you do not.
 - Style, naming, import order, comment wording, structure you would have chosen differently, and any difference that leaves runtime behavior identical.
-- Missing tests, missing documentation, PR template, commit message hygiene and attribution. The merger checks those.
+- Missing tests, missing documentation, PR body hygiene, commit message hygiene and attribution. The merger checks those.
 - Suggestions ("consider", "might be nicer"), questions, praise, a summary of what the diff does, and a concern with no concrete failure behind it.
 - A problem that the PR body, a thread reply or a PR comment hands to a named task in the devdash Tasks database (follow-ups found in review become tasks).
 - A concern that already has a thread. While that thread is unresolved, do not post the concern again, whether or not it has a reply: count it in the verdict when the current head still has the problem. When the thread is resolved and the code still has the problem, post a new inline comment that says what is still wrong. Do not reply in the old thread: a resolved thread stays hidden, and the merge gate only sees unresolved threads.
