@@ -9,6 +9,7 @@ linters:
     - misspell
     - modernize
     - nakedret
+    - revive
     - unconvert
     - unparam
   settings:
@@ -37,6 +38,10 @@ linters:
       min-complexity: 35
     nakedret:
       max-func-lines: 30
+    revive:
+      # Only this rule: unnamed results of one type are easy to swap at the call site.
+      rules:
+        - name: confusing-results
   exclusions:
     rules:
       # Table-driven test functions exceed any useful threshold.

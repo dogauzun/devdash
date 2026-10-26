@@ -358,7 +358,7 @@ func (m *Model) render() string {
 
 // size is the screen's width and height: the terminal's, or 80 by 24 before the first
 // WindowSizeMsg.
-func (m *Model) size() (int, int) {
+func (m *Model) size() (w, h int) {
 	if m.width <= 0 || m.height <= 0 {
 		return minWidth, 24
 	}

@@ -312,28 +312,35 @@ func (m *Model) killView(w, h int) string {
 	if t.key.PID > 0 {
 		rest = fmt.Sprintf(" (pid %d)", t.key.PID)
 	}
-	var list, tail []string
+	var b killBody
 	switch k.stage {
 	case killRefused:
-		head, rest = "cannot kill ", ""
-		tail = append(killReason(model.Clean(k.refusal)), "", "esc close")
+		head = "cannot kill "
+		b.tail = append(killReason(model.Clean(k.refusal)), "", "esc close")
 	case killConfirm, killOutside, killRunning:
-		rest, list, tail = m.killPlanView(rest, name, w, h)
+		b = m.killPlanView(rest, name, w, h)
 	case killReport:
-		rest, list, tail = m.killReportView(rest)
+		b = m.killReportView(rest)
 	}
-	return m.killLayout(w, h, killTitle(head, name, rest, w), list, tail)
+	return m.killLayout(w, h, killTitle(head, name, b.rest, w), b)
 }
 
-// killPlanView is the modal's title rest (after the target's name), list and tail before the
-// signal and while it runs: the plan, or the refusal of the mode p, t or f chose. It sets
-// k.blind.
-func (m *Model) killPlanView(rest, name string, w, h int) (string, []string, []string) {
+// killBody is what a kill modal view returns: the end of the title and the indented lines
+// killLayout stacks below it.
+type killBody struct {
+	rest string   // the title after the target's name
+	list []string // the pid lines, which scroll
+	tail []string // reasons, notes and key hints below the list, wrapped by killWrap
+}
+
+// killPlanView is the modal's body before the signal and while it runs: the plan, or the
+// refusal of the mode p, t or f chose. It sets k.blind.
+func (m *Model) killPlanView(rest, name string, w, h int) killBody {
 	k := &m.kill
 	if k.refusal != "" {
 		tail := killReason(model.Clean(k.refusal))
 		tail[0] = "refused: " + tail[0]
-		return rest + ": " + k.opts.Mode(), nil, append(tail, "", "p process  t tree  f force  esc cancel")
+		return killBody{rest: rest + ": " + k.opts.Mode(), tail: append(tail, "", "p process  t tree  f force  esc cancel")}
 	}
 	n := model.Count(len(k.plan.Procs), "process", "processes")
 	if k.survivors {
@@ -359,15 +366,15 @@ func (m *Model) killPlanView(rest, name string, w, h int) (string, []string, []s
 	if k.blind {
 		hint = "too small to show the plan: enlarge to confirm  esc cancel"
 	}
-	return rest, m.killPlanLines(k.plan), append(tail, hint)
+	return killBody{rest: rest, list: m.killPlanLines(k.plan), tail: append(tail, hint)}
 }
 
-// killReportView is the modal's title rest (after the target's name), list and tail once the
-// kill finished: the processes that did not exit and why, or why nothing was signalled.
-func (m *Model) killReportView(rest string) (string, []string, []string) {
+// killReportView is the modal's body once the kill finished: the processes that did not exit
+// and why, or why nothing was signalled.
+func (m *Model) killReportView(rest string) killBody {
 	k := &m.kill
 	if k.err != nil {
-		return rest + ": nothing was signalled", nil, []string{model.Clean(k.err.Error()), "", "esc close"}
+		return killBody{rest: rest + ": nothing was signalled", tail: []string{model.Clean(k.err.Error()), "", "esc close"}}
 	}
 	exited := 0
 	var rows []string
@@ -394,7 +401,7 @@ func (m *Model) killReportView(rest string) (string, []string, []string) {
 	if m.o.Sudo && slices.ContainsFunc(k.result.Outcomes, func(o engine.Outcome) bool { return errors.Is(o.Err, engine.ErrPermission) }) {
 		tail[0] += ", then " + sudoHint // S works in the table, not in this modal (sudo.go)
 	}
-	return rest, killTable(rows), tail
+	return killBody{rest: rest, list: killTable(rows), tail: tail}
 }
 
 // killTitleMin is the fewest cells a cut label keeps in a kill title.
@@ -474,9 +481,9 @@ func killWrap(tail []string, w int) []string {
 // longer than the room scrolls: it shows the page from m.kill.top (clamped here, and the
 // page size kept for the keys) and a position line, or a single pid line when only one line
 // is left (the title has the count).
-func (m *Model) killLayout(w, h int, title string, list, tail []string) string {
+func (m *Model) killLayout(w, h int, title string, b killBody) string {
 	k := &m.kill
-	tail = killWrap(tail, w)
+	list, tail := b.list, killWrap(b.tail, w)
 	blank := []string{""}
 	gaps := 2
 	if len(list) == 0 {
