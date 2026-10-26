@@ -76,11 +76,8 @@ func portAnswer(s model.Snapshot, port uint16) jsonPortAnswer {
 		}
 	}
 	for _, c := range s.Containers {
-		for _, m := range c.Ports {
-			if m.HostPort == port && m.TCP() {
-				a.Containers = append(a.Containers, containerObject(c))
-				break
-			}
+		if c.Publishes(port) {
+			a.Containers = append(a.Containers, containerObject(c))
 		}
 	}
 	a.Free = len(a.Holders) == 0 && len(a.Containers) == 0

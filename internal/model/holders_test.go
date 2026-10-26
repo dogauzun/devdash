@@ -74,3 +74,19 @@ func TestPortMappingTCP(t *testing.T) {
 		}
 	}
 }
+
+// TestContainerPublishes: a container publishes TCP port n only through a tcp mapping on n.
+func TestContainerPublishes(t *testing.T) {
+	for _, tt := range []struct {
+		m    PortMapping
+		want bool
+	}{
+		{PortMapping{HostPort: 5432, ContainerPort: 5432, Proto: "tcp"}, true},
+		{PortMapping{HostPort: 5432, ContainerPort: 53, Proto: "udp"}, false},
+		{PortMapping{HostPort: 8000, ContainerPort: 5432, Proto: "tcp"}, false},
+	} {
+		if got := (Container{Ports: []PortMapping{tt.m}}).Publishes(5432); got != tt.want {
+			t.Errorf("Container{Ports: [%+v]}.Publishes(5432) = %v, want %v", tt.m, got, tt.want)
+		}
+	}
+}

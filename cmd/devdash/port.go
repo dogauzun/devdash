@@ -167,7 +167,7 @@ func publishedAddrs(c model.Container, port uint16) []netip.Addr {
 		if !ip.IsValid() { // Podman's empty host IP: every interface
 			ip = netip.IPv4Unspecified()
 		}
-		if m.HostPort == port && m.TCP() && !slices.Contains(addrs, ip) {
+		if m.Publishes(port) && !slices.Contains(addrs, ip) {
 			addrs = append(addrs, ip)
 		}
 	}
