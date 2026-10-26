@@ -321,7 +321,7 @@ func (m *Model) detailProcess(d *detailDoc, s model.Snapshot, p *model.Process) 
 		cwd = quote(p.Cwd)
 	}
 	d.field("cwd", cwd)
-	if pr := detailProject(s, p.ProjectID); pr != nil {
+	if pr := s.Project(p.ProjectID); pr != nil {
 		project := detailProjectTitle(pr)
 		if loc := model.Location(pr, s.Here()); loc != "" {
 			project += " · " + loc
@@ -496,19 +496,6 @@ func detailProjectTitle(pr *model.Project) string {
 	q.Name, q.Branch, q.ShortSHA = quote(pr.Name), quote(pr.Branch), quote(pr.ShortSHA)
 	head, wt := q.LabelParts()
 	return head + wt
-}
-
-// detailProject returns the snapshot's project with id, or nil.
-func detailProject(s model.Snapshot, id string) *model.Project {
-	if id == "" {
-		return nil
-	}
-	for i := range s.Projects {
-		if s.Projects[i].ID == id {
-			return &s.Projects[i]
-		}
-	}
-	return nil
 }
 
 // detailParents returns p's ancestors from its parent up, as "name pid", following PPID through

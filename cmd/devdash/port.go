@@ -190,10 +190,6 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 	if !found {
 		return write(stdout, stderr, b.String(), 1)
 	}
-	projects := map[string]*model.Project{}
-	for i := range s.Projects {
-		projects[s.Projects[i].ID] = &s.Projects[i]
-	}
 	here := s.Here()
 
 	// writePort writes one line per listener on port, process by process in snapshot order, then
@@ -214,7 +210,7 @@ func writeAnswer(stdout, stderr io.Writer, s model.Snapshot, port uint16, width 
 		}
 		at += n
 		if own && p.PID != 0 {
-			for _, d := range holderLines(p, projects[p.ProjectID], here, s.TakenAt, width) {
+			for _, d := range holderLines(p, s.Project(p.ProjectID), here, s.TakenAt, width) {
 				out.WriteString(detailIndent + d + "\n")
 			}
 		}

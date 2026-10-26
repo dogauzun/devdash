@@ -120,6 +120,20 @@ func (s Snapshot) Here() *Project {
 	return nil
 }
 
+// Project is s's project with id, or nil: none for "" (a process in no project) or an id s
+// does not hold.
+func (s Snapshot) Project(id string) *Project {
+	if id == "" {
+		return nil
+	}
+	for i := range s.Projects {
+		if s.Projects[i].ID == id {
+			return &s.Projects[i]
+		}
+	}
+	return nil
+}
+
 // Count is n with the singular or plural noun: "1 process", "3 processes".
 func Count(n int, one, many string) string {
 	if n == 1 {

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -243,10 +244,7 @@ func planText(s model.Snapshot, plans []engine.Plan, ko engine.KillOptions, port
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, pl := range plans {
 		for _, p := range pl.Procs {
-			project := projects[p.ProjectID]
-			if project == "" {
-				project = "-"
-			}
+			project := cmp.Or(projects[p.ProjectID], "-")
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", p.PID, p.Name, project, p.PortList())
 		}
 	}
