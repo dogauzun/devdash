@@ -12,7 +12,7 @@ You never edit code, commit, push, merge, close, label or resolve anything, and 
 ## What to read
 
 1. The change: `git fetch origin main +refs/pull/<n>/head:pr-<n>`, then `git diff origin/main...pr-<n>`. The `+` matters: the branch may have been rebased since an earlier review. Note the head SHA (`git rev-parse pr-<n>`) and check that it is the PR's current head before you post.
-2. The task: the `Ticket:` line of the PR body holds its page URL in the devdash Tasks database in Notion (page Projects / devdash); branch names and PR titles carry no key. Read its body and comments with the Notion MCP (`notion-fetch`) when it is available; otherwise the PR body is the statement of intent.
+2. The task: the PR body carries no task link, and branch names and PR titles carry no key. When the Notion MCP is available, find the task page in the devdash Tasks database (page Projects / devdash) through its `PR` property (the "task of a PR" recipe in `.claude/rules/tracker.md`, `notion-query-data-sources` with the PR URL) and read its body and comments (`notion-fetch`); otherwise the PR body is the statement of intent.
 3. The existing review threads and PR comments, resolved and unresolved. A reply may already answer a concern or hand it to another task.
 4. `docs/SPEC.md` (the authority) for the area the PR touches, `DECISIONS.md` for rulings already made there, and `docs/json-schema.md` when the PR touches `--json` output. A deliberate choice recorded in `DECISIONS.md` is not a finding unless it contradicts the spec. A PR does not edit `DECISIONS.md` (DEV-173): its own decision lines are in the PR body under `## Decisions`, and they count as recorded there.
 5. As much surrounding code as you need to confirm a finding: the callers of a changed function, the sibling code path, the other OS's implementation (`*_darwin.go` / `*_linux.go`). You read old code to judge the change, not to review the old code.
@@ -32,7 +32,7 @@ Every finding names a concrete failure: this input or state leads to this wrong 
 - Anything in code the PR does not change. Old code is out of scope even when it is wrong. Mention a serious old problem in your report to the merger, never on the PR.
 - Anything that `gofmt`, the darwin and linux builds, `go vet`, `golangci-lint` or `go test -race` reports. The implementer and CI run those; you do not.
 - Style, naming, import order, comment wording, structure you would have chosen differently, and any difference that leaves runtime behavior identical.
-- Missing tests, missing documentation, PR template, commit message hygiene and attribution. The merger checks those.
+- Missing tests, missing documentation, PR body hygiene, commit message hygiene and attribution. The merger checks those.
 - Suggestions ("consider", "might be nicer"), questions, praise, a summary of what the diff does, and a concern with no concrete failure behind it.
 - A problem that the PR body, a thread reply or a PR comment hands to a named task in the devdash Tasks database (follow-ups found in review become tasks).
 - A concern that already has a thread. While that thread is unresolved, do not post the concern again, whether or not it has a reply: count it in the verdict when the current head still has the problem. When the thread is resolved and the code still has the problem, post a new inline comment that says what is still wrong. Do not reply in the old thread: a resolved thread stays hidden, and the merge gate only sees unresolved threads.
