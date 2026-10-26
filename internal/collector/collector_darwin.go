@@ -43,7 +43,8 @@ func (darwinCollector) Collect(ctx context.Context, o Options) (Result, error) {
 	}
 	uid := os.Geteuid()
 	r := &fieldReader{lib: lib, argBuf: make([]byte, argmax), pathBuf: make([]byte, sizeofVnodePathInfo),
-		taskBuf: make([]byte, sizeofProcTaskInfo), uid: uid, denied: map[int]bool{}}
+		taskBuf: make([]byte, sizeofProcTaskInfo), uid: uid, denied: map[int]bool{}, gone: map[string]bool{},
+		lstat: unix.Lstat}
 	limit := o.InProject != nil
 	res.Processes = r.processes(res.Processes, !limit)
 	res.Timings["argv_cwd"] = time.Since(t)
@@ -103,13 +104,15 @@ func procTable() ([]Process, error) {
 }
 
 // fieldReader reads the per-process fields of one Collect into buffers allocated once:
-// argBuf is kern.argmax bytes, uid is devdash's effective uid, and denied collects the
-// processes with a field denied by EPERM.
+// argBuf is kern.argmax bytes, uid is devdash's effective uid, denied collects the
+// processes with a field denied by EPERM, and gone memoises cwdGone by path for this Collect.
 type fieldReader struct {
 	lib                      *libSystem
 	argBuf, pathBuf, taskBuf []byte
 	uid                      int
 	denied                   map[int]bool
+	gone                     map[string]bool
+	lstat                    func(path string, st *unix.Stat_t) error // unix.Lstat outside tests
 }
 
 // processes reads the argv, cwd, CPU time and RSS of each of procs, in place, and returns
@@ -125,7 +128,7 @@ func (r *fieldReader) processes(procs []Process, withArgv bool) []Process {
 		if n, err := r.lib.pidinfo(p.PID, procPidVnodePathInfo, r.pathBuf); err != nil {
 			cwdErr = err
 		} else if cwd, ok := decodeVnodePathInfo(r.pathBuf[:n]); ok {
-			p.Cwd, p.CwdDeleted = cwd, cwdGone(cwd)
+			p.Cwd, p.CwdDeleted = cwd, r.cwdGone(cwd)
 		} else {
 			cwdErr = syscall.EINVAL
 		}
@@ -187,11 +190,17 @@ func (r *fieldReader) unknown(p *Process, bits model.FieldSet, err error) {
 
 // cwdGone reports whether a process's cwd was removed. PROC_PIDVNODEPATHINFO keeps reporting
 // a removed directory's old path, so only an lstat of that path can tell, at one syscall per
-// process with a known cwd. Only ENOENT counts: EACCES on a parent says nothing, and a
-// directory recreated at the same path is missed rather than the tag invented (DEV-116).
-func cwdGone(path string) bool {
-	var st unix.Stat_t
-	return errors.Is(unix.Lstat(path, &st), syscall.ENOENT)
+// distinct cwd in a Collect: most processes share one, often /. Only ENOENT counts: EACCES on
+// a parent says nothing, and a directory recreated at the same path is missed rather than the
+// tag invented (DEV-116).
+func (r *fieldReader) cwdGone(path string) bool {
+	gone, ok := r.gone[path]
+	if !ok {
+		var st unix.Stat_t
+		gone = errors.Is(r.lstat(path, &st), syscall.ENOENT)
+		r.gone[path] = gone
+	}
+	return gone
 }
 
 // readArgv fills p.Argv from kern.procargs2 using buf (kern.argmax bytes) and returns why it

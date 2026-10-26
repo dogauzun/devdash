@@ -453,3 +453,23 @@ func BenchmarkCollect(b *testing.B) {
 	}
 	b.ReportMetric(float64(procs), "procs")
 }
+
+// TestCwdLstatMemo: two processes with the same cwd cost one lstat in one Collect (DEV-9).
+func TestCwdLstatMemo(t *testing.T) {
+	lib, err := loadLibSystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	r := &fieldReader{lib: lib, pathBuf: make([]byte, sizeofVnodePathInfo), taskBuf: make([]byte, sizeofProcTaskInfo),
+		uid: os.Geteuid(), denied: map[int]bool{}, gone: map[string]bool{},
+		lstat: func(path string, st *unix.Stat_t) error { calls++; return unix.Lstat(path, st) }}
+	self := Process{PID: os.Getpid()}
+	procs := r.processes([]Process{self, self}, false)
+	if len(procs) != 2 || procs[0].Cwd != kernelWd(t) || procs[1].Cwd != procs[0].Cwd || procs[0].CwdDeleted || procs[1].CwdDeleted {
+		t.Fatalf("processes = %+v, want two with cwd %q, not deleted", procs, kernelWd(t))
+	}
+	if calls != 1 {
+		t.Errorf("lstat calls = %d, want 1", calls)
+	}
+}
