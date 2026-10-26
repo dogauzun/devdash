@@ -7,7 +7,8 @@ import "runtime/debug"
 // "unknown") falls back to the build info the go command embeds: the module version for
 // `go install ...@v0.1.0`, and the vcs revision and time for a build inside a git checkout, the
 // revision suffixed "-dirty" when the tree had changes. bi nil means no build info.
-func versionInfo(version, commit, date string, bi *debug.BuildInfo) (string, string, string) {
+func versionInfo(ldVersion, ldCommit, ldDate string, bi *debug.BuildInfo) (version, commit, date string) {
+	version, commit, date = ldVersion, ldCommit, ldDate
 	if bi == nil {
 		return version, commit, date
 	}
