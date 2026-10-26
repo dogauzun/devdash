@@ -4,6 +4,7 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"os"
@@ -432,6 +433,7 @@ func TestCollectOtherUsers(t *testing.T) {
 
 // BenchmarkCollect reports the p50 of each source and of the whole snapshot in ms.
 func BenchmarkCollect(b *testing.B) {
+	b.ReportAllocs()
 	c := New()
 	samples := map[string][]time.Duration{}
 	procs := 0
@@ -471,5 +473,71 @@ func TestCwdLstatMemo(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("lstat calls = %d, want 1", calls)
+	}
+}
+
+// TestCollectReusesBuffers: back-to-back Collects on one collector read kern.argmax once and
+// share one argv buffer, and each still finds its own process whole (DEV-14).
+func TestCollectReusesBuffers(t *testing.T) {
+	c := New().(*darwinCollector)
+	var arg *byte
+	for run := range 2 {
+		res, err := c.Collect(context.Background(), Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == os.Getpid() })
+		if i < 0 || !slices.Equal(res.Processes[i].Argv, os.Args) {
+			t.Fatalf("run %d: self missing or argv wrong", run)
+		}
+		if run == 0 {
+			arg = &c.bufs.arg[0]
+		} else if &c.bufs.arg[0] != arg || len(c.bufs.fd) == 0 {
+			t.Errorf("run %d: argv buffer reallocated or fd buffer not kept", run)
+		}
+	}
+}
+
+// TestCollectWhileBlocked: a Collect started while another on the same collector is blocked
+// (as an abandoned one past its timeout can be) uses buffers of its own, and both finish
+// whole (DEV-14). The first blocks in InProject, before any argv read, so its argv buffer is
+// still all zeros unless the second wrote into it.
+func TestCollectWhileBlocked(t *testing.T) {
+	c := New().(*darwinCollector)
+	blocked, release := make(chan struct{}), make(chan struct{})
+	first := make(chan error, 1)
+	go func() {
+		res, err := c.Collect(context.Background(), Options{InProject: func(ps []Process) []bool {
+			close(blocked)
+			<-release
+			want := make([]bool, len(ps))
+			for i, p := range ps {
+				want[i] = p.PID == os.Getpid()
+			}
+			return want
+		}})
+		if err == nil {
+			if i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == os.Getpid() }); i < 0 ||
+				!slices.Equal(res.Processes[i].Argv, os.Args) {
+				err = errors.New("first: self missing or argv wrong")
+			}
+		}
+		first <- err
+	}()
+	<-blocked
+	res, err := c.Collect(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(res.Processes, func(p Process) bool { return p.PID == os.Getpid() }); i < 0 ||
+		!slices.Equal(res.Processes[i].Argv, os.Args) {
+		t.Error("second: self missing or argv wrong")
+	}
+	if slices.ContainsFunc(c.bufs.arg, func(b byte) bool { return b != 0 }) {
+		t.Error("second Collect wrote into the blocked one's argv buffer")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Error(err)
 	}
 }
