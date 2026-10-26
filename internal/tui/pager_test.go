@@ -31,8 +31,8 @@ func TestPagerCut(t *testing.T) {
 			if !slices.Equal(shown, tc.shown) || pos != tc.pos {
 				t.Errorf("cut = %q, %q; want %q, %q", shown, pos, tc.shown, tc.pos)
 			}
-			if p.top != tc.wantTop || p.page != tc.wantPage {
-				t.Errorf("top, page = %d, %d; want %d, %d", p.top, p.page, tc.wantTop, tc.wantPage)
+			if p.top != tc.wantTop || p.page != tc.wantPage || p.total != len(lines) {
+				t.Errorf("top, page, total = %d, %d, %d; want %d, %d, %d", p.top, p.page, p.total, tc.wantTop, tc.wantPage, len(lines))
 			}
 			if len(shown) > 0 {
 				_ = append(shown, "x") // appending a position line must not write over lines
@@ -57,8 +57,8 @@ func TestPagerMove(t *testing.T) {
 		{"total shorter than the page", 0, 5, 1, 3, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := pager{top: tc.top, page: tc.page}
-			p.move(tc.d, tc.total)
+			p := pager{top: tc.top, page: tc.page, total: tc.total}
+			p.move(tc.d)
 			if p.top != tc.want {
 				t.Errorf("top = %d, want %d", p.top, tc.want)
 			}

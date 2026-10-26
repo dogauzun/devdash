@@ -149,7 +149,7 @@ func (m *Model) killKey(key tea.KeyPressMsg) tea.Cmd {
 	k := &m.kill
 	s := key.String()
 	if d := scrollStep(s, k.page); d != 0 { // scrolling only reads, so it works in every stage
-		m.killScroll(d)
+		k.move(d)
 		return nil
 	}
 	// A held key repeats: it must never confirm, so repeats do nothing here. Most terminals do
@@ -498,7 +498,7 @@ func (m *Model) killLayout(w, h int, title string, b killBody) string {
 		}
 		list = page
 	} else {
-		k.top, k.page = 0, len(list)
+		k.top, k.page, k.total = 0, len(list), len(list)
 	}
 	out := []string{title}
 	out = append(out, blank...)
@@ -512,21 +512,6 @@ func (m *Model) killLayout(w, h int, title string, b killBody) string {
 		out = append(out, "  "+l)
 	}
 	return strings.Join(out, "\n")
-}
-
-// killScroll moves the list by d lines, within the list as the last render laid it out.
-func (m *Model) killScroll(d int) {
-	k := &m.kill
-	n := len(k.plan.Procs)
-	if k.stage == killReport {
-		n = 0
-		for _, o := range k.result.Outcomes {
-			if !o.Exited {
-				n++
-			}
-		}
-	}
-	k.move(d, n)
 }
 
 // killOutcome says why a planned process is still there after Kill.
