@@ -146,36 +146,61 @@ func Flatten(s Snapshot, opts ViewOptions) []Row {
 // and per container with a published port and no process behind it, both dropped with
 // opts.HideContainers. Nodes carry their sort keys (the name in name mode only) and hidden.
 func groupsOf(s Snapshot, opts ViewOptions) map[RowKey]*group {
-	projects := make(map[string]*Project, len(s.Projects))
+	gs := groups{
+		byKey:      map[RowKey]*group{},
+		projects:   make(map[string]*Project, len(s.Projects)),
+		containers: make(map[string]*Container, len(s.Containers)),
+		byName:     opts.Sort == SortName,
+	}
 	for i := range s.Projects {
-		projects[s.Projects[i].ID] = &s.Projects[i]
+		gs.projects[s.Projects[i].ID] = &s.Projects[i]
 	}
-	containers := make(map[string]*Container, len(s.Containers))
 	for i := range s.Containers {
-		containers[s.Containers[i].ID] = &s.Containers[i]
+		gs.containers[s.Containers[i].ID] = &s.Containers[i]
 	}
+	withProcess := gs.processNodes(s.Processes, &opts)
+	if !opts.HideContainers {
+		gs.containerNodes(s.Containers, withProcess)
+	}
+	return gs.byKey
+}
 
-	groups := map[RowKey]*group{}
-	add := func(header RowKey, n *node) {
-		g := groups[header]
-		if g == nil {
-			g = &group{header: Row{Key: header}}
-			if header.Header == GroupProject {
-				g.header.Project = projects[header.Group]
-			}
-			groups[header] = g
+// groups is groupsOf's result while it is built: the groups by header key, and the
+// snapshot's projects and containers by ID.
+type groups struct {
+	byKey      map[RowKey]*group
+	projects   map[string]*Project
+	containers map[string]*Container
+	byName     bool // SortName: nodes carry their name
+}
+
+// add appends n to the group of header, creating the group on first use, sets n's name in
+// name mode and keeps the group's latest start time.
+func (gs *groups) add(header RowKey, n *node) {
+	g := gs.byKey[header]
+	if g == nil {
+		g = &group{header: Row{Key: header}}
+		if header.Header == GroupProject {
+			g.header.Project = gs.projects[header.Group]
 		}
-		g.nodes = append(g.nodes, n)
-		if opts.Sort == SortName {
-			n.name = strings.ToLower(n.sortName())
-		}
-		if n.start.After(g.active) {
-			g.active = n.start
-		}
+		gs.byKey[header] = g
 	}
+	g.nodes = append(g.nodes, n)
+	if gs.byName {
+		n.name = strings.ToLower(n.sortName())
+	}
+	if n.start.After(g.active) {
+		g.active = n.start
+	}
+}
+
+// processNodes adds a node per process of ps, skipping one with a known empty argv and no
+// listener, and those in a container with opts.HideContainers. It returns the IDs of the
+// containers a process runs in, hidden or not.
+func (gs *groups) processNodes(ps []Process, opts *ViewOptions) map[string]bool {
 	withProcess := map[string]bool{}
-	for i := range s.Processes {
-		p := &s.Processes[i]
+	for i := range ps {
+		p := &ps[i]
 		if p.PID != 0 && len(p.Argv) == 0 && p.Unknown&FieldArgv == 0 && len(p.Listeners) == 0 {
 			continue
 		}
@@ -191,16 +216,22 @@ func groupsOf(s Snapshot, opts ViewOptions) map[RowKey]*group {
 			if opts.HideContainers {
 				continue
 			}
-			n.row.Container = containers[p.ContainerID]
+			n.row.Container = gs.containers[p.ContainerID]
 			header = containerGroup(n.row.Container)
-		case projects[p.ProjectID] != nil:
+		case gs.projects[p.ProjectID] != nil:
 			header = RowKey{Header: GroupProject, Group: p.ProjectID}
 		}
-		add(header, n)
+		gs.add(header, n)
 	}
-	for i := range s.Containers {
-		c := &s.Containers[i]
-		if opts.HideContainers || withProcess[c.ID] {
+	return withProcess
+}
+
+// containerNodes adds a node per container of cs with a published port and no process in
+// withProcess.
+func (gs *groups) containerNodes(cs []Container, withProcess map[string]bool) {
+	for i := range cs {
+		c := &cs[i]
+		if withProcess[c.ID] {
 			continue
 		}
 		n := &node{row: Row{Key: RowKey{ContainerID: c.ID}, Container: c}, cpu: math.NaN(), port: noPort}
@@ -210,10 +241,9 @@ func groupsOf(s Snapshot, opts ViewOptions) map[RowKey]*group {
 			}
 		}
 		if n.port != noPort { // only a published port makes a container without a process a row
-			add(containerGroup(c), n)
+			gs.add(containerGroup(c), n)
 		}
 	}
-	return groups
 }
 
 // Hideable reports whether Flatten hides p unless ShowAll: a shell or an editor with no
